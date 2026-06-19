@@ -42,7 +42,8 @@ C_SRCS   += $(COMMON_DIR)/drivers/dvi.c \
 			$(COMMON_DIR)/drivers/fft.c \
 			$(COMMON_DIR)/drivers/Kyber.c \
 			$(COMMON_DIR)/drivers/led.c \
-			$(COMMON_DIR)/drivers/seg7.c
+			$(COMMON_DIR)/drivers/seg7.c \
+			$(COMMON_DIR)/drivers/matmul.c
 
 INCLUDES += -I./ \
 			-I$(COMMON_DIR)/include \
@@ -64,9 +65,10 @@ $(TARGET): $(LINK_OBJS) $(LINK_DEPS) convert Makefile
 	$(LA32R_OBJDUMP) --disassemble-all -S $(OBJDIR)/$@.elf > $(OBJDIR)/$@.s
 	$(OBJDIR)/convert $@.bin $(OBJDIR)/
 	cp ./$(OBJDIR)/axi_ram.mif $(COMMON_DIR)/../../
+ifdef LA32RSOC_WINDOWS_HOME
 	cp ./$(OBJDIR)/axi_ram.mif $(LA32RSOC_WINDOWS_HOME)/sdk
-	cp ./$(OBJDIR)/$@.bin $(COMMON_DIR)/../../
-	cp ./$(OBJDIR)/$@.bin $(LA32RSOC_WINDOWS_HOME)/sdk
+	cp ./$(OBJDIR)/$(TARGET).bin $(LA32RSOC_WINDOWS_HOME)/sdk
+endif
 	rm -f $(LINK_OBJS)
 	rm -f $(OBJDIR)/convert
 

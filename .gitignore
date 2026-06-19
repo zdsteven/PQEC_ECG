@@ -6,4 +6,6 @@ obj/
 *.mif
 *.bin
 rtl/xsim.dir/*
-rtl/xvlog.pb
+xsim.dir/*
+xvlog.pb
+matmul_testdata/
