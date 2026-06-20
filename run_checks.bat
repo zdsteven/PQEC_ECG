@@ -11,7 +11,7 @@ set "PROJECT_DIR=%FPGA_DIR%\project"
 set "PYTHON_EXE=%SCRIPT_DIR%.venv\Scripts\python.exe"
 set "DSP_REPORT=%PROJECT_DIR%\dsp_utilization.rpt"
 set "TIMING_REPORT=%PROJECT_DIR%\Loongson_Soc.runs\impl_1\timing_summary.rpt"
-set "DSP_MAX=100"
+set "DSP_MAX=0"
 
 echo ============================================
 echo Running HDL checks...
