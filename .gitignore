@@ -6,6 +6,8 @@ obj/
 *.mif
 *.bin
 *.bit
+*.sdb
+*.rlx
 rtl/xsim.dir/*
 xsim.dir/*
 xvlog.pb

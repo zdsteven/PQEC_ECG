@@ -34,9 +34,6 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //1f10_0000 dvi
 //1f20_0000 confreg
 //1f30_0000 dma
-//1f40_0000 fft
-//1f50_0000 matmul
-//1f60_0000 kyber
 
 `include "config.h"
 
@@ -252,45 +249,6 @@ wire [4 :0] ram_bid    ;
 wire [1 :0] ram_bresp  ;
 wire        ram_bvalid ;
 wire        ram_bready ;
-
-// matmul AXI-Lite slave port wires (from crossbar output 7)
-wire [4 :0] matmul_awid    ;
-wire [31:0] matmul_awaddr  ;
-wire [7 :0] matmul_awlen   ;
-wire [2 :0] matmul_awsize  ;
-wire [1 :0] matmul_awburst ;
-wire        matmul_awlock  ;
-wire [3 :0] matmul_awcache ;
-wire [2 :0] matmul_awprot  ;
-wire        matmul_awvalid ;
-wire        matmul_awready ;
-wire [31:0] matmul_wdata   ;
-wire [3 :0] matmul_wstrb   ;
-wire        matmul_wlast   ;
-wire        matmul_wvalid  ;
-wire        matmul_wready  ;
-wire [4 :0] matmul_bid     ;
-wire [1 :0] matmul_bresp   ;
-wire        matmul_bvalid  ;
-wire        matmul_bready  ;
-wire [4 :0] matmul_arid    ;
-wire [31:0] matmul_araddr  ;
-wire [7 :0] matmul_arlen   ;
-wire [2 :0] matmul_arsize  ;
-wire [1 :0] matmul_arburst ;
-wire        matmul_arlock  ;
-wire [3 :0] matmul_arcache ;
-wire [2 :0] matmul_arprot  ;
-wire        matmul_arvalid ;
-wire        matmul_arready ;
-wire [4 :0] matmul_rid     ;
-wire [31:0] matmul_rdata   ;
-wire [1 :0] matmul_rresp   ;
-wire        matmul_rlast   ;
-wire        matmul_rvalid  ;
-wire        matmul_rready  ;
-
-wire        matmul_interrupt;
 
 //uart axi
 wire  uart_arready;
@@ -636,30 +594,17 @@ wire [1 :0] axiOut_7_bresp  ;
 wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
 
-// matmul: crossbar output 7 -> matmul AXI-Lite slave port
-assign matmul_awvalid = axiOut_7_awvalid;
-assign matmul_awaddr  = axiOut_7_awaddr;
-assign matmul_awprot  = axiOut_7_awprot;
-assign matmul_wvalid  = axiOut_7_wvalid;
-assign matmul_wdata   = axiOut_7_wdata;
-assign matmul_wstrb   = axiOut_7_wstrb;
-assign matmul_bready  = axiOut_7_bready;
-assign matmul_arvalid = axiOut_7_arvalid;
-assign matmul_araddr  = axiOut_7_araddr;
-assign matmul_arprot  = axiOut_7_arprot;
-assign matmul_rready  = axiOut_7_rready;
-
-assign axiOut_7_awready = matmul_awready;
-assign axiOut_7_wready  = matmul_wready;
-assign axiOut_7_bvalid  = matmul_bvalid;
-assign axiOut_7_bid     = 5'b0;
-assign axiOut_7_bresp   = matmul_bresp;
-assign axiOut_7_arready = matmul_arready;
-assign axiOut_7_rvalid  = matmul_rvalid;
-assign axiOut_7_rid     = 5'b0;
-assign axiOut_7_rdata   = matmul_rdata;
-assign axiOut_7_rresp   = matmul_rresp;
-assign axiOut_7_rlast   = 1'b0;
+assign axiOut_7_arready = 1'b1;
+assign axiOut_7_rid    = 5'b0;
+assign axiOut_7_rdata  = 32'b0;
+assign axiOut_7_rresp  = 2'b0;
+assign axiOut_7_rlast  = 1'b0;
+assign axiOut_7_rvalid = 1'b0;
+assign axiOut_7_awready = 1'b1;
+assign axiOut_7_wready = 1'b1;
+assign axiOut_7_bid    = 5'b0;
+assign axiOut_7_bresp = 2'b0;
+assign axiOut_7_bvalid = 1'b0;
 
 wire confreg_int;
 
@@ -1090,6 +1035,7 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
 );
 
+// add your code
 core_top u_cpu(
     .intrpt ({7'h0,confreg_int} ), //high active
     
@@ -1627,62 +1573,6 @@ Kyber u_Kyber(
     .s_rid     (  Kyber_rid     ),
     .s_rresp   (  Kyber_rresp   ),
     .s_rlast   (  Kyber_rlast   )
-);
-
-// =============================================================================
-//  Matrix Multiplication Accelerator (寄存器接口，无 DMA)
-// =============================================================================
-matmul_axi_slave u_matmul (
-    .clk            ( sys_clk    ),
-    .rst_n          ( sys_resetn ),
-
-    // AXI4-Lite slave port (register access from crossbar output 7)
-    .s_axi_awvalid  ( matmul_awvalid ),
-    .s_axi_awready  ( matmul_awready ),
-    .s_axi_awaddr   ( matmul_awaddr  ),
-    .s_axi_awprot   ( matmul_awprot  ),
-    .s_axi_wvalid   ( matmul_wvalid  ),
-    .s_axi_wready   ( matmul_wready  ),
-    .s_axi_wdata    ( matmul_wdata   ),
-    .s_axi_wstrb    ( matmul_wstrb   ),
-    .s_axi_bvalid   ( matmul_bvalid  ),
-    .s_axi_bready   ( matmul_bready  ),
-    .s_axi_bresp    ( matmul_bresp   ),
-    .s_axi_arvalid  ( matmul_arvalid ),
-    .s_axi_arready  ( matmul_arready ),
-    .s_axi_araddr   ( matmul_araddr  ),
-    .s_axi_arprot   ( matmul_arprot  ),
-    .s_axi_rvalid   ( matmul_rvalid  ),
-    .s_axi_rready   ( matmul_rready  ),
-    .s_axi_rdata    ( matmul_rdata   ),
-    .s_axi_rresp    ( matmul_rresp   ),
-
-    // AXI4 master port (未使用，内部已置为无效)
-    .m_axi_awvalid  (  ),
-    .m_axi_awready  ( 1'b0 ),
-    .m_axi_awaddr   (  ),
-    .m_axi_awlen    (  ),
-    .m_axi_awsize   (  ),
-    .m_axi_awburst  (  ),
-    .m_axi_wvalid   (  ),
-    .m_axi_wready   ( 1'b0 ),
-    .m_axi_wdata    (  ),
-    .m_axi_wlast    (  ),
-    .m_axi_bvalid   ( 1'b0 ),
-    .m_axi_bready   (  ),
-    .m_axi_arvalid  (  ),
-    .m_axi_arready  ( 1'b0 ),
-    .m_axi_araddr   (  ),
-    .m_axi_arlen    (  ),
-    .m_axi_arsize   (  ),
-    .m_axi_arburst  (  ),
-    .m_axi_rvalid   ( 1'b0 ),
-    .m_axi_rready   (  ),
-    .m_axi_rdata    ( 32'b0 ),
-    .m_axi_rlast    ( 1'b0 ),
-
-    // Interrupt
-    .interrupt      ( matmul_interrupt  )
 );
 
 
