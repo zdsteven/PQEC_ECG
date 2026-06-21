@@ -594,17 +594,51 @@ wire [1 :0] axiOut_7_bresp  ;
 wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
 
-assign axiOut_7_arready = 1'b1;
-assign axiOut_7_rid    = 5'b0;
-assign axiOut_7_rdata  = 32'b0;
-assign axiOut_7_rresp  = 2'b0;
-assign axiOut_7_rlast  = 1'b0;
-assign axiOut_7_rvalid = 1'b0;
-assign axiOut_7_awready = 1'b1;
-assign axiOut_7_wready = 1'b1;
-assign axiOut_7_bid    = 5'b0;
-assign axiOut_7_bresp = 2'b0;
-assign axiOut_7_bvalid = 1'b0;
+matmul_axi_slave u_matmul (
+    .clk            ( sys_clk           ),
+    .resetn         ( sys_resetn        ),
+
+    .s_axi_awid     ( axiOut_7_awid     ),
+    .s_axi_awaddr   ( axiOut_7_awaddr   ),
+    .s_axi_awlen    ( axiOut_7_awlen    ),
+    .s_axi_awsize   ( axiOut_7_awsize   ),
+    .s_axi_awburst  ( axiOut_7_awburst  ),
+    .s_axi_awlock   ( axiOut_7_awlock   ),
+    .s_axi_awcache  ( axiOut_7_awcache  ),
+    .s_axi_awprot   ( axiOut_7_awprot   ),
+    .s_axi_awvalid  ( axiOut_7_awvalid  ),
+    .s_axi_awready  ( axiOut_7_awready  ),
+
+    .s_axi_wid      ( axiOut_7_wid      ),
+    .s_axi_wdata    ( axiOut_7_wdata    ),
+    .s_axi_wstrb    ( axiOut_7_wstrb    ),
+    .s_axi_wlast    ( axiOut_7_wlast    ),
+    .s_axi_wvalid   ( axiOut_7_wvalid   ),
+    .s_axi_wready   ( axiOut_7_wready   ),
+
+    .s_axi_bid      ( axiOut_7_bid      ),
+    .s_axi_bresp    ( axiOut_7_bresp    ),
+    .s_axi_bvalid   ( axiOut_7_bvalid   ),
+    .s_axi_bready   ( axiOut_7_bready   ),
+
+    .s_axi_arid     ( axiOut_7_arid     ),
+    .s_axi_araddr   ( axiOut_7_araddr   ),
+    .s_axi_arlen    ( axiOut_7_arlen    ),
+    .s_axi_arsize   ( axiOut_7_arsize   ),
+    .s_axi_arburst  ( axiOut_7_arburst  ),
+    .s_axi_arlock   ( axiOut_7_arlock   ),
+    .s_axi_arcache  ( axiOut_7_arcache  ),
+    .s_axi_arprot   ( axiOut_7_arprot   ),
+    .s_axi_arvalid  ( axiOut_7_arvalid  ),
+    .s_axi_arready  ( axiOut_7_arready  ),
+
+    .s_axi_rid      ( axiOut_7_rid      ),
+    .s_axi_rdata    ( axiOut_7_rdata    ),
+    .s_axi_rresp    ( axiOut_7_rresp    ),
+    .s_axi_rlast    ( axiOut_7_rlast    ),
+    .s_axi_rvalid   ( axiOut_7_rvalid   ),
+    .s_axi_rready   ( axiOut_7_rready   )
+);
 
 wire confreg_int;
 
