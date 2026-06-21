@@ -5,5 +5,5 @@ rtl/ip/PLL_2019_2/*
 obj/
 *.mif
 *.bin
-rtl/xsim.dir/*
-rtl/xvlog.pb
+xsim.dir/
+xvlog.pb
