@@ -152,10 +152,10 @@ wire signed [15:0] a_im_w = a_data_r[31:16];
 wire signed [15:0] b_re_w = fft_src_rdata_b[15:0];
 wire signed [15:0] b_im_w = fft_src_rdata_b[31:16];
 
-(* use_dsp = "yes" *) wire signed [31:0] mul_rr = b_re_w * tw_re_r;
-(* use_dsp = "yes" *) wire signed [31:0] mul_ii = b_im_w * tw_im_r;
-(* use_dsp = "yes" *) wire signed [31:0] mul_ri = b_re_w * tw_im_r;
-(* use_dsp = "yes" *) wire signed [31:0] mul_ir = b_im_w * tw_re_r;
+(* use_dsp = "no" *) wire signed [31:0] mul_rr = b_re_w * tw_re_r;
+(* use_dsp = "no" *) wire signed [31:0] mul_ii = b_im_w * tw_im_r;
+(* use_dsp = "no" *) wire signed [31:0] mul_ri = b_re_w * tw_im_r;
+(* use_dsp = "no" *) wire signed [31:0] mul_ir = b_im_w * tw_re_r;
 
 wire signed [31:0] bw_re_calc = (mul_rr >>> 15) - (mul_ii >>> 15);
 wire signed [31:0] bw_im_calc = (mul_ri >>> 15) + (mul_ir >>> 15);

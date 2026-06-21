@@ -1035,7 +1035,6 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
 );
 
-// add your code
 core_top u_cpu(
     .intrpt ({7'h0,confreg_int} ), //high active
     

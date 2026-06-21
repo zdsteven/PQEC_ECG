@@ -1,4 +1,4 @@
-module fqmul (
+(* use_dsp = "no" *) module fqmul (
     input sys_clk,
     input sys_resetn,
 
