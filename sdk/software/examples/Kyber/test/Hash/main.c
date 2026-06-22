@@ -13,23 +13,23 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define CONFREG_TIMER_CMP_OFFSET 0x4u
 #define CONFREG_TIMER_EN_OFFSET  0x8u
 
-static uint8_t g_hash_g_input_33[KYBER_SYMBYTES + 1];
-static uint8_t g_hash_g_input_64[2 * KYBER_SYMBYTES];
-static uint8_t g_hash_h_input[KYBER_PUBLICKEYBYTES];
-static uint8_t g_rkprf_key[KYBER_SYMBYTES];
-static uint8_t g_rkprf_input[KYBER_CIPHERTEXTBYTES];
-static uint8_t g_seed[KYBER_SYMBYTES];
+static uint8_t g_hash_g_input_33[KYBER_SYMBYTES + 1] __attribute__((aligned(64)));
+static uint8_t g_hash_g_input_64[2 * KYBER_SYMBYTES] __attribute__((aligned(64)));
+static uint8_t g_hash_h_input[KYBER_PUBLICKEYBYTES] __attribute__((aligned(64)));
+static uint8_t g_rkprf_key[KYBER_SYMBYTES] __attribute__((aligned(64)));
+static uint8_t g_rkprf_input[KYBER_CIPHERTEXTBYTES] __attribute__((aligned(64)));
+static uint8_t g_seed[KYBER_SYMBYTES] __attribute__((aligned(64)));
 
 static uint64_t g_sw_keccak[25];
-static uint64_t g_hw_keccak[25];
+static uint64_t g_hw_keccak[25] __attribute__((aligned(64)));
 static uint8_t g_sw_hash[2][64];
-static uint8_t g_hw_hash[2][64];
+static uint8_t g_hw_hash[2][64] __attribute__((aligned(64)));
 static polyvec g_sw_matrix[KYBER_K];
-static polyvec g_hw_matrix[KYBER_K];
+static polyvec g_hw_matrix[KYBER_K] __attribute__((aligned(64)));
 static polyvec g_sw_matrix_t[KYBER_K];
-static polyvec g_hw_matrix_t[KYBER_K];
+static polyvec g_hw_matrix_t[KYBER_K] __attribute__((aligned(64)));
 static poly g_sw_poly;
-static poly g_hw_poly;
+static poly g_hw_poly __attribute__((aligned(64)));
 
 static void init_confreg_timer(void)
 {
