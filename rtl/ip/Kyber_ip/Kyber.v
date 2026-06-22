@@ -43,12 +43,17 @@ module Kyber (
     //ctrl[0] = 1: start operation, 0: idle
     //ctrl[1] = 1: clear done status, 0: do not clear
     //ctrl[2] = 1: start NTT, 0: start INTT (only valid when ctrl[0] is 1)
+    //ctrl[3] = 1: reset Hash data
+    //ctrl[4] = 1: iterate Hash
+    //ctrl[6:5] Hash mode: 00:normal 01:rej 10:cbd(eta = 2) 11:cbd(eta = 3)
     localparam STATUS_ADDR     = 16'h0004;
     //status[0] = 1: operation done, 0: busy
     //status[1] = 1: NTT, 0: INTT
 
-    localparam DATA_BASE_ADDR  = 16'h0100;
-    localparam DATA_LAST_ADDR  = DATA_BASE_ADDR + 128 * 4 - 4;
+    localparam NTT_INTT_DATA_BASE_ADDR  = 16'h0100;
+    localparam NTT_INTT_DATA_LAST_ADDR  = NTT_INTT_DATA_BASE_ADDR + 128 * 4 - 4;//16'h02FC
+    localparam HASH_DATA_BASE_ADDR = 16'h0300;
+    localparam HASH_DATA_LAST_ADDR = HASH_DATA_BASE_ADDR + 128 * 4 - 4;//16'h04FC
 
 
 //-------------------------------{axi ctrl}begin----------------------------//
@@ -74,7 +79,8 @@ module Kyber (
     reg [7:0]   read_beats_left;
     reg         read_pipe_valid;
     reg         read_pipe_last;
-    reg         read_pipe_is_memory;
+    reg         read_pipe_is_ntt_intt;
+    reg         read_pipe_is_hash;
     reg [31:0]  read_pipe_rdata;
 
     wire ar_enter = s_arvalid & s_arready;
@@ -101,22 +107,50 @@ module Kyber (
     assign s_bresp  = 2'b0;
 
     reg [31:0] status_reg;
+    wire clear_done = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[1] == 1'b1);
 //--------------------------------{axi ctrl}end-----------------------------//
 
+    wire [6:0] write_word_index = {~write_addr[8], write_addr[7:2]};
+    wire [6:0] read_word_index = {~read_addr[8], read_addr[7:2]};
+
 //---------------------------------{NTT}begin-------------------------------//
-    wire write_addr_is_memory = (write_addr[15:0] >= DATA_BASE_ADDR) & (write_addr[15:0] <= DATA_LAST_ADDR);
-    wire read_addr_is_memory = (read_addr[15:0] >= DATA_BASE_ADDR) & (read_addr[15:0] <= DATA_LAST_ADDR);
-    wire ntt_intt_load_en = w_fire & write_addr_is_memory;
+    //wire write_addr_is_ntt_intt = (write_addr[15:0] >= NTT_INTT_DATA_BASE_ADDR) & (write_addr[15:0] <= NTT_INTT_DATA_LAST_ADDR);
+    //wire read_addr_is_ntt_intt = (read_addr[15:0] >= NTT_INTT_DATA_BASE_ADDR) & (read_addr[15:0] <= NTT_INTT_DATA_LAST_ADDR);
+    wire write_addr_is_ntt_intt = write_addr[9] ^ write_addr[8];
+    wire read_addr_is_ntt_intt = read_addr[9] ^ read_addr[8];
+    wire ntt_intt_load_en = w_fire & write_addr_is_ntt_intt;
     wire [23:0] ntt_intt_load_data = {s_wdata[27:16], s_wdata[11:0]};
     wire ntt_intt_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[0] == 1'b1);
-    wire [7:0] ntt_write_word_index = write_addr[9:2] - DATA_BASE_ADDR[9:2];
-    wire [7:0] ntt_read_word_index = read_addr[9:2] - DATA_BASE_ADDR[9:2];
-    wire [6:0] ntt_intt_data_address = write_active ? ntt_write_word_index[6:0] : ntt_read_word_index[6:0];
-    wire ntt_intt_read_en = read_issue & read_addr_is_memory;
+    //wire [7:0] ntt_write_word_index = write_addr[9:2] - NTT_INTT_DATA_BASE_ADDR[9:2];
+    //wire [7:0] ntt_read_word_index = read_addr[9:2] - NTT_INTT_DATA_BASE_ADDR[9:2];
+    wire [6:0] ntt_intt_data_address = write_active ? write_word_index : read_word_index;
+    wire ntt_intt_read_en = read_issue & read_addr_is_ntt_intt;
     wire [31:0] ntt_intt_read_data;
     wire ntt_intt_done;
-    wire ntt_intt_clear_done = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[1] == 1'b1);
 //---------------------------------{NTT}end---------------------------------//
+
+//---------------------------------{Hash}begin------------------------------//
+    //wire write_addr_is_hash = (write_addr[15:0] >= HASH_DATA_BASE_ADDR) & (write_addr[15:0] <= HASH_DATA_LAST_ADDR);
+    //wire read_addr_is_hash = (read_addr[15:0] >= HASH_DATA_BASE_ADDR) & (read_addr[15:0] <= HASH_DATA_LAST_ADDR);
+    wire write_addr_is_hash = write_addr[10] | (write_addr[9] & write_addr[8]);
+    wire read_addr_is_hash = read_addr[10] | (read_addr[9] & read_addr[8]);
+    //wire [8:0] hash_write_word_index = write_addr[10:2] - HASH_DATA_BASE_ADDR[10:2];
+    //wire [8:0] hash_read_word_index = read_addr[10:2] - HASH_DATA_BASE_ADDR[10:2];
+    wire Hash_reset_data = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[3] == 1'b1);
+    wire Hash_absorb = w_fire & write_addr_is_hash;
+    wire [5:0] Hash_absorb_address = write_word_index[5:0];
+    wire [31:0] Hash_absorb_data = s_wdata;
+    wire Hash_iterate = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[4] == 1'b1);
+    reg [1:0] Hash_mode;
+    wire Hash_mode_is_sample = Hash_mode[0] | Hash_mode[1];
+    wire Hash_squeeze = read_issue & read_addr_is_hash & ~Hash_mode_is_sample;
+    wire [5:0] Hash_squeeze_address = read_word_index[5:0];
+    wire [31:0] Hash_squeeze_data;
+    wire Hash_sample = read_issue & read_addr_is_hash & Hash_mode_is_sample;
+    wire [6:0] Hash_sample_out_address = read_word_index;
+    wire [31:0] Hash_sample_data;
+    wire Hash_done;
+//---------------------------------{Hash}end--------------------------------//
 
 //--------------------------------------------------------------------------------------------------------//
 //--------------------------------------------------------------------------------------------------------//
@@ -242,12 +276,21 @@ module Kyber (
             s_rlast_r  <= 1'b0;
             read_pipe_valid <= 1'b0;
             read_pipe_last <= 1'b0;
-            read_pipe_is_memory <= 1'b0;
+            read_pipe_is_ntt_intt <= 1'b0;
+            read_pipe_is_hash <= 1'b0;
             read_pipe_rdata <= 32'b0;
         end
         else begin
             if (pipe_can_advance) begin
-                s_rdata_r  <= read_pipe_is_memory ? ntt_intt_read_data : read_pipe_rdata;
+                if (read_pipe_is_ntt_intt) begin
+                    s_rdata_r <= ntt_intt_read_data;
+                end
+                else if (read_pipe_is_hash) begin
+                    s_rdata_r <= Hash_mode_is_sample ? Hash_sample_data : Hash_squeeze_data;
+                end
+                else begin
+                    s_rdata_r <= read_pipe_rdata;
+                end
                 s_rvalid_r <= 1'b1;
                 s_rlast_r  <= read_pipe_last;
             end
@@ -257,7 +300,8 @@ module Kyber (
 
             if (read_issue) begin
                 read_pipe_last <= (read_beats_left == 8'd1);
-                read_pipe_is_memory <= read_addr_is_memory;
+                read_pipe_is_ntt_intt <= read_addr_is_ntt_intt;
+                read_pipe_is_hash <= read_addr_is_hash;
                 read_pipe_rdata <= rdata_d;
             end
 
@@ -278,10 +322,13 @@ module Kyber (
         else if (ntt_intt_start) begin
             status_reg[1:0] <= {s_wdata[2], 1'b0};
         end
-        else if (ntt_intt_clear_done) begin
+        else if (Hash_iterate) begin
             status_reg[0] <= 1'b0;
         end
-        else if (ntt_intt_done) begin
+        else if (clear_done) begin
+            status_reg[0] <= 1'b0;
+        end
+        else if (ntt_intt_done | Hash_done) begin
             status_reg[0] <= 1'b1;
         end
     end
@@ -301,6 +348,35 @@ module Kyber (
         .done         (ntt_intt_done        )
     );
 //---------------------------------{NTT}end---------------------------------//
+
+//---------------------------------{Hash}begin------------------------------//
+    always @(posedge aclk) begin
+        if (~aresetn) begin
+            Hash_mode <= 2'b0;
+        end
+        else if (Hash_iterate) begin
+            Hash_mode <= s_wdata[6:5];
+        end
+    end
+
+    Hash u_Hash(
+        .aclk               (aclk                    ),
+        .aresetn            (aresetn                 ),
+        .reset_data         (Hash_reset_data         ),
+        .absorb             (Hash_absorb             ),
+        .absorb_address     (Hash_absorb_address     ),
+        .absorb_data        (Hash_absorb_data        ),
+        .iterate            (Hash_iterate            ),
+        .mode               (Hash_mode               ),
+        .squeeze            (Hash_squeeze            ),
+        .squeeze_address    (Hash_squeeze_address    ),
+        .squeeze_data       (Hash_squeeze_data       ),
+        .sample             (Hash_sample             ),
+        .sample_out_address (Hash_sample_out_address ),
+        .sample_data        (Hash_sample_data        ),
+        .done               (Hash_done               )
+    );
+//---------------------------------{Hash}end--------------------------------//
 
 
     
