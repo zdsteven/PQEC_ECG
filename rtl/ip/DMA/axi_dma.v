@@ -186,8 +186,10 @@ module axi_dma (
                        (dma_len_cfg[1:0] != 2'b00);
     wire kyber_src_cfg = (dma_src_addr[31:20] == 12'h1f6);
     wire kyber_dst_cfg = (dma_dst_addr[31:20] == 12'h1f6);
-    wire src_burst_allow_cfg = (dma_src_addr[28:24] != 5'h1f) | kyber_src_cfg;
-    wire dst_burst_allow_cfg = (dma_dst_addr[28:24] != 5'h1f) | kyber_dst_cfg;
+    wire matmul_src_cfg = (dma_src_addr[31:20] == 12'h1f5);
+    wire matmul_dst_cfg = (dma_dst_addr[31:20] == 12'h1f5);
+    wire src_burst_allow_cfg = (dma_src_addr[28:24] != 5'h1f) | kyber_src_cfg | matmul_src_cfg;
+    wire dst_burst_allow_cfg = (dma_dst_addr[28:24] != 5'h1f) | kyber_dst_cfg | matmul_dst_cfg;
     wire chunk_allow_cfg = src_burst_allow_cfg | dst_burst_allow_cfg;
     wire stream_cfg = kyber_src_cfg ^ kyber_dst_cfg;
     wire [7:0] burst_max_words = (kyber_src_cfg | kyber_dst_cfg) ? KYBER_BURST_MAX_WORDS : DEFAULT_BURST_MAX_WORDS;

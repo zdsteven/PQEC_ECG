@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "matmul.h"
+#include "dma.h"
 #include "confreg_time.h"
 #include "core_time.h"
 
@@ -16,28 +17,45 @@ unsigned long CORE_CLOCKS_PER_SEC    = 33000000L;
 #define INPUT_OFFSET      0x00000000u
 #define RESULT_OFFSET     0x0009c400u
 
-/* Precomputed CRC32 lookup table for single-byte values (only 0x00 entry needed
-   for the CRC pass, but we compute on-the-fly to save code size) */
-static unsigned int crc32_byte(unsigned int crc, unsigned char b)
+#define DMA_CTRL_REG   (DMA_BASEADDR + 0x00)
+#define DMA_STATUS_REG (DMA_BASEADDR + 0x04)
+#define DMA_SRC_REG    (DMA_BASEADDR + 0x08)
+#define DMA_DST_REG    (DMA_BASEADDR + 0x0c)
+#define DMA_LEN_REG    (DMA_BASEADDR + 0x10)
+
+#define MATMUL_AB_BUS_ADDR  (MATMUL_A_BASE_ADDR & 0x1fffffffu)
+#define GROUP_BYTES         128u
+
+/* CRC32 lookup table — generated at startup to avoid 1KB in binary */
+static unsigned int crc_tab[256];
+
+static void crc_init(void)
 {
-    int j;
-    crc ^= b;
-    for (j = 0; j < 8; j++) {
-        if (crc & 1)
-            crc = (crc >> 1) ^ 0xedb88320u;
-        else
-            crc = crc >> 1;
+    unsigned int i, j, c;
+    for (i = 0; i < 256; i++) {
+        c = i;
+        for (j = 0; j < 8; j++)
+            c = (c >> 1) ^ (0xedb88320u & (-(c & 1)));
+        crc_tab[i] = c;
     }
-    return crc;
 }
 
-/* Inline helper: compute CRC32 for one 32-bit word */
 static inline unsigned int crc32_word(unsigned int crc, unsigned int word)
 {
-    crc = crc32_byte(crc, (unsigned char)(word        & 0xff));
-    crc = crc32_byte(crc, (unsigned char)((word >> 8)  & 0xff));
-    crc = crc32_byte(crc, (unsigned char)((word >> 16) & 0xff));
-    return crc32_byte(crc, (unsigned char)((word >> 24) & 0xff));
+    crc = crc_tab[(crc ^ word) & 0xff] ^ (crc >> 8);
+    crc = crc_tab[(crc ^ (word >> 8)) & 0xff] ^ (crc >> 8);
+    crc = crc_tab[(crc ^ (word >> 16)) & 0xff] ^ (crc >> 8);
+    return crc_tab[(crc ^ (word >> 24)) & 0xff] ^ (crc >> 8);
+}
+
+static inline void dma_fast(unsigned int src, unsigned int dst, unsigned int len)
+{
+    RegWrite(DMA_SRC_REG, src);
+    RegWrite(DMA_DST_REG, dst);
+    RegWrite(DMA_LEN_REG, len);
+    RegWrite(DMA_CTRL_REG, 0x2);
+    RegWrite(DMA_CTRL_REG, 0x1);
+    while (RegRead(DMA_STATUS_REG) & 0x1) {}
 }
 
 int main(int argc, char **argv)
@@ -51,35 +69,25 @@ int main(int argc, char **argv)
     input_base  = (volatile unsigned int *)(EXTRAM_BASE + INPUT_OFFSET);
     result_base = (volatile unsigned int *)(EXTRAM_BASE + RESULT_OFFSET);
 
+    crc_init();
+
     printf("MATMUL_START\n");
 
     crc = 0xffffffffu;
 
-    /* Main computation loop — inline register access, no intermediate copies */
     for (group = 0; group < MATMUL_GROUP_NUM; group++) {
-        volatile unsigned int *grp_in  = input_base  + (group * 32);
+        unsigned int grp_bus_addr = (unsigned int)(unsigned long)input_base + (group << 7);
         volatile unsigned int *grp_out = result_base + (group * 48);
-        volatile unsigned int *mm_a    = (volatile unsigned int *)MATMUL_A_BASE_ADDR;
-        volatile unsigned int *mm_b    = (volatile unsigned int *)MATMUL_B_BASE_ADDR;
         volatile unsigned int *mm_c    = (volatile unsigned int *)MATMUL_C_BASE_ADDR;
 
-        /* Stream A[16] from ExtRAM directly to matmul A registers */
-        for (w = 0; w < 16; w++) {
-            mm_a[w] = grp_in[w];
-        }
-        /* Stream B[16] from ExtRAM directly to matmul B registers */
-        for (w = 0; w < 16; w++) {
-            mm_b[w] = grp_in[16 + w];
-        }
+        /* DMA burst: A[16]+B[16] → matmul registers */
+        dma_fast(grp_bus_addr, MATMUL_AB_BUS_ADDR, GROUP_BYTES);
 
-        /* Start computation */
+        /* Compute */
         *(volatile unsigned int *)MATMUL_CTRL_ADDR = MATMUL_CTRL_START;
+        while (*(volatile unsigned int *)MATMUL_STATUS_ADDR & MATMUL_STATUS_BUSY) {}
 
-        /* Wait for completion */
-        while (*(volatile unsigned int *)MATMUL_STATUS_ADDR & MATMUL_STATUS_BUSY) {
-        }
-
-        /* Read C[48] from matmul registers, write to ExtRAM, and accumulate CRC32 */
+        /* Read results + CRC (merge to avoid separate CRC pass) */
         for (w = 0; w < 48; w++) {
             unsigned int val = mm_c[w];
             grp_out[w] = val;

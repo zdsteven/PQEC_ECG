@@ -66,6 +66,7 @@ reg        aw_hold_valid;
 reg [31:0] wdata_hold;
 reg [3:0]  wstrb_hold;
 reg        w_hold_valid;
+reg [7:0]  awlen_cnt;    /* decrements per beat, 0 = last beat */
 
 reg        busy;
 reg        done;
@@ -77,13 +78,15 @@ wire       start_fire;
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
 
-assign s_axi_awready = !aw_hold_valid;
-assign s_axi_wready  = !w_hold_valid;
+assign s_axi_awready = !aw_hold_valid && !s_axi_bvalid;
+assign s_axi_wready  = aw_hold_valid && !w_hold_valid && !s_axi_bvalid;
 assign s_axi_bresp   = 2'b00;
 assign s_axi_arready = !s_axi_rvalid;
 assign s_axi_rresp   = 2'b00;
 assign s_axi_rlast   = 1'b1;
 
+wire aw_handshake = s_axi_awvalid && s_axi_awready;
+wire w_handshake  = s_axi_wvalid  && s_axi_wready;
 assign write_fire = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 assign start_fire = write_fire && (write_offset == ADDR_CTRL) && wdata_hold[0] && !busy;
 
@@ -197,6 +200,7 @@ always @(posedge clk) begin
         wdata_hold    <= 32'b0;
         wstrb_hold    <= 4'b0;
         w_hold_valid  <= 1'b0;
+        awlen_cnt     <= 8'b0;
         s_axi_bid     <= 5'b0;
         s_axi_bvalid  <= 1'b0;
         s_axi_rid     <= 5'b0;
@@ -213,28 +217,41 @@ always @(posedge clk) begin
             c_data[i] <= 66'b0;
         end
     end else begin
-        if (s_axi_awvalid && s_axi_awready) begin
+        /* Write address channel: capture on handshake */
+        if (aw_handshake) begin
             awaddr_hold   <= s_axi_awaddr;
             awid_hold     <= s_axi_awid;
+            awlen_cnt     <= s_axi_awlen;
             aw_hold_valid <= 1'b1;
         end
 
-        if (s_axi_wvalid && s_axi_wready) begin
+        /* Write data channel: capture on handshake */
+        if (w_handshake) begin
             wdata_hold   <= s_axi_wdata;
             wstrb_hold   <= s_axi_wstrb;
             w_hold_valid <= 1'b1;
         end
 
+        /* Write response: clear on handshake */
         if (s_axi_bvalid && s_axi_bready) begin
             s_axi_bvalid <= 1'b0;
         end
 
+        /* Process each write beat */
         if (write_fire) begin
-            s_axi_bid     <= awid_hold;
-            s_axi_bvalid  <= 1'b1;
-            aw_hold_valid <= 1'b0;
-            w_hold_valid  <= 1'b0;
+            s_axi_bid    <= awid_hold;
+            w_hold_valid <= 1'b0;
 
+            /* Last beat: issue response */
+            if (awlen_cnt == 8'd0) begin
+                s_axi_bvalid  <= 1'b1;
+                aw_hold_valid <= 1'b0;
+            end else begin
+                awlen_cnt  <= awlen_cnt - 8'd1;
+                awaddr_hold <= awaddr_hold + 32'd4;
+            end
+
+            /* Register write */
             if (write_offset == ADDR_SRC_BASE) begin
                 src_base <= apply_wstrb(src_base, wdata_hold, wstrb_hold);
             end else if (write_offset == ADDR_DST_BASE) begin
