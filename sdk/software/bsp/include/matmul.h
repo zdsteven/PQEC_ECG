@@ -32,6 +32,10 @@ void MATMul_Clear_Done(void);
 uint32_t MATMul_Is_Busy(void);
 uint32_t MATMul_Is_Done(void);
 uint32_t MATMul_Has_Error(void);
+/* Single-group register-window path, useful for bring-up and debugging. */
 void MATMul_Compute(const uint32_t *a, const uint32_t *b, uint32_t *c);
+/* Fast benchmark path: DMA reads all groups, computes, writes results, and CRCs. */
+int MATMul_Compute_Batch_DMA(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles);
+uint32_t MATMul_Get_Batch_CRC(void);
 
 #endif

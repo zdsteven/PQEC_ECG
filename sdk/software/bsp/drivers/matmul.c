@@ -1,4 +1,5 @@
 #include "matmul.h"
+#include "dma.h"
 
 void MATMul_Write_A(const uint32_t *a)
 {
@@ -51,10 +52,22 @@ uint32_t MATMul_Has_Error(void)
 
 void MATMul_Compute(const uint32_t *a, const uint32_t *b, uint32_t *c)
 {
+    /* Compatibility path: CPU pushes one A/B pair through the register window. */
     MATMul_Write_A(a);
     MATMul_Write_B(b);
     MATMul_Start();
     while (MATMul_Is_Busy()) {
     }
     MATMul_Read_C(c);
+}
+
+int MATMul_Compute_Batch_DMA(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles)
+{
+    /* Performance path: one DMA command covers all groups and computes CRC in hardware. */
+    return DMA_Matmul_Compute_Blocking(src_addr, dst_addr, group_num, timeout_cycles);
+}
+
+uint32_t MATMul_Get_Batch_CRC(void)
+{
+    return DMA_Get_Matmul_CRC();
 }

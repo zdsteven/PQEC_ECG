@@ -1,3 +1,6 @@
+// AXI-lite-like register window for single 4x4 matrix multiplication.
+// The optimized benchmark path now uses the DMA batch engine, but this slave is
+// kept as a simple, debuggable compatibility path for CPU-driven one-group tests.
 module matmul_axi_slave (
     input             clk,
     input             resetn,
@@ -44,6 +47,8 @@ module matmul_axi_slave (
     input             s_axi_rready
 );
 
+// Register layout. A/B are row-major 16-word windows. C is exposed as 48 words
+// using the contest 66-bit packing: low32, high32, top2-zero-extended.
 localparam ADDR_CTRL      = 12'h000;
 localparam ADDR_STATUS    = 12'h004;
 localparam ADDR_SRC_BASE  = 12'h008;
@@ -71,7 +76,12 @@ reg [7:0]  awlen_cnt;    /* decrements per beat, 0 = last beat */
 reg        busy;
 reg        done;
 reg        error;
-reg [3:0]  calc_index;
+reg [1:0]  calc_row;
+reg [1:0]  calc_col;
+reg [1:0]  calc_k;
+reg [4:0]  calc_bit;
+reg [65:0] calc_acc;
+reg [65:0] calc_a_shift;
 
 wire       write_fire;
 wire       start_fire;
@@ -89,6 +99,10 @@ wire aw_handshake = s_axi_awvalid && s_axi_awready;
 wire w_handshake  = s_axi_wvalid  && s_axi_wready;
 assign write_fire = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 assign start_fire = write_fire && (write_offset == ADDR_CTRL) && wdata_hold[0] && !busy;
+wire [3:0]  calc_c_index = {calc_row, calc_col};
+wire [65:0] calc_addend = b_data[{calc_k, calc_col}][calc_bit] ? calc_a_shift : 66'd0;
+wire [65:0] calc_acc_next = calc_acc + calc_addend;
+wire        calc_element_done = (calc_k == 2'd3) && (calc_bit == 5'd31);
 
 function [31:0] apply_wstrb;
     input [31:0] old_value;
@@ -103,34 +117,7 @@ function [31:0] apply_wstrb;
     end
 endfunction
 
-function [63:0] mul_u32_shift_add;
-    input [31:0] lhs;
-    input [31:0] rhs;
-    integer bit_index;
-    begin
-        mul_u32_shift_add = 64'b0;
-        for (bit_index = 0; bit_index < 32; bit_index = bit_index + 1) begin
-            if (rhs[bit_index]) begin
-                mul_u32_shift_add = mul_u32_shift_add + ({32'b0, lhs} << bit_index);
-            end
-        end
-    end
-endfunction
-
-function [65:0] calc_c_element;
-    input [3:0] index;
-    reg [1:0] row;
-    reg [1:0] col;
-    begin
-        row = index[3:2];
-        col = index[1:0];
-        calc_c_element = {2'b0, mul_u32_shift_add(a_data[{row, 2'd0}], b_data[{2'd0, col}])}
-                       + {2'b0, mul_u32_shift_add(a_data[{row, 2'd1}], b_data[{2'd1, col}])}
-                       + {2'b0, mul_u32_shift_add(a_data[{row, 2'd2}], b_data[{2'd2, col}])}
-                       + {2'b0, mul_u32_shift_add(a_data[{row, 2'd3}], b_data[{2'd3, col}])};
-    end
-endfunction
-
+// Read-side formatter for the 16 packed 66-bit C elements.
 function [31:0] c_read_word;
     input [5:0] word_index;
     begin
@@ -209,7 +196,12 @@ always @(posedge clk) begin
         busy          <= 1'b0;
         done          <= 1'b0;
         error         <= 1'b0;
-        calc_index    <= 4'b0;
+        calc_row      <= 2'b0;
+        calc_col      <= 2'b0;
+        calc_k        <= 2'b0;
+        calc_bit      <= 5'b0;
+        calc_acc      <= 66'b0;
+        calc_a_shift  <= 66'b0;
 
         for (i = 0; i < 16; i = i + 1) begin
             a_data[i] <= 32'b0;
@@ -300,18 +292,46 @@ always @(posedge clk) begin
         end
 
         if (start_fire) begin
-            busy       <= 1'b1;
-            done       <= 1'b0;
-            error      <= 1'b0;
-            calc_index <= 4'd0;
+            busy         <= 1'b1;
+            done         <= 1'b0;
+            error        <= 1'b0;
+            calc_row     <= 2'd0;
+            calc_col     <= 2'd0;
+            calc_k       <= 2'd0;
+            calc_bit     <= 5'd0;
+            calc_acc     <= 66'd0;
+            calc_a_shift <= {34'd0, a_data[0]};
         end else if (busy) begin
-            c_data[calc_index] <= calc_c_element(calc_index);
-            if (calc_index == 4'd15) begin
-                busy       <= 1'b0;
-                done       <= 1'b1;
-                calc_index <= 4'd0;
+            if (calc_element_done) begin
+                c_data[calc_c_index] <= calc_acc_next;
+                calc_acc <= 66'd0;
+                calc_k <= 2'd0;
+                calc_bit <= 5'd0;
+
+                if ((calc_row == 2'd3) && (calc_col == 2'd3)) begin
+                    busy <= 1'b0;
+                    done <= 1'b1;
+                    calc_row <= 2'd0;
+                    calc_col <= 2'd0;
+                    calc_a_shift <= 66'd0;
+                end else if (calc_col == 2'd3) begin
+                    calc_row <= calc_row + 2'd1;
+                    calc_col <= 2'd0;
+                    calc_a_shift <= {34'd0, a_data[{calc_row + 2'd1, 2'd0}]};
+                end else begin
+                    calc_col <= calc_col + 2'd1;
+                    calc_a_shift <= {34'd0, a_data[{calc_row, 2'd0}]};
+                end
             end else begin
-                calc_index <= calc_index + 4'd1;
+                calc_acc <= calc_acc_next;
+                if (calc_bit == 5'd31) begin
+                    calc_bit <= 5'd0;
+                    calc_k <= calc_k + 2'd1;
+                    calc_a_shift <= {34'd0, a_data[{calc_row, calc_k + 2'd1}]};
+                end else begin
+                    calc_bit <= calc_bit + 5'd1;
+                    calc_a_shift <= {calc_a_shift[64:0], 1'b0};
+                end
             end
         end
     end

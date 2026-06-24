@@ -76,6 +76,9 @@ module axi_dma (
     input            aresetn
 );
 
+    // Register map used by the CPU-side AXI slave port.
+    // CTRL bit0 starts normal DMA, bit1 clears DONE, bit2 selects matmul batch mode.
+    // In normal DMA LEN is a byte count. In matmul batch mode LEN is the group count.
     localparam CTRL_ADDR      = 16'h0000;
     localparam STATUS_ADDR    = 16'h0004;
     localparam SRC_ADDR       = 16'h0008;
@@ -85,17 +88,27 @@ module axi_dma (
     localparam CUR_DST_ADDR   = 16'h0018;
     localparam REMAIN_ADDR    = 16'h001c;
     localparam VERSION_ADDR   = 16'h0020;
+    localparam MATMUL_CRC_ADDR = 16'h0024;
 
     localparam DEFAULT_BURST_MAX_WORDS = 8'd64;
     localparam KYBER_BURST_MAX_WORDS   = 8'd128;
 
-    localparam M_IDLE = 3'd0;
-    localparam M_AR   = 3'd1;
-    localparam M_R    = 3'd2;
-    localparam M_AW   = 3'd3;
-    localparam M_W    = 3'd4;
-    localparam M_B    = 3'd5;
-    localparam M_STREAM = 3'd6;
+    // One master FSM is shared by legacy memcpy/stream DMA and the matmul batch path.
+    // M_MM_* states are intentionally kept inside DMA so software only launches once.
+    localparam M_IDLE      = 5'd0;
+    localparam M_AR        = 5'd1;
+    localparam M_R         = 5'd2;
+    localparam M_AW        = 5'd3;
+    localparam M_W         = 5'd4;
+    localparam M_B         = 5'd5;
+    localparam M_STREAM    = 5'd6;
+    localparam M_MM_AR     = 5'd7;
+    localparam M_MM_R      = 5'd8;
+    localparam M_MM_CALC   = 5'd9;
+    localparam M_MM_AW     = 5'd10;
+    localparam M_MM_W      = 5'd11;
+    localparam M_MM_B      = 5'd12;
+    localparam M_MM_CRC    = 5'd13;
 
     localparam RD_IDLE = 2'd0;
     localparam RD_AR   = 2'd1;
@@ -129,7 +142,7 @@ module axi_dma (
     reg dma_busy;
     reg dma_done;
     reg dma_error;
-    reg [2:0] dma_state;
+    reg [4:0] dma_state;
 
     reg m_arvalid_r;
     reg [31:0] m_araddr_r;
@@ -160,6 +173,24 @@ module axi_dma (
     reg [31:0] stream_rd_remain;
     reg [31:0] stream_wr_remain;
 
+    // Matmul batch registers. The batch engine reads A/B from ExtRAM, computes C,
+    // writes the 48-word packed result, and folds those same words into CRC32.
+    reg [31:0] matmul_crc;
+    reg [31:0] mm_crc_state;
+    reg [31:0] mm_groups_left;
+    reg [5:0] mm_rd_cnt;
+    reg [1:0] mm_calc_k;
+    reg [1:0] mm_calc_row;
+    reg [4:0] mm_calc_bit;
+    reg [5:0] mm_wr_cnt;
+    reg [31:0] mm_crc_word;
+    reg [1:0] mm_crc_byte;
+    reg [31:0] mm_a [0:15];
+    reg [31:0] mm_b [0:15];
+    reg [65:0] mm_c [0:15];
+    reg [65:0] mm_a_shift [0:3];
+    integer i;
+
     wire ar_enter = s_arvalid & s_arready;
     wire r_retire = s_rvalid_r & s_rready & s_rlast_r;
     wire aw_enter = s_awvalid & s_awready;
@@ -172,6 +203,7 @@ module axi_dma (
     wire write_len     = w_enter & (buf_addr[15:0] == LEN_ADDR);
     wire ctrl_start    = write_ctrl & s_wdata[0];
     wire ctrl_clr_done = write_ctrl & s_wdata[1];
+    wire ctrl_matmul   = write_ctrl & s_wdata[2];
     wire m_ar_fire = m_arvalid_r & m_arready;
     wire m_r_fire  = m_rready_r & m_rvalid;
     wire m_aw_fire = m_awvalid_r & m_awready;
@@ -184,6 +216,9 @@ module axi_dma (
                        (dma_src_addr[1:0] != 2'b00) |
                        (dma_dst_addr[1:0] != 2'b00) |
                        (dma_len_cfg[1:0] != 2'b00);
+    wire matmul_cfg_invalid = (dma_len_cfg == 32'd0) |
+                              (dma_src_addr[1:0] != 2'b00) |
+                              (dma_dst_addr[1:0] != 2'b00);
     wire kyber_src_cfg = (dma_src_addr[31:20] == 12'h1f6);
     wire kyber_dst_cfg = (dma_dst_addr[31:20] == 12'h1f6);
     wire matmul_src_cfg = (dma_src_addr[31:20] == 12'h1f5);
@@ -215,6 +250,8 @@ module axi_dma (
     wire dst_burst_allow_next = (dma_next_dst[28:24] != 5'h1f);
     wire chunk_allow_next = src_burst_allow_next | dst_burst_allow_next;
     wire [7:0] dma_words_from_next = chunk_allow_next ? ((dma_remain_next > burst_max_bytes) ? burst_max_words : dma_remain_next[9:2]) : 8'd1;
+    wire [5:0] mm_wr_word_next = mm_wr_cnt[5:0] + 6'd1;
+    wire [1:0] mm_calc_next_k = mm_calc_k + 2'd1;
 
     wire [31:0] status_data = {29'd0, dma_error, dma_done, dma_busy};
     wire [31:0] rdata_d =   buf_addr[15:0] == CTRL_ADDR    ? 32'd0        :
@@ -225,11 +262,95 @@ module axi_dma (
                             buf_addr[15:0] == CUR_SRC_ADDR ? dma_cur_src   :
                             buf_addr[15:0] == CUR_DST_ADDR ? dma_cur_dst   :
                             buf_addr[15:0] == REMAIN_ADDR  ? dma_remain    :
-                            buf_addr[15:0] == VERSION_ADDR ? 32'h444d_4131 :
+                            buf_addr[15:0] == VERSION_ADDR ? 32'h444d_4132 :
+                            buf_addr[15:0] == MATMUL_CRC_ADDR ? matmul_crc  :
                             32'd0;
 
     assign s_arready = ~axi_busy & (!axi_r_or_w | !s_awvalid);
     assign s_awready = ~axi_busy & ( axi_r_or_w | !s_arvalid);
+
+    // IEEE CRC-32 update for one little-endian byte. Four short CRC cycles per
+    // result word replace the previous one-cycle 32-bit XOR chain.
+    function [31:0] crc32_next_byte;
+        input [31:0] crc_in;
+        input [7:0] data_in;
+        integer bit_index;
+        reg [31:0] crc_work;
+        reg [7:0] data_work;
+        begin
+            crc_work = crc_in;
+            data_work = data_in;
+            for (bit_index = 0; bit_index < 8; bit_index = bit_index + 1) begin
+                if ((crc_work[0] ^ data_work[0]) != 1'b0) begin
+                    crc_work = (crc_work >> 1) ^ 32'hedb88320;
+                end
+                else begin
+                    crc_work = crc_work >> 1;
+                end
+                data_work = data_work >> 1;
+            end
+            crc32_next_byte = crc_work;
+        end
+    endfunction
+
+    // Convert the internal 66-bit C matrix into the contest result format:
+    // low 32 bits, high 32 bits, then the top 2 bits zero-extended to 32 bits.
+    function [31:0] mm_result_word;
+        input [5:0] word_index;
+        begin
+            case (word_index)
+                6'd0:  mm_result_word = mm_c[0][31:0];
+                6'd1:  mm_result_word = mm_c[0][63:32];
+                6'd2:  mm_result_word = {30'b0, mm_c[0][65:64]};
+                6'd3:  mm_result_word = mm_c[1][31:0];
+                6'd4:  mm_result_word = mm_c[1][63:32];
+                6'd5:  mm_result_word = {30'b0, mm_c[1][65:64]};
+                6'd6:  mm_result_word = mm_c[2][31:0];
+                6'd7:  mm_result_word = mm_c[2][63:32];
+                6'd8:  mm_result_word = {30'b0, mm_c[2][65:64]};
+                6'd9:  mm_result_word = mm_c[3][31:0];
+                6'd10: mm_result_word = mm_c[3][63:32];
+                6'd11: mm_result_word = {30'b0, mm_c[3][65:64]};
+                6'd12: mm_result_word = mm_c[4][31:0];
+                6'd13: mm_result_word = mm_c[4][63:32];
+                6'd14: mm_result_word = {30'b0, mm_c[4][65:64]};
+                6'd15: mm_result_word = mm_c[5][31:0];
+                6'd16: mm_result_word = mm_c[5][63:32];
+                6'd17: mm_result_word = {30'b0, mm_c[5][65:64]};
+                6'd18: mm_result_word = mm_c[6][31:0];
+                6'd19: mm_result_word = mm_c[6][63:32];
+                6'd20: mm_result_word = {30'b0, mm_c[6][65:64]};
+                6'd21: mm_result_word = mm_c[7][31:0];
+                6'd22: mm_result_word = mm_c[7][63:32];
+                6'd23: mm_result_word = {30'b0, mm_c[7][65:64]};
+                6'd24: mm_result_word = mm_c[8][31:0];
+                6'd25: mm_result_word = mm_c[8][63:32];
+                6'd26: mm_result_word = {30'b0, mm_c[8][65:64]};
+                6'd27: mm_result_word = mm_c[9][31:0];
+                6'd28: mm_result_word = mm_c[9][63:32];
+                6'd29: mm_result_word = {30'b0, mm_c[9][65:64]};
+                6'd30: mm_result_word = mm_c[10][31:0];
+                6'd31: mm_result_word = mm_c[10][63:32];
+                6'd32: mm_result_word = {30'b0, mm_c[10][65:64]};
+                6'd33: mm_result_word = mm_c[11][31:0];
+                6'd34: mm_result_word = mm_c[11][63:32];
+                6'd35: mm_result_word = {30'b0, mm_c[11][65:64]};
+                6'd36: mm_result_word = mm_c[12][31:0];
+                6'd37: mm_result_word = mm_c[12][63:32];
+                6'd38: mm_result_word = {30'b0, mm_c[12][65:64]};
+                6'd39: mm_result_word = mm_c[13][31:0];
+                6'd40: mm_result_word = mm_c[13][63:32];
+                6'd41: mm_result_word = {30'b0, mm_c[13][65:64]};
+                6'd42: mm_result_word = mm_c[14][31:0];
+                6'd43: mm_result_word = mm_c[14][63:32];
+                6'd44: mm_result_word = {30'b0, mm_c[14][65:64]};
+                6'd45: mm_result_word = mm_c[15][31:0];
+                6'd46: mm_result_word = mm_c[15][63:32];
+                6'd47: mm_result_word = {30'b0, mm_c[15][65:64]};
+                default: mm_result_word = 32'd0;
+            endcase
+        end
+    endfunction
 
     always @(posedge aclk) begin
         if (~aresetn) begin
@@ -360,6 +481,24 @@ module axi_dma (
             stream_wr_addr <= 32'd0;
             stream_rd_remain <= 32'd0;
             stream_wr_remain <= 32'd0;
+            matmul_crc <= 32'd0;
+            mm_crc_state <= 32'hffff_ffff;
+            mm_groups_left <= 32'd0;
+            mm_rd_cnt <= 6'd0;
+            mm_calc_k <= 2'd0;
+            mm_calc_row <= 2'd0;
+            mm_calc_bit <= 5'd0;
+            mm_wr_cnt <= 6'd0;
+            mm_crc_word <= 32'd0;
+            mm_crc_byte <= 2'd0;
+            for (i = 0; i < 16; i = i + 1) begin
+                mm_a[i] <= 32'd0;
+                mm_b[i] <= 32'd0;
+                mm_c[i] <= 66'd0;
+            end
+            for (i = 0; i < 4; i = i + 1) begin
+                mm_a_shift[i] <= 66'd0;
+            end
         end
         else begin
             dma_finish <= 1'b0;
@@ -389,7 +528,40 @@ module axi_dma (
                         dma_rd_cnt <= 8'd0;
                         dma_wr_cnt <= 8'd0;
 
-                        if (cfg_invalid) begin
+                        if (ctrl_matmul) begin
+                            // Batch matmul mode: SRC points to A/B groups, DST points
+                            // to the packed C result area, LEN is number of groups.
+                            if (matmul_cfg_invalid) begin
+                                dma_busy <= 1'b0;
+                                dma_done <= 1'b1;
+                                dma_error <= 1'b1;
+                                dma_finish <= 1'b1;
+                            end
+                            else begin
+                                dma_busy <= 1'b1;
+                                dma_done <= 1'b0;
+                                dma_error <= 1'b0;
+                                dma_cur_src <= dma_src_addr;
+                                dma_cur_dst <= dma_dst_addr;
+                                dma_remain <= dma_len_cfg;
+                                matmul_crc <= 32'd0;
+                                mm_crc_state <= 32'hffff_ffff;
+                                mm_groups_left <= dma_len_cfg;
+                                mm_rd_cnt <= 6'd0;
+                                mm_calc_k <= 2'd0;
+                                mm_calc_row <= 2'd0;
+                                mm_calc_bit <= 5'd0;
+                                mm_wr_cnt <= 6'd0;
+                                mm_crc_word <= 32'd0;
+                                mm_crc_byte <= 2'd0;
+                                m_araddr_r <= dma_src_addr;
+                                m_arlen_r <= 8'd31;
+                                m_arvalid_r <= 1'b1;
+                                m_rready_r <= 1'b0;
+                                dma_state <= M_MM_AR;
+                            end
+                        end
+                        else if (cfg_invalid) begin
                             dma_busy <= 1'b0;
                             dma_done <= 1'b1;
                             dma_error <= 1'b1;
@@ -432,6 +604,213 @@ module axi_dma (
                             m_arvalid_r <= 1'b1;
                             m_rready_r <= 1'b0;
                             dma_state <= M_AR;
+                        end
+                    end
+                end
+
+                // Issue a fixed 32-word burst for one input group:
+                // A[0..15] followed by B[0..15].
+                M_MM_AR: begin
+                    if (m_ar_fire) begin
+                        m_arvalid_r <= 1'b0;
+                        m_rready_r <= 1'b1;
+                        dma_state <= M_MM_R;
+                    end
+                end
+
+                // Capture one A/B group. The source address has already been
+                // converted to the physical bus view by software.
+                M_MM_R: begin
+                    if (m_r_fire) begin
+                        if (m_rresp != 2'b00) begin
+                            m_rready_r <= 1'b0;
+                            m_arvalid_r <= 1'b0;
+                            m_awvalid_r <= 1'b0;
+                            m_wvalid_r <= 1'b0;
+                            m_bready_r <= 1'b0;
+                            m_wlast_r <= 1'b0;
+                            dma_busy <= 1'b0;
+                            dma_done <= 1'b1;
+                            dma_error <= 1'b1;
+                            dma_finish <= 1'b1;
+                            dma_state <= M_IDLE;
+                        end
+                        else begin
+                            if (mm_rd_cnt < 6'd16) begin
+                                mm_a[mm_rd_cnt[3:0]] <= m_rdata;
+                            end
+                            else begin
+                                mm_b[mm_rd_cnt[3:0]] <= m_rdata;
+                            end
+                            dma_cur_src <= dma_cur_src + 32'd4;
+                            if (mm_rd_cnt == 6'd31) begin
+                                m_rready_r <= 1'b0;
+                                mm_rd_cnt <= 6'd0;
+                                mm_calc_k <= 2'd0;
+                                mm_calc_row <= 2'd0;
+                                mm_calc_bit <= 5'd0;
+                                for (i = 0; i < 16; i = i + 1) begin
+                                    mm_c[i] <= 66'd0;
+                                end
+                                mm_a_shift[0] <= {34'd0, mm_a[0]};
+                                mm_a_shift[1] <= {34'd0, mm_a[4]};
+                                mm_a_shift[2] <= {34'd0, mm_a[8]};
+                                mm_a_shift[3] <= {34'd0, mm_a[12]};
+                                dma_state <= M_MM_CALC;
+                            end
+                            else begin
+                                mm_rd_cnt <= mm_rd_cnt + 6'd1;
+                            end
+                        end
+                    end
+                end
+
+                // Compute four C elements per cycle: one row, all columns.
+                // The shifted A addend is kept in registers, so this state has
+                // no variable barrel shift and only four 66-bit adders.
+                M_MM_CALC: begin
+                    if (mm_b[{mm_calc_k, 2'd0}][mm_calc_bit]) begin
+                        mm_c[{mm_calc_row, 2'd0}] <= mm_c[{mm_calc_row, 2'd0}] + mm_a_shift[mm_calc_row];
+                    end
+                    if (mm_b[{mm_calc_k, 2'd1}][mm_calc_bit]) begin
+                        mm_c[{mm_calc_row, 2'd1}] <= mm_c[{mm_calc_row, 2'd1}] + mm_a_shift[mm_calc_row];
+                    end
+                    if (mm_b[{mm_calc_k, 2'd2}][mm_calc_bit]) begin
+                        mm_c[{mm_calc_row, 2'd2}] <= mm_c[{mm_calc_row, 2'd2}] + mm_a_shift[mm_calc_row];
+                    end
+                    if (mm_b[{mm_calc_k, 2'd3}][mm_calc_bit]) begin
+                        mm_c[{mm_calc_row, 2'd3}] <= mm_c[{mm_calc_row, 2'd3}] + mm_a_shift[mm_calc_row];
+                    end
+
+                    if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd31) && (mm_calc_row == 2'd3)) begin
+                        mm_wr_cnt <= 6'd0;
+                        m_awaddr_r <= dma_cur_dst;
+                        m_awlen_r <= 8'd47;
+                        m_awvalid_r <= 1'b1;
+                        dma_state <= M_MM_AW;
+                    end
+                    else if (mm_calc_row == 2'd3) begin
+                        mm_calc_row <= 2'd0;
+                        if (mm_calc_bit == 5'd31) begin
+                            mm_calc_bit <= 5'd0;
+                            mm_calc_k <= mm_calc_next_k;
+                            case (mm_calc_next_k)
+                                2'd1: begin
+                                    mm_a_shift[0] <= {34'd0, mm_a[1]};
+                                    mm_a_shift[1] <= {34'd0, mm_a[5]};
+                                    mm_a_shift[2] <= {34'd0, mm_a[9]};
+                                    mm_a_shift[3] <= {34'd0, mm_a[13]};
+                                end
+                                2'd2: begin
+                                    mm_a_shift[0] <= {34'd0, mm_a[2]};
+                                    mm_a_shift[1] <= {34'd0, mm_a[6]};
+                                    mm_a_shift[2] <= {34'd0, mm_a[10]};
+                                    mm_a_shift[3] <= {34'd0, mm_a[14]};
+                                end
+                                default: begin
+                                    mm_a_shift[0] <= {34'd0, mm_a[3]};
+                                    mm_a_shift[1] <= {34'd0, mm_a[7]};
+                                    mm_a_shift[2] <= {34'd0, mm_a[11]};
+                                    mm_a_shift[3] <= {34'd0, mm_a[15]};
+                                end
+                            endcase
+                        end
+                        else begin
+                            mm_calc_bit <= mm_calc_bit + 5'd1;
+                            for (i = 0; i < 4; i = i + 1) begin
+                                mm_a_shift[i] <= {mm_a_shift[i][64:0], 1'b0};
+                            end
+                        end
+                    end
+                    else begin
+                        mm_calc_row <= mm_calc_row + 2'd1;
+                    end
+                end
+
+                // Write the 48-word result group as one burst to ExtRAM.
+                M_MM_AW: begin
+                    if (m_aw_fire) begin
+                        m_awvalid_r <= 1'b0;
+                        mm_wr_cnt <= 6'd0;
+                        m_wdata_r <= mm_result_word(6'd0);
+                        m_wlast_r <= 1'b0;
+                        m_wvalid_r <= 1'b1;
+                        dma_state <= M_MM_W;
+                    end
+                end
+
+                // Feed the same result words into CRC32 as they are written.
+                // This removes the former CPU-side CRC pass over the whole result area.
+                M_MM_W: begin
+                    if (m_w_fire) begin
+                        mm_crc_word <= m_wdata_r;
+                        mm_crc_byte <= 2'd0;
+                        dma_cur_dst <= dma_cur_dst + 32'd4;
+                        m_wvalid_r <= 1'b0;
+                        m_wlast_r <= 1'b0;
+                        dma_state <= M_MM_CRC;
+                    end
+                end
+
+                // Fold one result byte per cycle. This deliberately spends a few
+                // cycles to keep CRC off the timing critical path.
+                M_MM_CRC: begin
+                    case (mm_crc_byte)
+                        2'd0: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[7:0]);
+                        2'd1: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[15:8]);
+                        2'd2: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[23:16]);
+                        default: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[31:24]);
+                    endcase
+
+                    if (mm_crc_byte == 2'd3) begin
+                        if (mm_wr_cnt == 6'd47) begin
+                            m_bready_r <= 1'b1;
+                            dma_state <= M_MM_B;
+                        end
+                        else begin
+                            mm_wr_cnt <= mm_wr_word_next;
+                            m_wdata_r <= mm_result_word(mm_wr_word_next);
+                            m_wlast_r <= (mm_wr_word_next == 6'd47);
+                            m_wvalid_r <= 1'b1;
+                            dma_state <= M_MM_W;
+                        end
+                    end
+                    else begin
+                        mm_crc_byte <= mm_crc_byte + 2'd1;
+                    end
+                end
+
+                // Wait for the result write response, then either launch the next
+                // group or publish final DONE and the inverted CRC value.
+                M_MM_B: begin
+                    if (m_b_fire) begin
+                        m_bready_r <= 1'b0;
+                        if (m_bresp != 2'b00) begin
+                            dma_busy <= 1'b0;
+                            dma_done <= 1'b1;
+                            dma_error <= 1'b1;
+                            dma_finish <= 1'b1;
+                            dma_state <= M_IDLE;
+                        end
+                        else if (mm_groups_left <= 32'd1) begin
+                            mm_groups_left <= 32'd0;
+                            dma_remain <= 32'd0;
+                            matmul_crc <= ~mm_crc_state;
+                            dma_busy <= 1'b0;
+                            dma_done <= 1'b1;
+                            dma_error <= 1'b0;
+                            dma_finish <= 1'b1;
+                            dma_state <= M_IDLE;
+                        end
+                        else begin
+                            mm_groups_left <= mm_groups_left - 32'd1;
+                            dma_remain <= mm_groups_left - 32'd1;
+                            mm_rd_cnt <= 6'd0;
+                            m_araddr_r <= dma_cur_src;
+                            m_arlen_r <= 8'd31;
+                            m_arvalid_r <= 1'b1;
+                            m_rready_r <= 1'b0;
+                            dma_state <= M_MM_AR;
                         end
                     end
                 end
