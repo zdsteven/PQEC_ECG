@@ -399,43 +399,56 @@ wire        dma_s_bready ;
 wire        dma_finish   ;
 
 
-//Kyber_ip
-wire [4 :0] Kyber_arid   ;
-wire [31:0] Kyber_araddr ;
-wire [7 :0] Kyber_arlen  ;
-wire [2 :0] Kyber_arsize ;
-wire [1 :0] Kyber_arburst;
-wire        Kyber_arlock ;
-wire [3 :0] Kyber_arcache;
-wire [2 :0] Kyber_arprot ;
-wire        Kyber_arvalid;
-wire        Kyber_arready;
-wire [4 :0] Kyber_rid    ;
-wire [31:0] Kyber_rdata  ;
-wire [1 :0] Kyber_rresp  ;
-wire        Kyber_rlast  ;
-wire        Kyber_rvalid ;
-wire        Kyber_rready ;
-wire [4 :0] Kyber_awid   ;
-wire [31:0] Kyber_awaddr ;
-wire [7 :0] Kyber_awlen  ;
-wire [2 :0] Kyber_awsize ;
-wire [1 :0] Kyber_awburst;
-wire        Kyber_awlock ;
-wire [3 :0] Kyber_awcache;
-wire [2 :0] Kyber_awprot ;
-wire        Kyber_awvalid;
-wire        Kyber_awready;
-wire [4 :0] Kyber_wid    ;
-wire [31:0] Kyber_wdata  ;
-wire [3 :0] Kyber_wstrb  ;
-wire        Kyber_wlast  ;
-wire        Kyber_wvalid ;
-wire        Kyber_wready ;
-wire [4 :0] Kyber_bid    ;
-wire [1 :0] Kyber_bresp  ;
-wire        Kyber_bvalid ;
-wire        Kyber_bready ;
+//Kyber_ip (deleted)
+//slave 7
+wire [4 :0] axiOut_1_arid   ;
+wire [31:0] axiOut_1_araddr ;
+wire [7 :0] axiOut_1_arlen  ;
+wire [2 :0] axiOut_1_arsize ;
+wire [1 :0] axiOut_1_arburst;
+wire        axiOut_1_arlock ;
+wire [3 :0] axiOut_1_arcache;
+wire [2 :0] axiOut_1_arprot ;
+wire        axiOut_1_arvalid;
+wire        axiOut_1_arready;
+wire [4 :0] axiOut_1_rid    ;
+wire [31:0] axiOut_1_rdata  ;
+wire [1 :0] axiOut_1_rresp  ;
+wire        axiOut_1_rlast  ;
+wire        axiOut_1_rvalid ;
+wire        axiOut_1_rready ;
+wire [4 :0] axiOut_1_awid   ;
+wire [31:0] axiOut_1_awaddr ;
+wire [7 :0] axiOut_1_awlen  ;
+wire [2 :0] axiOut_1_awsize ;
+wire [1 :0] axiOut_1_awburst;
+wire        axiOut_1_awlock ;
+wire [3 :0] axiOut_1_awcache;
+wire [2 :0] axiOut_1_awprot ;
+wire        axiOut_1_awvalid;
+wire        axiOut_1_awready;
+wire [4 :0] axiOut_1_wid    ;
+wire [31:0] axiOut_1_wdata  ;
+wire [3 :0] axiOut_1_wstrb  ;
+wire        axiOut_1_wlast  ;
+wire        axiOut_1_wvalid ;
+wire        axiOut_1_wready ;
+wire [4 :0] axiOut_1_bid    ;
+wire [1 :0] axiOut_1_bresp  ;
+wire        axiOut_1_bvalid ;
+wire        axiOut_1_bready ;
+
+assign axiOut_1_arready = 1'b1;
+assign axiOut_1_rid    = 5'b0;
+assign axiOut_1_rdata  = 32'b0;
+assign axiOut_1_rresp  = 2'b0;
+assign axiOut_1_rlast  = 1'b0;
+assign axiOut_1_rvalid = 1'b0;
+assign axiOut_1_awready = 1'b1;
+assign axiOut_1_wready = 1'b1;
+assign axiOut_1_bid    = 5'b0;
+assign axiOut_1_bresp = 2'b0;
+assign axiOut_1_bvalid = 1'b0;
 
 
 //axi dvi
@@ -516,45 +529,55 @@ wire [1 :0] confreg_bresp  ;
 wire        confreg_bvalid ;
 wire        confreg_bready ;
 
-//slave 6 FFT/IFFT
-wire [4 :0] fft_arid   ;
-wire [31:0] fft_araddr ;
-wire [7 :0] fft_arlen  ;
-wire [2 :0] fft_arsize ;
-wire [1 :0] fft_arburst;
-wire        fft_arlock ;
-wire [3 :0] fft_arcache;
-wire [2 :0] fft_arprot ;
-wire        fft_arvalid;
-wire        fft_arready;
-wire [4 :0] fft_rid    ;
-wire [31:0] fft_rdata  ;
-wire [1 :0] fft_rresp  ;
-wire        fft_rlast  ;
-wire        fft_rvalid ;
-wire        fft_rready ;
-wire [4 :0] fft_awid   ;
-wire [31:0] fft_awaddr ;
-wire [7 :0] fft_awlen  ;
-wire [2 :0] fft_awsize ;
-wire [1 :0] fft_awburst;
-wire        fft_awlock ;
-wire [3 :0] fft_awcache;
-wire [2 :0] fft_awprot ;
-wire        fft_awvalid;
-wire        fft_awready;
-wire [4 :0] fft_wid    ;
-wire [31:0] fft_wdata  ;
-wire [3 :0] fft_wstrb  ;
-wire        fft_wlast  ;
-wire        fft_wvalid ;
-wire        fft_wready ;
-wire [4 :0] fft_bid    ;
-wire [1 :0] fft_bresp  ;
-wire        fft_bvalid ;
-wire        fft_bready ;
-wire        fft_finish ;
+//slave 6 FFT/IFFT (deleted)
+wire [4 :0] axiOut_6_arid   ;
+wire [31:0] axiOut_6_araddr ;
+wire [7 :0] axiOut_6_arlen  ;
+wire [2 :0] axiOut_6_arsize ;
+wire [1 :0] axiOut_6_arburst;
+wire        axiOut_6_arlock ;
+wire [3 :0] axiOut_6_arcache;
+wire [2 :0] axiOut_6_arprot ;
+wire        axiOut_6_arvalid;
+wire        axiOut_6_arready;
+wire [4 :0] axiOut_6_rid    ;
+wire [31:0] axiOut_6_rdata  ;
+wire [1 :0] axiOut_6_rresp  ;
+wire        axiOut_6_rlast  ;
+wire        axiOut_6_rvalid ;
+wire        axiOut_6_rready ;
+wire [4 :0] axiOut_6_awid   ;
+wire [31:0] axiOut_6_awaddr ;
+wire [7 :0] axiOut_6_awlen  ;
+wire [2 :0] axiOut_6_awsize ;
+wire [1 :0] axiOut_6_awburst;
+wire        axiOut_6_awlock ;
+wire [3 :0] axiOut_6_awcache;
+wire [2 :0] axiOut_6_awprot ;
+wire        axiOut_6_awvalid;
+wire        axiOut_6_awready;
+wire [4 :0] axiOut_6_wid    ;
+wire [31:0] axiOut_6_wdata  ;
+wire [3 :0] axiOut_6_wstrb  ;
+wire        axiOut_6_wlast  ;
+wire        axiOut_6_wvalid ;
+wire        axiOut_6_wready ;
+wire [4 :0] axiOut_6_bid    ;
+wire [1 :0] axiOut_6_bresp  ;
+wire        axiOut_6_bvalid ;
+wire        axiOut_6_bready ;
 
+assign axiOut_6_arready = 1'b1;
+assign axiOut_6_rid    = 5'b0;
+assign axiOut_6_rdata  = 32'b0;
+assign axiOut_6_rresp  = 2'b0;
+assign axiOut_6_rlast  = 1'b0;
+assign axiOut_6_rvalid = 1'b0;
+assign axiOut_6_awready = 1'b1;
+assign axiOut_6_wready = 1'b1;
+assign axiOut_6_bid    = 5'b0;
+assign axiOut_6_bresp = 2'b0;
+assign axiOut_6_bvalid = 1'b0;
 
 //slave 7
 wire [4 :0] axiOut_7_arid   ;
@@ -774,45 +797,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 1
     //aw
-    .axiOut_1_awvalid        ( Kyber_awvalid   ),
-    .axiOut_1_awready        ( Kyber_awready   ),
-    .axiOut_1_awaddr         ( Kyber_awaddr    ),
-    .axiOut_1_awid           ( Kyber_awid      ),
-    .axiOut_1_awlen          ( Kyber_awlen     ),
-    .axiOut_1_awsize         ( Kyber_awsize    ),
-    .axiOut_1_awburst        ( Kyber_awburst   ),
-    .axiOut_1_awlock         ( Kyber_awlock    ),
-    .axiOut_1_awcache        ( Kyber_awcache   ),
-    .axiOut_1_awprot         ( Kyber_awprot    ),
+    .axiOut_1_awvalid        (  axiOut_1_awvalid   ),
+    .axiOut_1_awready        (  axiOut_1_awready   ),
+    .axiOut_1_awaddr         (  axiOut_1_awaddr    ),
+    .axiOut_1_awid           (  axiOut_1_awid      ),
+    .axiOut_1_awlen          (  axiOut_1_awlen     ),
+    .axiOut_1_awsize         (  axiOut_1_awsize    ),
+    .axiOut_1_awburst        (  axiOut_1_awburst   ),
+    .axiOut_1_awlock         (  axiOut_1_awlock    ),
+    .axiOut_1_awcache        (  axiOut_1_awcache   ),
+    .axiOut_1_awprot         (  axiOut_1_awprot    ),
     //w
-    .axiOut_1_wvalid         ( Kyber_wvalid    ),
-    .axiOut_1_wready         ( Kyber_wready    ),
-    .axiOut_1_wdata          ( Kyber_wdata     ),
-    .axiOut_1_wstrb          ( Kyber_wstrb     ),
-    .axiOut_1_wlast          ( Kyber_wlast     ),
+    .axiOut_1_wvalid         (  axiOut_1_wvalid    ),
+    .axiOut_1_wready         (  axiOut_1_wready    ),
+    .axiOut_1_wdata          (  axiOut_1_wdata     ),
+    .axiOut_1_wstrb          (  axiOut_1_wstrb     ),
+    .axiOut_1_wlast          (  axiOut_1_wlast     ),
     //b
-    .axiOut_1_bready         ( Kyber_bready    ),
-    .axiOut_1_bvalid         ( Kyber_bvalid    ),
-    .axiOut_1_bid            ( Kyber_bid       ),
-    .axiOut_1_bresp          ( Kyber_bresp     ),
+    .axiOut_1_bready         (  axiOut_1_bready    ),
+    .axiOut_1_bvalid         (  axiOut_1_bvalid    ),
+    .axiOut_1_bid            (  axiOut_1_bid       ),
+    .axiOut_1_bresp          (  axiOut_1_bresp     ),
     //ar
-    .axiOut_1_arvalid        ( Kyber_arvalid   ),
-    .axiOut_1_arready        ( Kyber_arready   ),
-    .axiOut_1_araddr         ( Kyber_araddr    ),
-    .axiOut_1_arid           ( Kyber_arid      ),
-    .axiOut_1_arlen          ( Kyber_arlen     ),
-    .axiOut_1_arsize         ( Kyber_arsize    ),
-    .axiOut_1_arburst        ( Kyber_arburst   ),
-    .axiOut_1_arlock         ( Kyber_arlock    ),
-    .axiOut_1_arcache        ( Kyber_arcache   ),
-    .axiOut_1_arprot         ( Kyber_arprot    ),
+    .axiOut_1_arvalid        (  axiOut_1_arvalid   ),
+    .axiOut_1_arready        (  axiOut_1_arready   ),
+    .axiOut_1_araddr         (  axiOut_1_araddr    ),
+    .axiOut_1_arid           (  axiOut_1_arid      ),
+    .axiOut_1_arlen          (  axiOut_1_arlen     ),
+    .axiOut_1_arsize         (  axiOut_1_arsize    ),
+    .axiOut_1_arburst        (  axiOut_1_arburst   ),
+    .axiOut_1_arlock         (  axiOut_1_arlock    ),
+    .axiOut_1_arcache        (  axiOut_1_arcache   ),
+    .axiOut_1_arprot         (  axiOut_1_arprot    ),
     //r
-    .axiOut_1_rvalid         ( Kyber_rvalid    ),
-    .axiOut_1_rready         ( Kyber_rready    ),
-    .axiOut_1_rdata          ( Kyber_rdata     ),
-    .axiOut_1_rid            ( Kyber_rid       ),
-    .axiOut_1_rresp          ( Kyber_rresp     ),
-    .axiOut_1_rlast          ( Kyber_rlast     ),
+    .axiOut_1_rvalid         (  axiOut_1_rvalid    ),
+    .axiOut_1_rready         (  axiOut_1_rready    ),
+    .axiOut_1_rdata          (  axiOut_1_rdata     ),
+    .axiOut_1_rid            (  axiOut_1_rid       ),
+    .axiOut_1_rresp          (  axiOut_1_rresp     ),
+    .axiOut_1_rlast          (  axiOut_1_rlast     ),
 
     //slave 2
     //aw
@@ -985,45 +1008,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 6
     //aw
-    .axiOut_6_awvalid        ( fft_awvalid     ),
-    .axiOut_6_awready        ( fft_awready     ),
-    .axiOut_6_awaddr         ( fft_awaddr      ),
-    .axiOut_6_awid           ( fft_awid        ),
-    .axiOut_6_awlen          ( fft_awlen       ),
-    .axiOut_6_awsize         ( fft_awsize      ),
-    .axiOut_6_awburst        ( fft_awburst     ),
-    .axiOut_6_awlock         ( fft_awlock      ),
-    .axiOut_6_awcache        ( fft_awcache     ),
-    .axiOut_6_awprot         ( fft_awprot      ),
+    .axiOut_6_awvalid        ( axiOut_6_awvalid     ),
+    .axiOut_6_awready        ( axiOut_6_awready     ),
+    .axiOut_6_awaddr         ( axiOut_6_awaddr      ),
+    .axiOut_6_awid           ( axiOut_6_awid        ),
+    .axiOut_6_awlen          ( axiOut_6_awlen       ),
+    .axiOut_6_awsize         ( axiOut_6_awsize      ),
+    .axiOut_6_awburst        ( axiOut_6_awburst   ),
+    .axiOut_6_awlock         ( axiOut_6_awlock    ),
+    .axiOut_6_awcache        ( axiOut_6_awcache   ),
+    .axiOut_6_awprot         ( axiOut_6_awprot    ),
     //w
-    .axiOut_6_wvalid         ( fft_wvalid      ),
-    .axiOut_6_wready         ( fft_wready      ),
-    .axiOut_6_wdata          ( fft_wdata       ),
-    .axiOut_6_wstrb          ( fft_wstrb       ),
-    .axiOut_6_wlast          ( fft_wlast       ),
+    .axiOut_6_wvalid         ( axiOut_6_wvalid    ),
+    .axiOut_6_wready         ( axiOut_6_wready    ),
+    .axiOut_6_wdata          ( axiOut_6_wdata     ),
+    .axiOut_6_wstrb          ( axiOut_6_wstrb     ),
+    .axiOut_6_wlast          ( axiOut_6_wlast     ),
     //b
-    .axiOut_6_bready         ( fft_bready      ),
-    .axiOut_6_bvalid         ( fft_bvalid      ),
-    .axiOut_6_bid            ( fft_bid         ),
-    .axiOut_6_bresp          ( fft_bresp       ),
+    .axiOut_6_bready         ( axiOut_6_bready      ),
+    .axiOut_6_bvalid         ( axiOut_6_bvalid      ),
+    .axiOut_6_bid            ( axiOut_6_bid         ),
+    .axiOut_6_bresp          ( axiOut_6_bresp       ),
     //ar
-    .axiOut_6_arvalid        ( fft_arvalid     ),
-    .axiOut_6_arready        ( fft_arready     ),
-    .axiOut_6_araddr         ( fft_araddr      ),
-    .axiOut_6_arid           ( fft_arid        ),
-    .axiOut_6_arlen          ( fft_arlen       ),
-    .axiOut_6_arsize         ( fft_arsize      ),
-    .axiOut_6_arburst        ( fft_arburst     ),
-    .axiOut_6_arlock         ( fft_arlock      ),
-    .axiOut_6_arcache        ( fft_arcache     ),
-    .axiOut_6_arprot         ( fft_arprot      ),
+    .axiOut_6_arvalid        ( axiOut_6_arvalid     ),
+    .axiOut_6_arready        ( axiOut_6_arready     ),
+    .axiOut_6_araddr         ( axiOut_6_araddr      ),
+    .axiOut_6_arid           ( axiOut_6_arid        ),
+    .axiOut_6_arlen          ( axiOut_6_arlen       ),
+    .axiOut_6_arsize         ( axiOut_6_arsize      ),
+    .axiOut_6_arburst        ( axiOut_6_arburst   ),
+    .axiOut_6_arlock         ( axiOut_6_arlock    ),
+    .axiOut_6_arcache        ( axiOut_6_arcache   ),
+    .axiOut_6_arprot         ( axiOut_6_arprot    ),
     //r
-    .axiOut_6_rvalid         ( fft_rvalid      ),
-    .axiOut_6_rready         ( fft_rready      ),
-    .axiOut_6_rdata          ( fft_rdata       ),
-    .axiOut_6_rid            ( fft_rid         ),
-    .axiOut_6_rresp          ( fft_rresp       ),
-    .axiOut_6_rlast          ( fft_rlast       ),
+    .axiOut_6_rvalid         ( axiOut_6_rvalid    ),
+    .axiOut_6_rready         ( axiOut_6_rready    ),
+    .axiOut_6_rdata          ( axiOut_6_rdata     ),
+    .axiOut_6_rid            ( axiOut_6_rid         ),
+    .axiOut_6_rresp          ( axiOut_6_rresp       ),
+    .axiOut_6_rlast          ( axiOut_6_rlast       ),
 
     //slave 7
     //aw
@@ -1475,48 +1498,6 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
     .confreg_int ( confreg_int )
 );
 
-//fft
-axi_fft_top u_axi_fft_top (
-    .s_awvalid ( fft_awvalid ),
-    .s_awaddr ( fft_awaddr ),
-    .s_awid ( fft_awid ),
-    .s_awlen ( fft_awlen ),
-    .s_awsize ( fft_awsize ),
-    .s_awburst ( fft_awburst ),
-    .s_awlock ( fft_awlock ),
-    .s_awcache ( fft_awcache ),
-    .s_awprot ( fft_awprot ),
-    .s_wvalid ( fft_wvalid ),
-    .s_wdata ( fft_wdata ),
-    .s_wstrb ( fft_wstrb ),
-    .s_wlast ( fft_wlast ),
-    .s_bready ( fft_bready ),
-    .s_arvalid ( fft_arvalid ),
-    .s_araddr ( fft_araddr ),
-    .s_arid ( fft_arid ),
-    .s_arlen ( fft_arlen ),
-    .s_arsize ( fft_arsize ),
-    .s_arburst ( fft_arburst ),
-    .s_arlock ( fft_arlock ),
-    .s_arcache ( fft_arcache ),
-    .s_arprot ( fft_arprot ),
-    .s_rready ( fft_rready ),
-    .aclk ( sys_clk ),
-    .aresetn ( sys_resetn ),
-
-    .s_awready ( fft_awready ),
-    .s_wready ( fft_wready ),
-    .s_bvalid ( fft_bvalid ),
-    .s_bid ( fft_bid ),
-    .s_bresp ( fft_bresp ),
-    .s_arready ( fft_arready ),
-    .s_rvalid ( fft_rvalid ),
-    .s_rdata ( fft_rdata ),
-    .s_rid ( fft_rid ),
-    .s_rresp ( fft_rresp ),
-    .s_rlast ( fft_rlast ),
-    .fft_finish ( fft_finish )
-);
 
 //dvi
 axi_dvi u_axi_dvi (
@@ -1565,47 +1546,6 @@ axi_dvi u_axi_dvi (
     .video_red ( video_red ),
     .video_green ( video_green ),
     .video_blue ( video_blue )
-);
-
-//Kyber_ip
-Kyber u_Kyber(
-    .aclk      (  sys_clk       ),
-    .aresetn   (  sys_resetn    ),
-    .s_awvalid (  Kyber_awvalid ),
-    .s_awready (  Kyber_awready ),
-    .s_awaddr  (  Kyber_awaddr  ),
-    .s_awid    (  Kyber_awid    ),
-    .s_awlen   (  Kyber_awlen   ),
-    .s_awsize  (  Kyber_awsize  ),
-    .s_awburst (  Kyber_awburst ),
-    .s_awlock  (  Kyber_awlock  ),
-    .s_awcache (  Kyber_awcache ),
-    .s_awprot  (  Kyber_awprot  ),
-    .s_wvalid  (  Kyber_wvalid  ),
-    .s_wready  (  Kyber_wready  ),
-    .s_wdata   (  Kyber_wdata   ),
-    .s_wstrb   (  Kyber_wstrb   ),
-    .s_wlast   (  Kyber_wlast   ),
-    .s_bvalid  (  Kyber_bvalid  ),
-    .s_bready  (  Kyber_bready  ),
-    .s_bid     (  Kyber_bid     ),
-    .s_bresp   (  Kyber_bresp   ),
-    .s_arvalid (  Kyber_arvalid ),
-    .s_arready (  Kyber_arready ),
-    .s_araddr  (  Kyber_araddr  ),
-    .s_arid    (  Kyber_arid    ),
-    .s_arlen   (  Kyber_arlen   ),
-    .s_arsize  (  Kyber_arsize  ),
-    .s_arburst (  Kyber_arburst ),
-    .s_arlock  (  Kyber_arlock  ),
-    .s_arcache (  Kyber_arcache ),
-    .s_arprot  (  Kyber_arprot  ),
-    .s_rvalid  (  Kyber_rvalid  ),
-    .s_rready  (  Kyber_rready  ),
-    .s_rdata   (  Kyber_rdata   ),
-    .s_rid     (  Kyber_rid     ),
-    .s_rresp   (  Kyber_rresp   ),
-    .s_rlast   (  Kyber_rlast   )
 );
 
 

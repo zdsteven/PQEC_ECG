@@ -24,7 +24,7 @@
 │   ├── config.h                  # AXI 总线宽度定义
 │   ├── ip/
 │   │   ├── matmul/               # ★ 矩阵乘法加速器 IP
-│   │   │   ├── matmul_axi_slave.v        # 参考版本（需要优化性能后接入soc_top.v）
+│   │   │   ├── matmul_axi_slave.v        # 初始版本（需要改进优化）
 │   │   ├── Bus_interconnects/
 │   │   │   ├── AxiCrossbar_2x8.v  # SpinalHDL 生成的 2-master × 8-slave AXI 交叉开关
 │   │   │   └── Axi_CDC.v          # AXI 时钟域交叉桥
@@ -33,8 +33,8 @@
 │   │   ├── APB_UART/              # UART 控制器
 │   │   ├── DMA/                   # DMA 引擎
 │   │   ├── DVI/                   # DVI 显示控制器
-│   │   ├── FFT/                   # FFT/IFFT 加速器
-│   │   └── Kyber_ip/              # Kyber NTT/INTT 加速器
+│   │   
+│   │   
 │   └── fpga/                      # FPGA 综合脚本、CI 检查脚本
 ├── sdk/
 │   └── software/
@@ -63,9 +63,8 @@
 │               ├── Makefile       # 构建配置（TARGET=user-sample）
 │               └── user-sample.c  # ★ 评测主程序
 ├── docs/
-│   └── 2026集创赛龙芯中科杯-区域赛决赛描述.md  # 评测任务说明
-└── tools/
-    └── generate_matmul_testdata.py  # 本地测试数据生成脚本
+    └── 2026集创赛龙芯中科杯-区域赛决赛描述.md  # 评测任务说明
+
 ```
 
 ## SoC 地址映射
@@ -78,9 +77,9 @@
 | `0x1F10_0000` | DVI | 视频显示 |
 | `0x1F20_0000` | ConfReg | GPIO/定时器/中断/LED/数码管 |
 | `0x1F30_0000` | DMA | DMA 寄存器接口 |
-| `0x1F40_0000` | FFT | FFT/IFFT 加速器 |
+| `0x1F40_0000` | FFT | FFT/IFFT 加速器（已丢弃） |
 | `0x1F50_0000` | **Matmul** | ★ 矩阵乘法加速器 |
-| `0x1F60_0000` | Kyber | NTT/INTT 加速器 |
+| `0x1F60_0000` | Kyber | NTT/INTT 加速器（已抛弃）|
 
 CPU 通过 DMW 映射访问外设：物理 `0x1F______` → 虚拟 `0xBF______`（uncached）。
 
@@ -147,7 +146,6 @@ MATMUL_DONE
 - **不允许使用 DSP 资源**（CI 会检查 `check_dsp.py`）
 - **WNS 必须为正值**（CI 会检查 `check_timing.py`）
 - 需通过 HDL lint 检查（本地暂不支持`rulinter.py`运行，只能在gitlab 线上检查）
-- AXI crossbar 是 SpinalHDL 生成的，**不要手动修改** `AxiCrossbar_2x8.v`
 
 ### BSP 开发规范
 
@@ -223,7 +221,7 @@ make status    # 检查所需脚本和文件是否存在
 
 **脚本**: `run_checks.bat`
 
-1. **HDL Lint**（`fpga/run-linter.py`）：本地 Windows 跳过（需要 verilator），CI 中执行
+1. **HDL Lint**（`fpga/run-linter.py`）：本地暂不支持，CI 中执行
 2. **DSP 使用量检查**（`fpga/check_dsp.py`）：解析 `fpga/project/dsp_utilization.rpt`，确保 DSP 使用量为 0
 3. **WNS 时序检查**（`fpga/check_timing.py`）：解析 `fpga/project/Loongson_Soc.runs/impl_1/timing_summary.rpt`，确保 WNS > 0
 
@@ -234,17 +232,9 @@ make status    # 检查所需脚本和文件是否存在
 **脚本**: `sync_gitlab.bat`
 
 - 使用 robocopy 增量同步 `rtl/`、`sdk/software/bsp/`、`sdk/software/examples/asm/` 到 GitLab 提交仓库
-- 目标仓库路径：`E:\Loongson\regional-submission-CICC1000627Rg`（需修改脚本适配）
-- 目标分支：`dev/matmul`（需修改脚本适配）
+- 目标仓库路径：`E:\Loongson\regional-submission-CICC1000627Rg`
+- 目标分支：`dev/matmul`
 - 自动 `git add`、`git commit`、`git push`
-- **应在编译和检查通过后再执行**，避免推送有问题的代码
-
-### 本地调试技巧
-
-- 使用 `tools/generate_matmul_testdata.py` 生成测试数据
-- 可通过 `MATMUL_GROUP_NUM=50` 减少组数加快仿真
-- 正式评测必须 `MATMUL_GROUP_NUM=5000`
-- `make clean` 清理 `sdk/software/examples/asm/obj/` 和 `fpga/*.log`、`fpga/*.jou`
 
 ## 常用命令
 
@@ -262,10 +252,8 @@ make gitlab                          # 4. 验证通过后同步并推送到 GitL
 cd sdk/software/examples/asm
 make clean && make MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
 
-# 调试用：减少组数
-make wsl   # 修改 sync_wsl.bat 中 MATMUL_GROUP_NUM=50
 
 # 检查产物
 ls -la rtl/soc_top.bit
-ls -la sdk/software/examples/asm/obj/user-sample.bin
+ls -la sdk/user-sample.bin
 ```
