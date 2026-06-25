@@ -94,7 +94,7 @@ module axi_dma (
     localparam KYBER_BURST_MAX_WORDS   = 8'd128;
 
     // One master FSM is shared by legacy memcpy/stream DMA and the matmul batch path.
-    // M_MM_* states are intentionally kept inside DMA so software only launches once.
+    // Matmul has its own internal read/compute/write pipeline under M_MM_PIPE.
     localparam M_IDLE      = 5'd0;
     localparam M_AR        = 5'd1;
     localparam M_R         = 5'd2;
@@ -102,13 +102,7 @@ module axi_dma (
     localparam M_W         = 5'd4;
     localparam M_B         = 5'd5;
     localparam M_STREAM    = 5'd6;
-    localparam M_MM_AR     = 5'd7;
-    localparam M_MM_R      = 5'd8;
-    localparam M_MM_CALC   = 5'd9;
-    localparam M_MM_AW     = 5'd10;
-    localparam M_MM_W      = 5'd11;
-    localparam M_MM_B      = 5'd12;
-    localparam M_MM_CRC    = 5'd13;
+    localparam M_MM_PIPE   = 5'd7;
 
     localparam RD_IDLE = 2'd0;
     localparam RD_AR   = 2'd1;
@@ -117,6 +111,10 @@ module axi_dma (
     localparam WR_AW   = 2'd1;
     localparam WR_W    = 2'd2;
     localparam WR_B    = 2'd3;
+
+    localparam MM_CALC_IDLE  = 2'd0;
+    localparam MM_CALC_RUN   = 2'd1;
+    localparam MM_CALC_STORE = 2'd2;
 
     reg axi_busy, axi_write, axi_r_or_w;
     reg s_wready_r;
@@ -178,17 +176,32 @@ module axi_dma (
     reg [31:0] matmul_crc;
     reg [31:0] mm_crc_state;
     reg [31:0] mm_groups_left;
+    reg [31:0] mm_read_left;
     reg [5:0] mm_rd_cnt;
+    reg [1:0] mm_rd_state;
+    reg [1:0] mm_wr_state;
+    reg [1:0] mm_calc_state;
+    reg mm_rd_slot;
+    reg mm_calc_in_slot;
+    reg mm_calc_out_slot;
+    reg mm_wr_slot;
+    reg mm_in0_valid;
+    reg mm_in1_valid;
+    reg mm_out0_valid;
+    reg mm_out1_valid;
     reg [1:0] mm_calc_k;
-    reg [1:0] mm_calc_row;
     reg [4:0] mm_calc_bit;
     reg [5:0] mm_wr_cnt;
-    reg [31:0] mm_crc_word;
-    reg [1:0] mm_crc_byte;
+    reg [31:0] mm_in0 [0:31];
+    reg [31:0] mm_in1 [0:31];
+    reg [31:0] mm_out0 [0:47];
+    reg [31:0] mm_out1 [0:47];
     reg [31:0] mm_a [0:15];
     reg [31:0] mm_b [0:15];
     reg [65:0] mm_c [0:15];
     reg [65:0] mm_a_shift [0:3];
+    reg [65:0] mm_a_shift2 [0:3];
+    reg [65:0] mm_a_shift3 [0:3];
     integer i;
 
     wire ar_enter = s_arvalid & s_arready;
@@ -250,8 +263,13 @@ module axi_dma (
     wire dst_burst_allow_next = (dma_next_dst[28:24] != 5'h1f);
     wire chunk_allow_next = src_burst_allow_next | dst_burst_allow_next;
     wire [7:0] dma_words_from_next = chunk_allow_next ? ((dma_remain_next > burst_max_bytes) ? burst_max_words : dma_remain_next[9:2]) : 8'd1;
-    wire [5:0] mm_wr_word_next = mm_wr_cnt[5:0] + 6'd1;
+    wire [5:0] mm_wr_word_next = mm_wr_cnt + 6'd1;
+    wire [4:0] mm_calc_pair_next = mm_calc_bit + 5'd1;
     wire [1:0] mm_calc_next_k = mm_calc_k + 2'd1;
+    wire mm_read_slot0_free = !mm_in0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b0));
+    wire mm_read_slot1_free = !mm_in1_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b1));
+    wire mm_output_slot0_free = !mm_out0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_out_slot == 1'b0));
+    wire mm_output_slot1_free = !mm_out1_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_out_slot == 1'b1));
 
     wire [31:0] status_data = {29'd0, dma_error, dma_done, dma_busy};
     wire [31:0] rdata_d =   buf_addr[15:0] == CTRL_ADDR    ? 32'd0        :
@@ -269,27 +287,45 @@ module axi_dma (
     assign s_arready = ~axi_busy & (!axi_r_or_w | !s_awvalid);
     assign s_awready = ~axi_busy & ( axi_r_or_w | !s_arvalid);
 
-    // IEEE CRC-32 update for one little-endian byte. Four short CRC cycles per
-    // result word replace the previous one-cycle 32-bit XOR chain.
-    function [31:0] crc32_next_byte;
+    // IEEE CRC-32 update for one little-endian 32-bit word. This is equivalent
+    // to processing bytes [7:0], [15:8], [23:16], [31:24] with polynomial
+    // 0xedb88320, but allows the write channel to run one result word per cycle.
+    function [31:0] crc32_next_word;
         input [31:0] crc_in;
-        input [7:0] data_in;
-        integer bit_index;
-        reg [31:0] crc_work;
-        reg [7:0] data_work;
+        input [31:0] data_in;
         begin
-            crc_work = crc_in;
-            data_work = data_in;
-            for (bit_index = 0; bit_index < 8; bit_index = bit_index + 1) begin
-                if ((crc_work[0] ^ data_work[0]) != 1'b0) begin
-                    crc_work = (crc_work >> 1) ^ 32'hedb88320;
-                end
-                else begin
-                    crc_work = crc_work >> 1;
-                end
-                data_work = data_work >> 1;
-            end
-            crc32_next_byte = crc_work;
+            crc32_next_word[0] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[16] ^ crc_in[20] ^ crc_in[22] ^ crc_in[23] ^ crc_in[26] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[16] ^ data_in[20] ^ data_in[22] ^ data_in[23] ^ data_in[26];
+            crc32_next_word[1] = crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[17] ^ crc_in[21] ^ crc_in[23] ^ crc_in[24] ^ crc_in[27] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[17] ^ data_in[21] ^ data_in[23] ^ data_in[24] ^ data_in[27];
+            crc32_next_word[2] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[8] ^ crc_in[9] ^ crc_in[10] ^ crc_in[18] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[28] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[8] ^ data_in[9] ^ data_in[10] ^ data_in[18] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[28];
+            crc32_next_word[3] = crc_in[1] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[9] ^ crc_in[10] ^ crc_in[11] ^ crc_in[19] ^ crc_in[23] ^ crc_in[25] ^ crc_in[26] ^ crc_in[29] ^ data_in[1] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[9] ^ data_in[10] ^ data_in[11] ^ data_in[19] ^ data_in[23] ^ data_in[25] ^ data_in[26] ^ data_in[29];
+            crc32_next_word[4] = crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[10] ^ crc_in[11] ^ crc_in[12] ^ crc_in[20] ^ crc_in[24] ^ crc_in[26] ^ crc_in[27] ^ crc_in[30] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[10] ^ data_in[11] ^ data_in[12] ^ data_in[20] ^ data_in[24] ^ data_in[26] ^ data_in[27] ^ data_in[30];
+            crc32_next_word[5] = crc_in[0] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[11] ^ crc_in[12] ^ crc_in[13] ^ crc_in[21] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[11] ^ data_in[12] ^ data_in[13] ^ data_in[21] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[31];
+            crc32_next_word[6] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[9] ^ crc_in[10] ^ crc_in[12] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[20] ^ crc_in[23] ^ crc_in[28] ^ crc_in[29] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[9] ^ data_in[10] ^ data_in[12] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[20] ^ data_in[23] ^ data_in[28] ^ data_in[29];
+            crc32_next_word[7] = crc_in[1] ^ crc_in[3] ^ crc_in[4] ^ crc_in[10] ^ crc_in[11] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[21] ^ crc_in[24] ^ crc_in[29] ^ crc_in[30] ^ data_in[1] ^ data_in[3] ^ data_in[4] ^ data_in[10] ^ data_in[11] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[21] ^ data_in[24] ^ data_in[29] ^ data_in[30];
+            crc32_next_word[8] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[11] ^ crc_in[12] ^ crc_in[14] ^ crc_in[15] ^ crc_in[16] ^ crc_in[18] ^ crc_in[22] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[11] ^ data_in[12] ^ data_in[14] ^ data_in[15] ^ data_in[16] ^ data_in[18] ^ data_in[22] ^ data_in[25] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[9] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[12] ^ crc_in[13] ^ crc_in[15] ^ crc_in[17] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[12] ^ data_in[13] ^ data_in[15] ^ data_in[17] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[31];
+            crc32_next_word[10] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[9] ^ crc_in[13] ^ crc_in[14] ^ crc_in[18] ^ crc_in[21] ^ crc_in[22] ^ crc_in[26] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[9] ^ data_in[13] ^ data_in[14] ^ data_in[18] ^ data_in[21] ^ data_in[22] ^ data_in[26];
+            crc32_next_word[11] = crc_in[1] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[8] ^ crc_in[10] ^ crc_in[14] ^ crc_in[15] ^ crc_in[19] ^ crc_in[22] ^ crc_in[23] ^ crc_in[27] ^ data_in[1] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[8] ^ data_in[10] ^ data_in[14] ^ data_in[15] ^ data_in[19] ^ data_in[22] ^ data_in[23] ^ data_in[27];
+            crc32_next_word[12] = crc_in[2] ^ crc_in[4] ^ crc_in[6] ^ crc_in[7] ^ crc_in[9] ^ crc_in[11] ^ crc_in[15] ^ crc_in[16] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[28] ^ data_in[2] ^ data_in[4] ^ data_in[6] ^ data_in[7] ^ data_in[9] ^ data_in[11] ^ data_in[15] ^ data_in[16] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[28];
+            crc32_next_word[13] = crc_in[0] ^ crc_in[3] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[10] ^ crc_in[12] ^ crc_in[16] ^ crc_in[17] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ data_in[0] ^ data_in[3] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[10] ^ data_in[12] ^ data_in[16] ^ data_in[17] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[29];
+            crc32_next_word[14] = crc_in[0] ^ crc_in[1] ^ crc_in[4] ^ crc_in[6] ^ crc_in[8] ^ crc_in[9] ^ crc_in[11] ^ crc_in[13] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[25] ^ crc_in[26] ^ crc_in[30] ^ data_in[0] ^ data_in[1] ^ data_in[4] ^ data_in[6] ^ data_in[8] ^ data_in[9] ^ data_in[11] ^ data_in[13] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[25] ^ data_in[26] ^ data_in[30];
+            crc32_next_word[15] = crc_in[1] ^ crc_in[2] ^ crc_in[5] ^ crc_in[7] ^ crc_in[9] ^ crc_in[10] ^ crc_in[12] ^ crc_in[14] ^ crc_in[18] ^ crc_in[19] ^ crc_in[23] ^ crc_in[26] ^ crc_in[27] ^ crc_in[31] ^ data_in[1] ^ data_in[2] ^ data_in[5] ^ data_in[7] ^ data_in[9] ^ data_in[10] ^ data_in[12] ^ data_in[14] ^ data_in[18] ^ data_in[19] ^ data_in[23] ^ data_in[26] ^ data_in[27] ^ data_in[31];
+            crc32_next_word[16] = crc_in[1] ^ crc_in[4] ^ crc_in[7] ^ crc_in[10] ^ crc_in[11] ^ crc_in[13] ^ crc_in[15] ^ crc_in[16] ^ crc_in[19] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[26] ^ crc_in[27] ^ crc_in[28] ^ data_in[1] ^ data_in[4] ^ data_in[7] ^ data_in[10] ^ data_in[11] ^ data_in[13] ^ data_in[15] ^ data_in[16] ^ data_in[19] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[26] ^ data_in[27] ^ data_in[28];
+            crc32_next_word[17] = crc_in[2] ^ crc_in[5] ^ crc_in[8] ^ crc_in[11] ^ crc_in[12] ^ crc_in[14] ^ crc_in[16] ^ crc_in[17] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[29] ^ data_in[2] ^ data_in[5] ^ data_in[8] ^ data_in[11] ^ data_in[12] ^ data_in[14] ^ data_in[16] ^ data_in[17] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[29];
+            crc32_next_word[18] = crc_in[0] ^ crc_in[3] ^ crc_in[6] ^ crc_in[9] ^ crc_in[12] ^ crc_in[13] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[30] ^ data_in[0] ^ data_in[3] ^ data_in[6] ^ data_in[9] ^ data_in[12] ^ data_in[13] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[30];
+            crc32_next_word[19] = crc_in[0] ^ crc_in[1] ^ crc_in[4] ^ crc_in[7] ^ crc_in[10] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[18] ^ crc_in[19] ^ crc_in[22] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[4] ^ data_in[7] ^ data_in[10] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[18] ^ data_in[19] ^ data_in[22] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[20] = crc_in[0] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[11] ^ crc_in[14] ^ crc_in[15] ^ crc_in[16] ^ crc_in[17] ^ crc_in[19] ^ crc_in[22] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[11] ^ data_in[14] ^ data_in[15] ^ data_in[16] ^ data_in[17] ^ data_in[19] ^ data_in[22] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[21] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[12] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[12] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[31];
+            crc32_next_word[22] = crc_in[2] ^ crc_in[7] ^ crc_in[8] ^ crc_in[13] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ data_in[2] ^ data_in[7] ^ data_in[8] ^ data_in[13] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30];
+            crc32_next_word[23] = crc_in[0] ^ crc_in[3] ^ crc_in[8] ^ crc_in[9] ^ crc_in[14] ^ crc_in[19] ^ crc_in[20] ^ crc_in[21] ^ crc_in[23] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[8] ^ data_in[9] ^ data_in[14] ^ data_in[19] ^ data_in[20] ^ data_in[21] ^ data_in[23] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[24] = crc_in[2] ^ crc_in[3] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[10] ^ crc_in[15] ^ crc_in[16] ^ crc_in[21] ^ crc_in[23] ^ crc_in[24] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[2] ^ data_in[3] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[10] ^ data_in[15] ^ data_in[16] ^ data_in[21] ^ data_in[23] ^ data_in[24] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[31];
+            crc32_next_word[25] = crc_in[1] ^ crc_in[2] ^ crc_in[6] ^ crc_in[9] ^ crc_in[10] ^ crc_in[11] ^ crc_in[17] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ data_in[1] ^ data_in[2] ^ data_in[6] ^ data_in[9] ^ data_in[10] ^ data_in[11] ^ data_in[17] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30];
+            crc32_next_word[26] = crc_in[2] ^ crc_in[3] ^ crc_in[7] ^ crc_in[10] ^ crc_in[11] ^ crc_in[12] ^ crc_in[18] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[2] ^ data_in[3] ^ data_in[7] ^ data_in[10] ^ data_in[11] ^ data_in[12] ^ data_in[18] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[27] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[6] ^ crc_in[7] ^ crc_in[11] ^ crc_in[12] ^ crc_in[13] ^ crc_in[16] ^ crc_in[19] ^ crc_in[20] ^ crc_in[23] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[6] ^ data_in[7] ^ data_in[11] ^ data_in[12] ^ data_in[13] ^ data_in[16] ^ data_in[19] ^ data_in[20] ^ data_in[23] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[29] ^ data_in[31];
+            crc32_next_word[28] = crc_in[0] ^ crc_in[4] ^ crc_in[6] ^ crc_in[12] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[17] ^ crc_in[21] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[28] ^ crc_in[29] ^ crc_in[30] ^ data_in[0] ^ data_in[4] ^ data_in[6] ^ data_in[12] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[17] ^ data_in[21] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[28] ^ data_in[29] ^ data_in[30];
+            crc32_next_word[29] = crc_in[0] ^ crc_in[1] ^ crc_in[5] ^ crc_in[7] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[5] ^ data_in[7] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[29] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[30] = crc_in[3] ^ crc_in[4] ^ crc_in[7] ^ crc_in[14] ^ crc_in[15] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[3] ^ data_in[4] ^ data_in[7] ^ data_in[14] ^ data_in[15] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[30] ^ data_in[31];
+            crc32_next_word[31] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[15] ^ crc_in[19] ^ crc_in[21] ^ crc_in[22] ^ crc_in[25] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[15] ^ data_in[19] ^ data_in[21] ^ data_in[22] ^ data_in[25] ^ data_in[31];
         end
     endfunction
 
@@ -348,6 +384,37 @@ module axi_dma (
                 6'd46: mm_result_word = mm_c[15][63:32];
                 6'd47: mm_result_word = {30'b0, mm_c[15][65:64]};
                 default: mm_result_word = 32'd0;
+            endcase
+        end
+    endfunction
+
+    function [31:0] mm_out_word;
+        input slot;
+        input [5:0] word_index;
+        begin
+            if (slot == 1'b0) begin
+                mm_out_word = mm_out0[word_index];
+            end
+            else begin
+                mm_out_word = mm_out1[word_index];
+            end
+        end
+    endfunction
+
+    function [65:0] mm_addend2;
+        input [1:0] row;
+        input [1:0] col;
+        reg [1:0] b_pair;
+        begin
+            b_pair = {
+                mm_b[{mm_calc_k, col}][{mm_calc_bit[3:0], 1'b1}],
+                mm_b[{mm_calc_k, col}][{mm_calc_bit[3:0], 1'b0}]
+            };
+            case (b_pair)
+                2'b00: mm_addend2 = 66'd0;
+                2'b01: mm_addend2 = mm_a_shift[row];
+                2'b10: mm_addend2 = mm_a_shift2[row];
+                default: mm_addend2 = mm_a_shift3[row];
             endcase
         end
     endfunction
@@ -484,13 +551,22 @@ module axi_dma (
             matmul_crc <= 32'd0;
             mm_crc_state <= 32'hffff_ffff;
             mm_groups_left <= 32'd0;
+            mm_read_left <= 32'd0;
             mm_rd_cnt <= 6'd0;
+            mm_rd_state <= RD_IDLE;
+            mm_wr_state <= WR_IDLE;
+            mm_calc_state <= MM_CALC_IDLE;
+            mm_rd_slot <= 1'b0;
+            mm_calc_in_slot <= 1'b0;
+            mm_calc_out_slot <= 1'b0;
+            mm_wr_slot <= 1'b0;
+            mm_in0_valid <= 1'b0;
+            mm_in1_valid <= 1'b0;
+            mm_out0_valid <= 1'b0;
+            mm_out1_valid <= 1'b0;
             mm_calc_k <= 2'd0;
-            mm_calc_row <= 2'd0;
             mm_calc_bit <= 5'd0;
             mm_wr_cnt <= 6'd0;
-            mm_crc_word <= 32'd0;
-            mm_crc_byte <= 2'd0;
             for (i = 0; i < 16; i = i + 1) begin
                 mm_a[i] <= 32'd0;
                 mm_b[i] <= 32'd0;
@@ -498,6 +574,8 @@ module axi_dma (
             end
             for (i = 0; i < 4; i = i + 1) begin
                 mm_a_shift[i] <= 66'd0;
+                mm_a_shift2[i] <= 66'd0;
+                mm_a_shift3[i] <= 66'd0;
             end
         end
         else begin
@@ -547,18 +625,27 @@ module axi_dma (
                                 matmul_crc <= 32'd0;
                                 mm_crc_state <= 32'hffff_ffff;
                                 mm_groups_left <= dma_len_cfg;
+                                mm_read_left <= dma_len_cfg;
                                 mm_rd_cnt <= 6'd0;
+                                mm_rd_state <= RD_IDLE;
+                                mm_wr_state <= WR_IDLE;
+                                mm_calc_state <= MM_CALC_IDLE;
+                                mm_rd_slot <= 1'b0;
+                                mm_calc_in_slot <= 1'b0;
+                                mm_calc_out_slot <= 1'b0;
+                                mm_wr_slot <= 1'b0;
+                                mm_in0_valid <= 1'b0;
+                                mm_in1_valid <= 1'b0;
+                                mm_out0_valid <= 1'b0;
+                                mm_out1_valid <= 1'b0;
                                 mm_calc_k <= 2'd0;
-                                mm_calc_row <= 2'd0;
                                 mm_calc_bit <= 5'd0;
                                 mm_wr_cnt <= 6'd0;
-                                mm_crc_word <= 32'd0;
-                                mm_crc_byte <= 2'd0;
-                                m_araddr_r <= dma_src_addr;
-                                m_arlen_r <= 8'd31;
-                                m_arvalid_r <= 1'b1;
+                                m_araddr_r <= 32'd0;
+                                m_arlen_r <= 8'd0;
+                                m_arvalid_r <= 1'b0;
                                 m_rready_r <= 1'b0;
-                                dma_state <= M_MM_AR;
+                                dma_state <= M_MM_PIPE;
                             end
                         end
                         else if (cfg_invalid) begin
@@ -608,211 +695,406 @@ module axi_dma (
                     end
                 end
 
-                // Issue a fixed 32-word burst for one input group:
-                // A[0..15] followed by B[0..15].
-                M_MM_AR: begin
-                    if (m_ar_fire) begin
-                        m_arvalid_r <= 1'b0;
-                        m_rready_r <= 1'b1;
-                        dma_state <= M_MM_R;
-                    end
-                end
-
-                // Capture one A/B group. The source address has already been
-                // converted to the physical bus view by software.
-                M_MM_R: begin
-                    if (m_r_fire) begin
-                        if (m_rresp != 2'b00) begin
-                            m_rready_r <= 1'b0;
-                            m_arvalid_r <= 1'b0;
-                            m_awvalid_r <= 1'b0;
-                            m_wvalid_r <= 1'b0;
-                            m_bready_r <= 1'b0;
-                            m_wlast_r <= 1'b0;
-                            dma_busy <= 1'b0;
-                            dma_done <= 1'b1;
-                            dma_error <= 1'b1;
-                            dma_finish <= 1'b1;
-                            dma_state <= M_IDLE;
-                        end
-                        else begin
-                            if (mm_rd_cnt < 6'd16) begin
-                                mm_a[mm_rd_cnt[3:0]] <= m_rdata;
-                            end
-                            else begin
-                                mm_b[mm_rd_cnt[3:0]] <= m_rdata;
-                            end
-                            dma_cur_src <= dma_cur_src + 32'd4;
-                            if (mm_rd_cnt == 6'd31) begin
-                                m_rready_r <= 1'b0;
+                M_MM_PIPE: begin
+                    case (mm_rd_state)
+                        RD_IDLE: begin
+                            if ((mm_read_left != 32'd0) && (mm_read_slot0_free || mm_read_slot1_free)) begin
+                                mm_rd_slot <= mm_read_slot0_free ? 1'b0 : 1'b1;
                                 mm_rd_cnt <= 6'd0;
+                                m_araddr_r <= dma_cur_src;
+                                m_arlen_r <= 8'd31;
+                                m_arvalid_r <= 1'b1;
+                                mm_rd_state <= RD_AR;
+                            end
+                        end
+                        RD_AR: begin
+                            if (m_ar_fire) begin
+                                m_arvalid_r <= 1'b0;
+                                m_rready_r <= 1'b1;
+                                mm_rd_state <= RD_R;
+                            end
+                        end
+                        RD_R: begin
+                            if (m_r_fire) begin
+                                if (m_rresp != 2'b00) begin
+                                    m_rready_r <= 1'b0;
+                                    m_arvalid_r <= 1'b0;
+                                    m_awvalid_r <= 1'b0;
+                                    m_wvalid_r <= 1'b0;
+                                    m_bready_r <= 1'b0;
+                                    m_wlast_r <= 1'b0;
+                                    dma_busy <= 1'b0;
+                                    dma_done <= 1'b1;
+                                    dma_error <= 1'b1;
+                                    dma_finish <= 1'b1;
+                                    mm_rd_state <= RD_IDLE;
+                                    mm_wr_state <= WR_IDLE;
+                                    mm_calc_state <= MM_CALC_IDLE;
+                                    dma_state <= M_IDLE;
+                                end
+                                else begin
+                                    if (mm_rd_slot == 1'b0) begin
+                                        mm_in0[mm_rd_cnt] <= m_rdata;
+                                    end
+                                    else begin
+                                        mm_in1[mm_rd_cnt] <= m_rdata;
+                                    end
+                                    dma_cur_src <= dma_cur_src + 32'd4;
+                                    if (mm_rd_cnt == 6'd31) begin
+                                        m_rready_r <= 1'b0;
+                                        mm_rd_cnt <= 6'd0;
+                                        mm_read_left <= mm_read_left - 32'd1;
+                                        if (mm_rd_slot == 1'b0) begin
+                                            mm_in0_valid <= 1'b1;
+                                        end
+                                        else begin
+                                            mm_in1_valid <= 1'b1;
+                                        end
+                                        mm_rd_state <= RD_IDLE;
+                                    end
+                                    else begin
+                                        mm_rd_cnt <= mm_rd_cnt + 6'd1;
+                                    end
+                                end
+                            end
+                        end
+                        default: begin
+                            mm_rd_state <= RD_IDLE;
+                        end
+                    endcase
+
+                    case (mm_calc_state)
+                        MM_CALC_IDLE: begin
+                            if ((mm_in0_valid || mm_in1_valid) && (mm_output_slot0_free || mm_output_slot1_free)) begin
+                                mm_calc_in_slot <= mm_in0_valid ? 1'b0 : 1'b1;
+                                mm_calc_out_slot <= mm_output_slot0_free ? 1'b0 : 1'b1;
                                 mm_calc_k <= 2'd0;
-                                mm_calc_row <= 2'd0;
                                 mm_calc_bit <= 5'd0;
                                 for (i = 0; i < 16; i = i + 1) begin
                                     mm_c[i] <= 66'd0;
                                 end
-                                mm_a_shift[0] <= {34'd0, mm_a[0]};
-                                mm_a_shift[1] <= {34'd0, mm_a[4]};
-                                mm_a_shift[2] <= {34'd0, mm_a[8]};
-                                mm_a_shift[3] <= {34'd0, mm_a[12]};
-                                dma_state <= M_MM_CALC;
+
+                                if (mm_in0_valid) begin
+                                    for (i = 0; i < 16; i = i + 1) begin
+                                        mm_a[i] <= mm_in0[i];
+                                        mm_b[i] <= mm_in0[i + 16];
+                                    end
+                                    mm_a_shift[0] <= {34'd0, mm_in0[0]};
+                                    mm_a_shift[1] <= {34'd0, mm_in0[4]};
+                                    mm_a_shift[2] <= {34'd0, mm_in0[8]};
+                                    mm_a_shift[3] <= {34'd0, mm_in0[12]};
+                                    mm_a_shift2[0] <= {33'd0, mm_in0[0], 1'b0};
+                                    mm_a_shift2[1] <= {33'd0, mm_in0[4], 1'b0};
+                                    mm_a_shift2[2] <= {33'd0, mm_in0[8], 1'b0};
+                                    mm_a_shift2[3] <= {33'd0, mm_in0[12], 1'b0};
+                                    mm_a_shift3[0] <= {34'd0, mm_in0[0]} + {33'd0, mm_in0[0], 1'b0};
+                                    mm_a_shift3[1] <= {34'd0, mm_in0[4]} + {33'd0, mm_in0[4], 1'b0};
+                                    mm_a_shift3[2] <= {34'd0, mm_in0[8]} + {33'd0, mm_in0[8], 1'b0};
+                                    mm_a_shift3[3] <= {34'd0, mm_in0[12]} + {33'd0, mm_in0[12], 1'b0};
+                                    mm_in0_valid <= 1'b0;
+                                end
+                                else begin
+                                    for (i = 0; i < 16; i = i + 1) begin
+                                        mm_a[i] <= mm_in1[i];
+                                        mm_b[i] <= mm_in1[i + 16];
+                                    end
+                                    mm_a_shift[0] <= {34'd0, mm_in1[0]};
+                                    mm_a_shift[1] <= {34'd0, mm_in1[4]};
+                                    mm_a_shift[2] <= {34'd0, mm_in1[8]};
+                                    mm_a_shift[3] <= {34'd0, mm_in1[12]};
+                                    mm_a_shift2[0] <= {33'd0, mm_in1[0], 1'b0};
+                                    mm_a_shift2[1] <= {33'd0, mm_in1[4], 1'b0};
+                                    mm_a_shift2[2] <= {33'd0, mm_in1[8], 1'b0};
+                                    mm_a_shift2[3] <= {33'd0, mm_in1[12], 1'b0};
+                                    mm_a_shift3[0] <= {34'd0, mm_in1[0]} + {33'd0, mm_in1[0], 1'b0};
+                                    mm_a_shift3[1] <= {34'd0, mm_in1[4]} + {33'd0, mm_in1[4], 1'b0};
+                                    mm_a_shift3[2] <= {34'd0, mm_in1[8]} + {33'd0, mm_in1[8], 1'b0};
+                                    mm_a_shift3[3] <= {34'd0, mm_in1[12]} + {33'd0, mm_in1[12], 1'b0};
+                                    mm_in1_valid <= 1'b0;
+                                end
+                                mm_calc_state <= MM_CALC_RUN;
+                            end
+                        end
+                        MM_CALC_RUN: begin
+                            mm_c[0] <= mm_c[0] + mm_addend2(2'd0, 2'd0);
+                            mm_c[1] <= mm_c[1] + mm_addend2(2'd0, 2'd1);
+                            mm_c[2] <= mm_c[2] + mm_addend2(2'd0, 2'd2);
+                            mm_c[3] <= mm_c[3] + mm_addend2(2'd0, 2'd3);
+                            mm_c[4] <= mm_c[4] + mm_addend2(2'd1, 2'd0);
+                            mm_c[5] <= mm_c[5] + mm_addend2(2'd1, 2'd1);
+                            mm_c[6] <= mm_c[6] + mm_addend2(2'd1, 2'd2);
+                            mm_c[7] <= mm_c[7] + mm_addend2(2'd1, 2'd3);
+                            mm_c[8] <= mm_c[8] + mm_addend2(2'd2, 2'd0);
+                            mm_c[9] <= mm_c[9] + mm_addend2(2'd2, 2'd1);
+                            mm_c[10] <= mm_c[10] + mm_addend2(2'd2, 2'd2);
+                            mm_c[11] <= mm_c[11] + mm_addend2(2'd2, 2'd3);
+                            mm_c[12] <= mm_c[12] + mm_addend2(2'd3, 2'd0);
+                            mm_c[13] <= mm_c[13] + mm_addend2(2'd3, 2'd1);
+                            mm_c[14] <= mm_c[14] + mm_addend2(2'd3, 2'd2);
+                            mm_c[15] <= mm_c[15] + mm_addend2(2'd3, 2'd3);
+
+                            if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd15)) begin
+                                mm_calc_state <= MM_CALC_STORE;
+                            end
+                            else if (mm_calc_bit == 5'd15) begin
+                                mm_calc_bit <= 5'd0;
+                                mm_calc_k <= mm_calc_next_k;
+                                case (mm_calc_next_k)
+                                    2'd1: begin
+                                        mm_a_shift[0] <= {34'd0, mm_a[1]};
+                                        mm_a_shift[1] <= {34'd0, mm_a[5]};
+                                        mm_a_shift[2] <= {34'd0, mm_a[9]};
+                                        mm_a_shift[3] <= {34'd0, mm_a[13]};
+                                        mm_a_shift2[0] <= {33'd0, mm_a[1], 1'b0};
+                                        mm_a_shift2[1] <= {33'd0, mm_a[5], 1'b0};
+                                        mm_a_shift2[2] <= {33'd0, mm_a[9], 1'b0};
+                                        mm_a_shift2[3] <= {33'd0, mm_a[13], 1'b0};
+                                        mm_a_shift3[0] <= {34'd0, mm_a[1]} + {33'd0, mm_a[1], 1'b0};
+                                        mm_a_shift3[1] <= {34'd0, mm_a[5]} + {33'd0, mm_a[5], 1'b0};
+                                        mm_a_shift3[2] <= {34'd0, mm_a[9]} + {33'd0, mm_a[9], 1'b0};
+                                        mm_a_shift3[3] <= {34'd0, mm_a[13]} + {33'd0, mm_a[13], 1'b0};
+                                    end
+                                    2'd2: begin
+                                        mm_a_shift[0] <= {34'd0, mm_a[2]};
+                                        mm_a_shift[1] <= {34'd0, mm_a[6]};
+                                        mm_a_shift[2] <= {34'd0, mm_a[10]};
+                                        mm_a_shift[3] <= {34'd0, mm_a[14]};
+                                        mm_a_shift2[0] <= {33'd0, mm_a[2], 1'b0};
+                                        mm_a_shift2[1] <= {33'd0, mm_a[6], 1'b0};
+                                        mm_a_shift2[2] <= {33'd0, mm_a[10], 1'b0};
+                                        mm_a_shift2[3] <= {33'd0, mm_a[14], 1'b0};
+                                        mm_a_shift3[0] <= {34'd0, mm_a[2]} + {33'd0, mm_a[2], 1'b0};
+                                        mm_a_shift3[1] <= {34'd0, mm_a[6]} + {33'd0, mm_a[6], 1'b0};
+                                        mm_a_shift3[2] <= {34'd0, mm_a[10]} + {33'd0, mm_a[10], 1'b0};
+                                        mm_a_shift3[3] <= {34'd0, mm_a[14]} + {33'd0, mm_a[14], 1'b0};
+                                    end
+                                    default: begin
+                                        mm_a_shift[0] <= {34'd0, mm_a[3]};
+                                        mm_a_shift[1] <= {34'd0, mm_a[7]};
+                                        mm_a_shift[2] <= {34'd0, mm_a[11]};
+                                        mm_a_shift[3] <= {34'd0, mm_a[15]};
+                                        mm_a_shift2[0] <= {33'd0, mm_a[3], 1'b0};
+                                        mm_a_shift2[1] <= {33'd0, mm_a[7], 1'b0};
+                                        mm_a_shift2[2] <= {33'd0, mm_a[11], 1'b0};
+                                        mm_a_shift2[3] <= {33'd0, mm_a[15], 1'b0};
+                                        mm_a_shift3[0] <= {34'd0, mm_a[3]} + {33'd0, mm_a[3], 1'b0};
+                                        mm_a_shift3[1] <= {34'd0, mm_a[7]} + {33'd0, mm_a[7], 1'b0};
+                                        mm_a_shift3[2] <= {34'd0, mm_a[11]} + {33'd0, mm_a[11], 1'b0};
+                                        mm_a_shift3[3] <= {34'd0, mm_a[15]} + {33'd0, mm_a[15], 1'b0};
+                                    end
+                                endcase
                             end
                             else begin
-                                mm_rd_cnt <= mm_rd_cnt + 6'd1;
+                                mm_calc_bit <= mm_calc_pair_next;
+                                for (i = 0; i < 4; i = i + 1) begin
+                                    mm_a_shift[i] <= {mm_a_shift[i][63:0], 2'b0};
+                                    mm_a_shift2[i] <= {mm_a_shift2[i][63:0], 2'b0};
+                                    mm_a_shift3[i] <= {mm_a_shift3[i][63:0], 2'b0};
+                                end
                             end
                         end
-                    end
-                end
-
-                // Compute four C elements per cycle: one row, all columns.
-                // The shifted A addend is kept in registers, so this state has
-                // no variable barrel shift and only four 66-bit adders.
-                M_MM_CALC: begin
-                    if (mm_b[{mm_calc_k, 2'd0}][mm_calc_bit]) begin
-                        mm_c[{mm_calc_row, 2'd0}] <= mm_c[{mm_calc_row, 2'd0}] + mm_a_shift[mm_calc_row];
-                    end
-                    if (mm_b[{mm_calc_k, 2'd1}][mm_calc_bit]) begin
-                        mm_c[{mm_calc_row, 2'd1}] <= mm_c[{mm_calc_row, 2'd1}] + mm_a_shift[mm_calc_row];
-                    end
-                    if (mm_b[{mm_calc_k, 2'd2}][mm_calc_bit]) begin
-                        mm_c[{mm_calc_row, 2'd2}] <= mm_c[{mm_calc_row, 2'd2}] + mm_a_shift[mm_calc_row];
-                    end
-                    if (mm_b[{mm_calc_k, 2'd3}][mm_calc_bit]) begin
-                        mm_c[{mm_calc_row, 2'd3}] <= mm_c[{mm_calc_row, 2'd3}] + mm_a_shift[mm_calc_row];
-                    end
-
-                    if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd31) && (mm_calc_row == 2'd3)) begin
-                        mm_wr_cnt <= 6'd0;
-                        m_awaddr_r <= dma_cur_dst;
-                        m_awlen_r <= 8'd47;
-                        m_awvalid_r <= 1'b1;
-                        dma_state <= M_MM_AW;
-                    end
-                    else if (mm_calc_row == 2'd3) begin
-                        mm_calc_row <= 2'd0;
-                        if (mm_calc_bit == 5'd31) begin
-                            mm_calc_bit <= 5'd0;
-                            mm_calc_k <= mm_calc_next_k;
-                            case (mm_calc_next_k)
-                                2'd1: begin
-                                    mm_a_shift[0] <= {34'd0, mm_a[1]};
-                                    mm_a_shift[1] <= {34'd0, mm_a[5]};
-                                    mm_a_shift[2] <= {34'd0, mm_a[9]};
-                                    mm_a_shift[3] <= {34'd0, mm_a[13]};
-                                end
-                                2'd2: begin
-                                    mm_a_shift[0] <= {34'd0, mm_a[2]};
-                                    mm_a_shift[1] <= {34'd0, mm_a[6]};
-                                    mm_a_shift[2] <= {34'd0, mm_a[10]};
-                                    mm_a_shift[3] <= {34'd0, mm_a[14]};
-                                end
-                                default: begin
-                                    mm_a_shift[0] <= {34'd0, mm_a[3]};
-                                    mm_a_shift[1] <= {34'd0, mm_a[7]};
-                                    mm_a_shift[2] <= {34'd0, mm_a[11]};
-                                    mm_a_shift[3] <= {34'd0, mm_a[15]};
-                                end
-                            endcase
-                        end
-                        else begin
-                            mm_calc_bit <= mm_calc_bit + 5'd1;
-                            for (i = 0; i < 4; i = i + 1) begin
-                                mm_a_shift[i] <= {mm_a_shift[i][64:0], 1'b0};
+                        MM_CALC_STORE: begin
+                            if (mm_calc_out_slot == 1'b0) begin
+                                mm_out0[0] <= mm_result_word(6'd0);
+                                mm_out0[1] <= mm_result_word(6'd1);
+                                mm_out0[2] <= mm_result_word(6'd2);
+                                mm_out0[3] <= mm_result_word(6'd3);
+                                mm_out0[4] <= mm_result_word(6'd4);
+                                mm_out0[5] <= mm_result_word(6'd5);
+                                mm_out0[6] <= mm_result_word(6'd6);
+                                mm_out0[7] <= mm_result_word(6'd7);
+                                mm_out0[8] <= mm_result_word(6'd8);
+                                mm_out0[9] <= mm_result_word(6'd9);
+                                mm_out0[10] <= mm_result_word(6'd10);
+                                mm_out0[11] <= mm_result_word(6'd11);
+                                mm_out0[12] <= mm_result_word(6'd12);
+                                mm_out0[13] <= mm_result_word(6'd13);
+                                mm_out0[14] <= mm_result_word(6'd14);
+                                mm_out0[15] <= mm_result_word(6'd15);
+                                mm_out0[16] <= mm_result_word(6'd16);
+                                mm_out0[17] <= mm_result_word(6'd17);
+                                mm_out0[18] <= mm_result_word(6'd18);
+                                mm_out0[19] <= mm_result_word(6'd19);
+                                mm_out0[20] <= mm_result_word(6'd20);
+                                mm_out0[21] <= mm_result_word(6'd21);
+                                mm_out0[22] <= mm_result_word(6'd22);
+                                mm_out0[23] <= mm_result_word(6'd23);
+                                mm_out0[24] <= mm_result_word(6'd24);
+                                mm_out0[25] <= mm_result_word(6'd25);
+                                mm_out0[26] <= mm_result_word(6'd26);
+                                mm_out0[27] <= mm_result_word(6'd27);
+                                mm_out0[28] <= mm_result_word(6'd28);
+                                mm_out0[29] <= mm_result_word(6'd29);
+                                mm_out0[30] <= mm_result_word(6'd30);
+                                mm_out0[31] <= mm_result_word(6'd31);
+                                mm_out0[32] <= mm_result_word(6'd32);
+                                mm_out0[33] <= mm_result_word(6'd33);
+                                mm_out0[34] <= mm_result_word(6'd34);
+                                mm_out0[35] <= mm_result_word(6'd35);
+                                mm_out0[36] <= mm_result_word(6'd36);
+                                mm_out0[37] <= mm_result_word(6'd37);
+                                mm_out0[38] <= mm_result_word(6'd38);
+                                mm_out0[39] <= mm_result_word(6'd39);
+                                mm_out0[40] <= mm_result_word(6'd40);
+                                mm_out0[41] <= mm_result_word(6'd41);
+                                mm_out0[42] <= mm_result_word(6'd42);
+                                mm_out0[43] <= mm_result_word(6'd43);
+                                mm_out0[44] <= mm_result_word(6'd44);
+                                mm_out0[45] <= mm_result_word(6'd45);
+                                mm_out0[46] <= mm_result_word(6'd46);
+                                mm_out0[47] <= mm_result_word(6'd47);
                             end
+                            else begin
+                                mm_out1[0] <= mm_result_word(6'd0);
+                                mm_out1[1] <= mm_result_word(6'd1);
+                                mm_out1[2] <= mm_result_word(6'd2);
+                                mm_out1[3] <= mm_result_word(6'd3);
+                                mm_out1[4] <= mm_result_word(6'd4);
+                                mm_out1[5] <= mm_result_word(6'd5);
+                                mm_out1[6] <= mm_result_word(6'd6);
+                                mm_out1[7] <= mm_result_word(6'd7);
+                                mm_out1[8] <= mm_result_word(6'd8);
+                                mm_out1[9] <= mm_result_word(6'd9);
+                                mm_out1[10] <= mm_result_word(6'd10);
+                                mm_out1[11] <= mm_result_word(6'd11);
+                                mm_out1[12] <= mm_result_word(6'd12);
+                                mm_out1[13] <= mm_result_word(6'd13);
+                                mm_out1[14] <= mm_result_word(6'd14);
+                                mm_out1[15] <= mm_result_word(6'd15);
+                                mm_out1[16] <= mm_result_word(6'd16);
+                                mm_out1[17] <= mm_result_word(6'd17);
+                                mm_out1[18] <= mm_result_word(6'd18);
+                                mm_out1[19] <= mm_result_word(6'd19);
+                                mm_out1[20] <= mm_result_word(6'd20);
+                                mm_out1[21] <= mm_result_word(6'd21);
+                                mm_out1[22] <= mm_result_word(6'd22);
+                                mm_out1[23] <= mm_result_word(6'd23);
+                                mm_out1[24] <= mm_result_word(6'd24);
+                                mm_out1[25] <= mm_result_word(6'd25);
+                                mm_out1[26] <= mm_result_word(6'd26);
+                                mm_out1[27] <= mm_result_word(6'd27);
+                                mm_out1[28] <= mm_result_word(6'd28);
+                                mm_out1[29] <= mm_result_word(6'd29);
+                                mm_out1[30] <= mm_result_word(6'd30);
+                                mm_out1[31] <= mm_result_word(6'd31);
+                                mm_out1[32] <= mm_result_word(6'd32);
+                                mm_out1[33] <= mm_result_word(6'd33);
+                                mm_out1[34] <= mm_result_word(6'd34);
+                                mm_out1[35] <= mm_result_word(6'd35);
+                                mm_out1[36] <= mm_result_word(6'd36);
+                                mm_out1[37] <= mm_result_word(6'd37);
+                                mm_out1[38] <= mm_result_word(6'd38);
+                                mm_out1[39] <= mm_result_word(6'd39);
+                                mm_out1[40] <= mm_result_word(6'd40);
+                                mm_out1[41] <= mm_result_word(6'd41);
+                                mm_out1[42] <= mm_result_word(6'd42);
+                                mm_out1[43] <= mm_result_word(6'd43);
+                                mm_out1[44] <= mm_result_word(6'd44);
+                                mm_out1[45] <= mm_result_word(6'd45);
+                                mm_out1[46] <= mm_result_word(6'd46);
+                                mm_out1[47] <= mm_result_word(6'd47);
+                            end
+                            if (mm_calc_out_slot == 1'b0) begin
+                                mm_out0_valid <= 1'b1;
+                            end
+                            else begin
+                                mm_out1_valid <= 1'b1;
+                            end
+                            mm_calc_state <= MM_CALC_IDLE;
                         end
-                    end
-                    else begin
-                        mm_calc_row <= mm_calc_row + 2'd1;
-                    end
-                end
-
-                // Write the 48-word result group as one burst to ExtRAM.
-                M_MM_AW: begin
-                    if (m_aw_fire) begin
-                        m_awvalid_r <= 1'b0;
-                        mm_wr_cnt <= 6'd0;
-                        m_wdata_r <= mm_result_word(6'd0);
-                        m_wlast_r <= 1'b0;
-                        m_wvalid_r <= 1'b1;
-                        dma_state <= M_MM_W;
-                    end
-                end
-
-                // Feed the same result words into CRC32 as they are written.
-                // This removes the former CPU-side CRC pass over the whole result area.
-                M_MM_W: begin
-                    if (m_w_fire) begin
-                        mm_crc_word <= m_wdata_r;
-                        mm_crc_byte <= 2'd0;
-                        dma_cur_dst <= dma_cur_dst + 32'd4;
-                        m_wvalid_r <= 1'b0;
-                        m_wlast_r <= 1'b0;
-                        dma_state <= M_MM_CRC;
-                    end
-                end
-
-                // Fold one result byte per cycle. This deliberately spends a few
-                // cycles to keep CRC off the timing critical path.
-                M_MM_CRC: begin
-                    case (mm_crc_byte)
-                        2'd0: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[7:0]);
-                        2'd1: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[15:8]);
-                        2'd2: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[23:16]);
-                        default: mm_crc_state <= crc32_next_byte(mm_crc_state, mm_crc_word[31:24]);
+                        default: begin
+                            mm_calc_state <= MM_CALC_IDLE;
+                        end
                     endcase
 
-                    if (mm_crc_byte == 2'd3) begin
-                        if (mm_wr_cnt == 6'd47) begin
-                            m_bready_r <= 1'b1;
-                            dma_state <= M_MM_B;
+                    case (mm_wr_state)
+                        WR_IDLE: begin
+                            if (mm_out0_valid || mm_out1_valid) begin
+                                mm_wr_slot <= mm_out0_valid ? 1'b0 : 1'b1;
+                                mm_wr_cnt <= 6'd0;
+                                m_awaddr_r <= dma_cur_dst;
+                                m_awlen_r <= 8'd47;
+                                m_awvalid_r <= 1'b1;
+                                mm_wr_state <= WR_AW;
+                            end
                         end
-                        else begin
-                            mm_wr_cnt <= mm_wr_word_next;
-                            m_wdata_r <= mm_result_word(mm_wr_word_next);
-                            m_wlast_r <= (mm_wr_word_next == 6'd47);
-                            m_wvalid_r <= 1'b1;
-                            dma_state <= M_MM_W;
+                        WR_AW: begin
+                            if (m_aw_fire) begin
+                                m_awvalid_r <= 1'b0;
+                                m_wdata_r <= mm_out_word(mm_wr_slot, 6'd0);
+                                m_wlast_r <= 1'b0;
+                                m_wvalid_r <= 1'b1;
+                                mm_wr_state <= WR_W;
+                            end
                         end
-                    end
-                    else begin
-                        mm_crc_byte <= mm_crc_byte + 2'd1;
-                    end
-                end
+                        WR_W: begin
+                            if (m_w_fire) begin
+                                mm_crc_state <= crc32_next_word(mm_crc_state, m_wdata_r);
+                                dma_cur_dst <= dma_cur_dst + 32'd4;
+                                if (mm_wr_cnt == 6'd47) begin
+                                    m_wvalid_r <= 1'b0;
+                                    m_wlast_r <= 1'b0;
+                                    m_bready_r <= 1'b1;
+                                    mm_wr_state <= WR_B;
+                                end
+                                else begin
+                                    mm_wr_cnt <= mm_wr_word_next;
+                                    m_wdata_r <= mm_out_word(mm_wr_slot, mm_wr_word_next);
+                                    m_wlast_r <= (mm_wr_word_next == 6'd47);
+                                end
+                            end
+                        end
+                        WR_B: begin
+                            if (m_b_fire) begin
+                                m_bready_r <= 1'b0;
+                                if (m_bresp != 2'b00) begin
+                                    m_rready_r <= 1'b0;
+                                    m_arvalid_r <= 1'b0;
+                                    m_awvalid_r <= 1'b0;
+                                    m_wvalid_r <= 1'b0;
+                                    m_wlast_r <= 1'b0;
+                                    dma_busy <= 1'b0;
+                                    dma_done <= 1'b1;
+                                    dma_error <= 1'b1;
+                                    dma_finish <= 1'b1;
+                                    mm_rd_state <= RD_IDLE;
+                                    mm_wr_state <= WR_IDLE;
+                                    mm_calc_state <= MM_CALC_IDLE;
+                                    dma_state <= M_IDLE;
+                                end
+                                else begin
+                                    if (mm_wr_slot == 1'b0) begin
+                                        mm_out0_valid <= 1'b0;
+                                    end
+                                    else begin
+                                        mm_out1_valid <= 1'b0;
+                                    end
 
-                // Wait for the result write response, then either launch the next
-                // group or publish final DONE and the inverted CRC value.
-                M_MM_B: begin
-                    if (m_b_fire) begin
-                        m_bready_r <= 1'b0;
-                        if (m_bresp != 2'b00) begin
-                            dma_busy <= 1'b0;
-                            dma_done <= 1'b1;
-                            dma_error <= 1'b1;
-                            dma_finish <= 1'b1;
-                            dma_state <= M_IDLE;
+                                    if (mm_groups_left <= 32'd1) begin
+                                        mm_groups_left <= 32'd0;
+                                        dma_remain <= 32'd0;
+                                        matmul_crc <= ~mm_crc_state;
+                                        dma_busy <= 1'b0;
+                                        dma_done <= 1'b1;
+                                        dma_error <= 1'b0;
+                                        dma_finish <= 1'b1;
+                                        mm_rd_state <= RD_IDLE;
+                                        mm_wr_state <= WR_IDLE;
+                                        mm_calc_state <= MM_CALC_IDLE;
+                                        dma_state <= M_IDLE;
+                                    end
+                                    else begin
+                                        mm_groups_left <= mm_groups_left - 32'd1;
+                                        dma_remain <= mm_groups_left - 32'd1;
+                                        mm_wr_state <= WR_IDLE;
+                                    end
+                                end
+                            end
                         end
-                        else if (mm_groups_left <= 32'd1) begin
-                            mm_groups_left <= 32'd0;
-                            dma_remain <= 32'd0;
-                            matmul_crc <= ~mm_crc_state;
-                            dma_busy <= 1'b0;
-                            dma_done <= 1'b1;
-                            dma_error <= 1'b0;
-                            dma_finish <= 1'b1;
-                            dma_state <= M_IDLE;
+                        default: begin
+                            mm_wr_state <= WR_IDLE;
                         end
-                        else begin
-                            mm_groups_left <= mm_groups_left - 32'd1;
-                            dma_remain <= mm_groups_left - 32'd1;
-                            mm_rd_cnt <= 6'd0;
-                            m_araddr_r <= dma_cur_src;
-                            m_arlen_r <= 8'd31;
-                            m_arvalid_r <= 1'b1;
-                            m_rready_r <= 1'b0;
-                            dma_state <= M_MM_AR;
-                        end
-                    end
+                    endcase
                 end
 
                 M_STREAM: begin
