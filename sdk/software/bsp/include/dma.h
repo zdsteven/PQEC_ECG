@@ -21,6 +21,8 @@
 #define DMA_CTRL_CLEARDONE  0x2
 /* Selects the specialized ExtRAM -> matmul -> ExtRAM batch engine. */
 #define DMA_CTRL_MATMUL     0x4
+/* Matmul mode: fold generated result words into CRC32 without writing them back. */
+#define DMA_CTRL_MATMUL_CRC_ONLY 0x8
 
 #define DMA_STATUS_BUSY     0x1
 #define DMA_STATUS_DONE     0x2
@@ -37,8 +39,11 @@ void DMA_Clear_Done(void);
 int DMA_Start(void);
 int DMA_Transfer_Async(uint32_t src_addr, uint32_t dst_addr, uint32_t byte_len);
 int DMA_Transfer_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t byte_len, uint32_t timeout_cycles);
+int DMA_Wait_Blocking(uint32_t timeout_cycles);
 uint32_t DMA_Get_Matmul_CRC(void);
 /* In matmul mode, group_num is written to DMA_LEN instead of a byte length. */
 int DMA_Matmul_Compute_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles);
+int DMA_Matmul_Compute_CRC_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles);
+int DMA_Matmul_Start_CRC(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num);
 
 #endif

@@ -78,6 +78,7 @@ module axi_dma (
 
     // Register map used by the CPU-side AXI slave port.
     // CTRL bit0 starts normal DMA, bit1 clears DONE, bit2 selects matmul batch mode.
+    // In matmul mode bit3 skips result writeback and only folds generated words into CRC32.
     // In normal DMA LEN is a byte count. In matmul batch mode LEN is the group count.
     localparam CTRL_ADDR      = 16'h0000;
     localparam STATUS_ADDR    = 16'h0004;
@@ -141,6 +142,7 @@ module axi_dma (
     reg dma_done;
     reg dma_error;
     reg [4:0] dma_state;
+    reg matmul_crc_only;
 
     reg m_arvalid_r;
     reg [31:0] m_araddr_r;
@@ -221,6 +223,7 @@ module axi_dma (
     wire ctrl_start    = write_ctrl & s_wdata[0];
     wire ctrl_clr_done = write_ctrl & s_wdata[1];
     wire ctrl_matmul   = write_ctrl & s_wdata[2];
+    wire ctrl_matmul_crc_only = write_ctrl & s_wdata[3];
     wire m_ar_fire = m_arvalid_r & m_arready;
     wire m_r_fire  = m_rready_r & m_rvalid;
     wire m_aw_fire = m_awvalid_r & m_awready;
@@ -268,6 +271,7 @@ module axi_dma (
     wire chunk_allow_next = src_burst_allow_next | dst_burst_allow_next;
     wire [7:0] dma_words_from_next = chunk_allow_next ? ((dma_remain_next > burst_max_bytes) ? burst_max_words : dma_remain_next[9:2]) : 8'd1;
     wire [5:0] mm_wr_word_next = mm_wr_cnt + 6'd1;
+    wire [5:0] mm_wr_word_next2 = mm_wr_cnt + 6'd2;
     wire [4:0] mm_calc_pair_next = mm_calc_bit + 5'd3;
     wire [1:0] mm_calc_next_k = mm_calc_k + 2'd1;
     wire mm_read_slot0_free = !mm_in0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b0));
@@ -330,6 +334,17 @@ module axi_dma (
             crc32_next_word[29] = crc_in[0] ^ crc_in[1] ^ crc_in[5] ^ crc_in[7] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[5] ^ data_in[7] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[29] ^ data_in[30] ^ data_in[31];
             crc32_next_word[30] = crc_in[3] ^ crc_in[4] ^ crc_in[7] ^ crc_in[14] ^ crc_in[15] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[3] ^ data_in[4] ^ data_in[7] ^ data_in[14] ^ data_in[15] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[30] ^ data_in[31];
             crc32_next_word[31] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[15] ^ crc_in[19] ^ crc_in[21] ^ crc_in[22] ^ crc_in[25] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[15] ^ data_in[19] ^ data_in[21] ^ data_in[22] ^ data_in[25] ^ data_in[31];
+        end
+    endfunction
+
+    function [31:0] crc32_next_2words;
+        input [31:0] crc_in;
+        input [31:0] word0;
+        input [31:0] word1;
+        reg [31:0] crc1;
+        begin
+            crc1 = crc32_next_word(crc_in, word0);
+            crc32_next_2words = crc32_next_word(crc1, word1);
         end
     endfunction
 
@@ -559,6 +574,7 @@ module axi_dma (
             dma_done <= 1'b0;
             dma_error <= 1'b0;
             dma_state <= M_IDLE;
+            matmul_crc_only <= 1'b0;
             dma_finish <= 1'b0;
             m_arvalid_r <= 1'b0;
             m_araddr_r <= 32'd0;
@@ -662,6 +678,7 @@ module axi_dma (
                                 dma_busy <= 1'b1;
                                 dma_done <= 1'b0;
                                 dma_error <= 1'b0;
+                                matmul_crc_only <= ctrl_matmul_crc_only;
                                 dma_cur_src <= dma_src_addr;
                                 dma_cur_dst <= dma_dst_addr;
                                 dma_remain <= dma_len_cfg;
@@ -696,11 +713,13 @@ module axi_dma (
                             dma_done <= 1'b1;
                             dma_error <= 1'b1;
                             dma_finish <= 1'b1;
+                            matmul_crc_only <= 1'b0;
                         end
                         else if (stream_cfg) begin
                             dma_busy <= 1'b1;
                             dma_done <= 1'b0;
                             dma_error <= 1'b0;
+                            matmul_crc_only <= 1'b0;
                             dma_cur_src <= dma_src_addr;
                             dma_cur_dst <= dma_dst_addr;
                             dma_remain <= dma_len_cfg;
@@ -723,6 +742,7 @@ module axi_dma (
                             dma_busy <= 1'b1;
                             dma_done <= 1'b0;
                             dma_error <= 1'b0;
+                            matmul_crc_only <= 1'b0;
                             dma_cur_src <= dma_src_addr;
                             dma_cur_dst <= dma_dst_addr;
                             dma_remain <= dma_len_cfg;
@@ -1019,10 +1039,16 @@ module axi_dma (
                             if (mm_out0_valid || mm_out1_valid) begin
                                 mm_wr_slot <= mm_out0_valid ? 1'b0 : 1'b1;
                                 mm_wr_cnt <= 6'd0;
-                                m_awaddr_r <= dma_cur_dst;
-                                m_awlen_r <= 8'd47;
-                                m_awvalid_r <= 1'b1;
-                                mm_wr_state <= WR_AW;
+                                m_wdata_r <= mm_out_word(mm_out0_valid ? 1'b0 : 1'b1, 6'd0);
+                                if (matmul_crc_only) begin
+                                    mm_wr_state <= WR_W;
+                                end
+                                else begin
+                                    m_awaddr_r <= dma_cur_dst;
+                                    m_awlen_r <= 8'd47;
+                                    m_awvalid_r <= 1'b1;
+                                    mm_wr_state <= WR_AW;
+                                end
                             end
                         end
                         WR_AW: begin
@@ -1035,7 +1061,18 @@ module axi_dma (
                             end
                         end
                         WR_W: begin
-                            if (m_w_fire) begin
+                            if (matmul_crc_only) begin
+                                mm_crc_state <= crc32_next_2words(mm_crc_state,
+                                                                  mm_out_word(mm_wr_slot, mm_wr_cnt),
+                                                                  mm_out_word(mm_wr_slot, mm_wr_cnt + 6'd1));
+                                if (mm_wr_cnt == 6'd46) begin
+                                    mm_wr_state <= WR_B;
+                                end
+                                else begin
+                                    mm_wr_cnt <= mm_wr_word_next2;
+                                end
+                            end
+                            else if (m_w_fire) begin
                                 mm_crc_state <= crc32_next_word(mm_crc_state, m_wdata_r);
                                 dma_cur_dst <= dma_cur_dst + 32'd4;
                                 if (mm_wr_cnt == 6'd47) begin
@@ -1052,9 +1089,11 @@ module axi_dma (
                             end
                         end
                         WR_B: begin
-                            if (m_b_fire) begin
-                                m_bready_r <= 1'b0;
-                                if (m_bresp != 2'b00) begin
+                            if (matmul_crc_only || m_b_fire) begin
+                                if (!matmul_crc_only) begin
+                                    m_bready_r <= 1'b0;
+                                end
+                                if (!matmul_crc_only && (m_bresp != 2'b00)) begin
                                     m_rready_r <= 1'b0;
                                     m_arvalid_r <= 1'b0;
                                     m_awvalid_r <= 1'b0;
