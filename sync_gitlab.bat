@@ -44,8 +44,8 @@ echo.
 echo [INFO] Starting incremental sync...
 
 if exist "%SOURCE%\rtl" (
-    echo Syncing: rtl
-    robocopy "%SOURCE%\rtl" "%TARGET%\rtl" /MIR /NJH /NJS /NDL /NC /NS /NP
+    echo Syncing: rtl (preserving existing soc.bit, skipping updates)
+    robocopy "%SOURCE%\rtl" "%TARGET%\rtl" /E /XO /XF soc_top.bit /NJH /NJS /NDL /NC /NS /NP
 ) else (
     echo [WARNING] Source not found: %SOURCE%\rtl
 )

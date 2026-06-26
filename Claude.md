@@ -146,6 +146,7 @@ MATMUL_DONE
 - **不允许使用 DSP 资源**（CI 会检查 `check_dsp.py`）
 - **WNS 必须为正值**（CI 会检查 `check_timing.py`）
 - 需通过 HDL lint 检查（本地暂不支持`rulinter.py`运行，只能在gitlab 线上检查）
+- **不用考虑面积**（计算性能为核心目标）
 
 ### BSP 开发规范
 
@@ -176,6 +177,7 @@ MATMUL_DONE
 ## 本地开发工作流
 
 根目录 Makefile 提供完整的本地开发流程，通过 batch 脚本自动化各步骤。
+不要擅自在本仓库进行git提交。
 
 ### 顶层 Makefile 命令
 
