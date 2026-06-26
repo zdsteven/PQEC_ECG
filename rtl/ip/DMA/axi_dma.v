@@ -208,6 +208,14 @@ module axi_dma (
     reg [65:0] mm_a_shift5 [0:3];
     reg [65:0] mm_a_shift6 [0:3];
     reg [65:0] mm_a_shift7 [0:3];
+    reg [65:0] mm_a_shift8 [0:3];
+    reg [65:0] mm_a_shift9 [0:3];
+    reg [65:0] mm_a_shift10 [0:3];
+    reg [65:0] mm_a_shift11 [0:3];
+    reg [65:0] mm_a_shift12 [0:3];
+    reg [65:0] mm_a_shift13 [0:3];
+    reg [65:0] mm_a_shift14 [0:3];
+    reg [65:0] mm_a_shift15 [0:3];
     integer i;
 
     wire ar_enter = s_arvalid & s_arready;
@@ -272,7 +280,7 @@ module axi_dma (
     wire [7:0] dma_words_from_next = chunk_allow_next ? ((dma_remain_next > burst_max_bytes) ? burst_max_words : dma_remain_next[9:2]) : 8'd1;
     wire [5:0] mm_wr_word_next = mm_wr_cnt + 6'd1;
     wire [5:0] mm_wr_word_next2 = mm_wr_cnt + 6'd2;
-    wire [4:0] mm_calc_pair_next = mm_calc_bit + 5'd3;
+    wire [4:0] mm_calc_pair_next = mm_calc_bit + 5'd4;
     wire [1:0] mm_calc_next_k = mm_calc_k + 2'd1;
     wire mm_read_slot0_free = !mm_in0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b0));
     wire mm_read_slot1_free = !mm_in1_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b1));
@@ -301,39 +309,41 @@ module axi_dma (
     function [31:0] crc32_next_word;
         input [31:0] crc_in;
         input [31:0] data_in;
+        reg [31:0] x;
         begin
-            crc32_next_word[0] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[16] ^ crc_in[20] ^ crc_in[22] ^ crc_in[23] ^ crc_in[26] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[16] ^ data_in[20] ^ data_in[22] ^ data_in[23] ^ data_in[26];
-            crc32_next_word[1] = crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[17] ^ crc_in[21] ^ crc_in[23] ^ crc_in[24] ^ crc_in[27] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[17] ^ data_in[21] ^ data_in[23] ^ data_in[24] ^ data_in[27];
-            crc32_next_word[2] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[8] ^ crc_in[9] ^ crc_in[10] ^ crc_in[18] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[28] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[8] ^ data_in[9] ^ data_in[10] ^ data_in[18] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[28];
-            crc32_next_word[3] = crc_in[1] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[9] ^ crc_in[10] ^ crc_in[11] ^ crc_in[19] ^ crc_in[23] ^ crc_in[25] ^ crc_in[26] ^ crc_in[29] ^ data_in[1] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[9] ^ data_in[10] ^ data_in[11] ^ data_in[19] ^ data_in[23] ^ data_in[25] ^ data_in[26] ^ data_in[29];
-            crc32_next_word[4] = crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[10] ^ crc_in[11] ^ crc_in[12] ^ crc_in[20] ^ crc_in[24] ^ crc_in[26] ^ crc_in[27] ^ crc_in[30] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[10] ^ data_in[11] ^ data_in[12] ^ data_in[20] ^ data_in[24] ^ data_in[26] ^ data_in[27] ^ data_in[30];
-            crc32_next_word[5] = crc_in[0] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[11] ^ crc_in[12] ^ crc_in[13] ^ crc_in[21] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[11] ^ data_in[12] ^ data_in[13] ^ data_in[21] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[31];
-            crc32_next_word[6] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[9] ^ crc_in[10] ^ crc_in[12] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[20] ^ crc_in[23] ^ crc_in[28] ^ crc_in[29] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[9] ^ data_in[10] ^ data_in[12] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[20] ^ data_in[23] ^ data_in[28] ^ data_in[29];
-            crc32_next_word[7] = crc_in[1] ^ crc_in[3] ^ crc_in[4] ^ crc_in[10] ^ crc_in[11] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[21] ^ crc_in[24] ^ crc_in[29] ^ crc_in[30] ^ data_in[1] ^ data_in[3] ^ data_in[4] ^ data_in[10] ^ data_in[11] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[21] ^ data_in[24] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[8] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[11] ^ crc_in[12] ^ crc_in[14] ^ crc_in[15] ^ crc_in[16] ^ crc_in[18] ^ crc_in[22] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[11] ^ data_in[12] ^ data_in[14] ^ data_in[15] ^ data_in[16] ^ data_in[18] ^ data_in[22] ^ data_in[25] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[9] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[12] ^ crc_in[13] ^ crc_in[15] ^ crc_in[17] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[12] ^ data_in[13] ^ data_in[15] ^ data_in[17] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[31];
-            crc32_next_word[10] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[9] ^ crc_in[13] ^ crc_in[14] ^ crc_in[18] ^ crc_in[21] ^ crc_in[22] ^ crc_in[26] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[9] ^ data_in[13] ^ data_in[14] ^ data_in[18] ^ data_in[21] ^ data_in[22] ^ data_in[26];
-            crc32_next_word[11] = crc_in[1] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[8] ^ crc_in[10] ^ crc_in[14] ^ crc_in[15] ^ crc_in[19] ^ crc_in[22] ^ crc_in[23] ^ crc_in[27] ^ data_in[1] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[8] ^ data_in[10] ^ data_in[14] ^ data_in[15] ^ data_in[19] ^ data_in[22] ^ data_in[23] ^ data_in[27];
-            crc32_next_word[12] = crc_in[2] ^ crc_in[4] ^ crc_in[6] ^ crc_in[7] ^ crc_in[9] ^ crc_in[11] ^ crc_in[15] ^ crc_in[16] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[28] ^ data_in[2] ^ data_in[4] ^ data_in[6] ^ data_in[7] ^ data_in[9] ^ data_in[11] ^ data_in[15] ^ data_in[16] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[28];
-            crc32_next_word[13] = crc_in[0] ^ crc_in[3] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[10] ^ crc_in[12] ^ crc_in[16] ^ crc_in[17] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ data_in[0] ^ data_in[3] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[10] ^ data_in[12] ^ data_in[16] ^ data_in[17] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[29];
-            crc32_next_word[14] = crc_in[0] ^ crc_in[1] ^ crc_in[4] ^ crc_in[6] ^ crc_in[8] ^ crc_in[9] ^ crc_in[11] ^ crc_in[13] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[25] ^ crc_in[26] ^ crc_in[30] ^ data_in[0] ^ data_in[1] ^ data_in[4] ^ data_in[6] ^ data_in[8] ^ data_in[9] ^ data_in[11] ^ data_in[13] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[25] ^ data_in[26] ^ data_in[30];
-            crc32_next_word[15] = crc_in[1] ^ crc_in[2] ^ crc_in[5] ^ crc_in[7] ^ crc_in[9] ^ crc_in[10] ^ crc_in[12] ^ crc_in[14] ^ crc_in[18] ^ crc_in[19] ^ crc_in[23] ^ crc_in[26] ^ crc_in[27] ^ crc_in[31] ^ data_in[1] ^ data_in[2] ^ data_in[5] ^ data_in[7] ^ data_in[9] ^ data_in[10] ^ data_in[12] ^ data_in[14] ^ data_in[18] ^ data_in[19] ^ data_in[23] ^ data_in[26] ^ data_in[27] ^ data_in[31];
-            crc32_next_word[16] = crc_in[1] ^ crc_in[4] ^ crc_in[7] ^ crc_in[10] ^ crc_in[11] ^ crc_in[13] ^ crc_in[15] ^ crc_in[16] ^ crc_in[19] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[26] ^ crc_in[27] ^ crc_in[28] ^ data_in[1] ^ data_in[4] ^ data_in[7] ^ data_in[10] ^ data_in[11] ^ data_in[13] ^ data_in[15] ^ data_in[16] ^ data_in[19] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[26] ^ data_in[27] ^ data_in[28];
-            crc32_next_word[17] = crc_in[2] ^ crc_in[5] ^ crc_in[8] ^ crc_in[11] ^ crc_in[12] ^ crc_in[14] ^ crc_in[16] ^ crc_in[17] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[29] ^ data_in[2] ^ data_in[5] ^ data_in[8] ^ data_in[11] ^ data_in[12] ^ data_in[14] ^ data_in[16] ^ data_in[17] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[29];
-            crc32_next_word[18] = crc_in[0] ^ crc_in[3] ^ crc_in[6] ^ crc_in[9] ^ crc_in[12] ^ crc_in[13] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[30] ^ data_in[0] ^ data_in[3] ^ data_in[6] ^ data_in[9] ^ data_in[12] ^ data_in[13] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[19] = crc_in[0] ^ crc_in[1] ^ crc_in[4] ^ crc_in[7] ^ crc_in[10] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[18] ^ crc_in[19] ^ crc_in[22] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[4] ^ data_in[7] ^ data_in[10] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[18] ^ data_in[19] ^ data_in[22] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[20] = crc_in[0] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[11] ^ crc_in[14] ^ crc_in[15] ^ crc_in[16] ^ crc_in[17] ^ crc_in[19] ^ crc_in[22] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[11] ^ data_in[14] ^ data_in[15] ^ data_in[16] ^ data_in[17] ^ data_in[19] ^ data_in[22] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[21] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[12] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[12] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[31];
-            crc32_next_word[22] = crc_in[2] ^ crc_in[7] ^ crc_in[8] ^ crc_in[13] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ data_in[2] ^ data_in[7] ^ data_in[8] ^ data_in[13] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[23] = crc_in[0] ^ crc_in[3] ^ crc_in[8] ^ crc_in[9] ^ crc_in[14] ^ crc_in[19] ^ crc_in[20] ^ crc_in[21] ^ crc_in[23] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[8] ^ data_in[9] ^ data_in[14] ^ data_in[19] ^ data_in[20] ^ data_in[21] ^ data_in[23] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[24] = crc_in[2] ^ crc_in[3] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[10] ^ crc_in[15] ^ crc_in[16] ^ crc_in[21] ^ crc_in[23] ^ crc_in[24] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[2] ^ data_in[3] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[10] ^ data_in[15] ^ data_in[16] ^ data_in[21] ^ data_in[23] ^ data_in[24] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[31];
-            crc32_next_word[25] = crc_in[1] ^ crc_in[2] ^ crc_in[6] ^ crc_in[9] ^ crc_in[10] ^ crc_in[11] ^ crc_in[17] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ data_in[1] ^ data_in[2] ^ data_in[6] ^ data_in[9] ^ data_in[10] ^ data_in[11] ^ data_in[17] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[26] = crc_in[2] ^ crc_in[3] ^ crc_in[7] ^ crc_in[10] ^ crc_in[11] ^ crc_in[12] ^ crc_in[18] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[2] ^ data_in[3] ^ data_in[7] ^ data_in[10] ^ data_in[11] ^ data_in[12] ^ data_in[18] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[27] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[6] ^ crc_in[7] ^ crc_in[11] ^ crc_in[12] ^ crc_in[13] ^ crc_in[16] ^ crc_in[19] ^ crc_in[20] ^ crc_in[23] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[6] ^ data_in[7] ^ data_in[11] ^ data_in[12] ^ data_in[13] ^ data_in[16] ^ data_in[19] ^ data_in[20] ^ data_in[23] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[29] ^ data_in[31];
-            crc32_next_word[28] = crc_in[0] ^ crc_in[4] ^ crc_in[6] ^ crc_in[12] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[17] ^ crc_in[21] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[28] ^ crc_in[29] ^ crc_in[30] ^ data_in[0] ^ data_in[4] ^ data_in[6] ^ data_in[12] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[17] ^ data_in[21] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[28] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[29] = crc_in[0] ^ crc_in[1] ^ crc_in[5] ^ crc_in[7] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[5] ^ data_in[7] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[29] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[30] = crc_in[3] ^ crc_in[4] ^ crc_in[7] ^ crc_in[14] ^ crc_in[15] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[3] ^ data_in[4] ^ data_in[7] ^ data_in[14] ^ data_in[15] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[31] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[15] ^ crc_in[19] ^ crc_in[21] ^ crc_in[22] ^ crc_in[25] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[15] ^ data_in[19] ^ data_in[21] ^ data_in[22] ^ data_in[25] ^ data_in[31];
+            x = crc_in ^ data_in;
+            crc32_next_word[0] = x[0] ^ x[1] ^ x[2] ^ x[3] ^ x[4] ^ x[6] ^ x[7] ^ x[8] ^ x[16] ^ x[20] ^ x[22] ^ x[23] ^ x[26];
+            crc32_next_word[1] = x[1] ^ x[2] ^ x[3] ^ x[4] ^ x[5] ^ x[7] ^ x[8] ^ x[9] ^ x[17] ^ x[21] ^ x[23] ^ x[24] ^ x[27];
+            crc32_next_word[2] = x[0] ^ x[2] ^ x[3] ^ x[4] ^ x[5] ^ x[6] ^ x[8] ^ x[9] ^ x[10] ^ x[18] ^ x[22] ^ x[24] ^ x[25] ^ x[28];
+            crc32_next_word[3] = x[1] ^ x[3] ^ x[4] ^ x[5] ^ x[6] ^ x[7] ^ x[9] ^ x[10] ^ x[11] ^ x[19] ^ x[23] ^ x[25] ^ x[26] ^ x[29];
+            crc32_next_word[4] = x[2] ^ x[4] ^ x[5] ^ x[6] ^ x[7] ^ x[8] ^ x[10] ^ x[11] ^ x[12] ^ x[20] ^ x[24] ^ x[26] ^ x[27] ^ x[30];
+            crc32_next_word[5] = x[0] ^ x[3] ^ x[5] ^ x[6] ^ x[7] ^ x[8] ^ x[9] ^ x[11] ^ x[12] ^ x[13] ^ x[21] ^ x[25] ^ x[27] ^ x[28] ^ x[31];
+            crc32_next_word[6] = x[0] ^ x[2] ^ x[3] ^ x[9] ^ x[10] ^ x[12] ^ x[13] ^ x[14] ^ x[16] ^ x[20] ^ x[23] ^ x[28] ^ x[29];
+            crc32_next_word[7] = x[1] ^ x[3] ^ x[4] ^ x[10] ^ x[11] ^ x[13] ^ x[14] ^ x[15] ^ x[17] ^ x[21] ^ x[24] ^ x[29] ^ x[30];
+            crc32_next_word[8] = x[0] ^ x[2] ^ x[4] ^ x[5] ^ x[11] ^ x[12] ^ x[14] ^ x[15] ^ x[16] ^ x[18] ^ x[22] ^ x[25] ^ x[30] ^ x[31];
+            crc32_next_word[9] = x[0] ^ x[2] ^ x[4] ^ x[5] ^ x[7] ^ x[8] ^ x[12] ^ x[13] ^ x[15] ^ x[17] ^ x[19] ^ x[20] ^ x[22] ^ x[31];
+            crc32_next_word[10] = x[0] ^ x[2] ^ x[4] ^ x[5] ^ x[7] ^ x[9] ^ x[13] ^ x[14] ^ x[18] ^ x[21] ^ x[22] ^ x[26];
+            crc32_next_word[11] = x[1] ^ x[3] ^ x[5] ^ x[6] ^ x[8] ^ x[10] ^ x[14] ^ x[15] ^ x[19] ^ x[22] ^ x[23] ^ x[27];
+            crc32_next_word[12] = x[2] ^ x[4] ^ x[6] ^ x[7] ^ x[9] ^ x[11] ^ x[15] ^ x[16] ^ x[20] ^ x[23] ^ x[24] ^ x[28];
+            crc32_next_word[13] = x[0] ^ x[3] ^ x[5] ^ x[7] ^ x[8] ^ x[10] ^ x[12] ^ x[16] ^ x[17] ^ x[21] ^ x[24] ^ x[25] ^ x[29];
+            crc32_next_word[14] = x[0] ^ x[1] ^ x[4] ^ x[6] ^ x[8] ^ x[9] ^ x[11] ^ x[13] ^ x[17] ^ x[18] ^ x[22] ^ x[25] ^ x[26] ^ x[30];
+            crc32_next_word[15] = x[1] ^ x[2] ^ x[5] ^ x[7] ^ x[9] ^ x[10] ^ x[12] ^ x[14] ^ x[18] ^ x[19] ^ x[23] ^ x[26] ^ x[27] ^ x[31];
+            crc32_next_word[16] = x[1] ^ x[4] ^ x[7] ^ x[10] ^ x[11] ^ x[13] ^ x[15] ^ x[16] ^ x[19] ^ x[22] ^ x[23] ^ x[24] ^ x[26] ^ x[27] ^ x[28];
+            crc32_next_word[17] = x[2] ^ x[5] ^ x[8] ^ x[11] ^ x[12] ^ x[14] ^ x[16] ^ x[17] ^ x[20] ^ x[23] ^ x[24] ^ x[25] ^ x[27] ^ x[28] ^ x[29];
+            crc32_next_word[18] = x[0] ^ x[3] ^ x[6] ^ x[9] ^ x[12] ^ x[13] ^ x[15] ^ x[17] ^ x[18] ^ x[21] ^ x[24] ^ x[25] ^ x[26] ^ x[28] ^ x[29] ^ x[30];
+            crc32_next_word[19] = x[0] ^ x[1] ^ x[4] ^ x[7] ^ x[10] ^ x[13] ^ x[14] ^ x[16] ^ x[18] ^ x[19] ^ x[22] ^ x[25] ^ x[26] ^ x[27] ^ x[29] ^ x[30] ^ x[31];
+            crc32_next_word[20] = x[0] ^ x[3] ^ x[4] ^ x[5] ^ x[6] ^ x[7] ^ x[11] ^ x[14] ^ x[15] ^ x[16] ^ x[17] ^ x[19] ^ x[22] ^ x[27] ^ x[28] ^ x[30] ^ x[31];
+            crc32_next_word[21] = x[0] ^ x[2] ^ x[3] ^ x[5] ^ x[12] ^ x[15] ^ x[17] ^ x[18] ^ x[22] ^ x[26] ^ x[28] ^ x[29] ^ x[31];
+            crc32_next_word[22] = x[2] ^ x[7] ^ x[8] ^ x[13] ^ x[18] ^ x[19] ^ x[20] ^ x[22] ^ x[26] ^ x[27] ^ x[29] ^ x[30];
+            crc32_next_word[23] = x[0] ^ x[3] ^ x[8] ^ x[9] ^ x[14] ^ x[19] ^ x[20] ^ x[21] ^ x[23] ^ x[27] ^ x[28] ^ x[30] ^ x[31];
+            crc32_next_word[24] = x[2] ^ x[3] ^ x[6] ^ x[7] ^ x[8] ^ x[9] ^ x[10] ^ x[15] ^ x[16] ^ x[21] ^ x[23] ^ x[24] ^ x[26] ^ x[28] ^ x[29] ^ x[31];
+            crc32_next_word[25] = x[1] ^ x[2] ^ x[6] ^ x[9] ^ x[10] ^ x[11] ^ x[17] ^ x[20] ^ x[23] ^ x[24] ^ x[25] ^ x[26] ^ x[27] ^ x[29] ^ x[30];
+            crc32_next_word[26] = x[2] ^ x[3] ^ x[7] ^ x[10] ^ x[11] ^ x[12] ^ x[18] ^ x[21] ^ x[24] ^ x[25] ^ x[26] ^ x[27] ^ x[28] ^ x[30] ^ x[31];
+            crc32_next_word[27] = x[0] ^ x[1] ^ x[2] ^ x[6] ^ x[7] ^ x[11] ^ x[12] ^ x[13] ^ x[16] ^ x[19] ^ x[20] ^ x[23] ^ x[25] ^ x[27] ^ x[28] ^ x[29] ^ x[31];
+            crc32_next_word[28] = x[0] ^ x[4] ^ x[6] ^ x[12] ^ x[13] ^ x[14] ^ x[16] ^ x[17] ^ x[21] ^ x[22] ^ x[23] ^ x[24] ^ x[28] ^ x[29] ^ x[30];
+            crc32_next_word[29] = x[0] ^ x[1] ^ x[5] ^ x[7] ^ x[13] ^ x[14] ^ x[15] ^ x[17] ^ x[18] ^ x[22] ^ x[23] ^ x[24] ^ x[25] ^ x[29] ^ x[30] ^ x[31];
+            crc32_next_word[30] = x[3] ^ x[4] ^ x[7] ^ x[14] ^ x[15] ^ x[18] ^ x[19] ^ x[20] ^ x[22] ^ x[24] ^ x[25] ^ x[30] ^ x[31];
+            crc32_next_word[31] = x[0] ^ x[1] ^ x[2] ^ x[3] ^ x[5] ^ x[6] ^ x[7] ^ x[15] ^ x[19] ^ x[21] ^ x[22] ^ x[25] ^ x[31];
         end
     endfunction
 
@@ -420,33 +430,32 @@ module axi_dma (
         end
     endfunction
 
-    function [65:0] mm_addend3;
+    function [65:0] mm_addend4;
         input [1:0] row;
         input [1:0] col;
-        reg [2:0] b_triplet;
+        reg [3:0] b_nibble;
         reg [31:0] b_word;
         begin
             b_word = mm_b[{mm_calc_k, col}];
-            if (mm_calc_bit == 5'd30) begin
-                b_triplet = {1'b0, b_word[31], b_word[30]};
-            end
-            else begin
-                b_triplet = {
-                    b_word[mm_calc_bit + 5'd2],
-                    b_word[mm_calc_bit + 5'd1],
-                    b_word[mm_calc_bit]
-                };
-            end
+            b_nibble = b_word[mm_calc_bit +: 4];
 
-            case (b_triplet)
-                3'd0: mm_addend3 = 66'd0;
-                3'd1: mm_addend3 = mm_a_shift[row];
-                3'd2: mm_addend3 = mm_a_shift2[row];
-                3'd3: mm_addend3 = mm_a_shift3[row];
-                3'd4: mm_addend3 = mm_a_shift4[row];
-                3'd5: mm_addend3 = mm_a_shift5[row];
-                3'd6: mm_addend3 = mm_a_shift6[row];
-                default: mm_addend3 = mm_a_shift7[row];
+            case (b_nibble)
+                4'd0: mm_addend4 = 66'd0;
+                4'd1: mm_addend4 = mm_a_shift[row];
+                4'd2: mm_addend4 = mm_a_shift2[row];
+                4'd3: mm_addend4 = mm_a_shift3[row];
+                4'd4: mm_addend4 = mm_a_shift4[row];
+                4'd5: mm_addend4 = mm_a_shift5[row];
+                4'd6: mm_addend4 = mm_a_shift6[row];
+                4'd7: mm_addend4 = mm_a_shift7[row];
+                4'd8: mm_addend4 = mm_a_shift8[row];
+                4'd9: mm_addend4 = mm_a_shift9[row];
+                4'd10: mm_addend4 = mm_a_shift10[row];
+                4'd11: mm_addend4 = mm_a_shift11[row];
+                4'd12: mm_addend4 = mm_a_shift12[row];
+                4'd13: mm_addend4 = mm_a_shift13[row];
+                4'd14: mm_addend4 = mm_a_shift14[row];
+                default: mm_addend4 = mm_a_shift15[row];
             endcase
         end
     endfunction
@@ -458,11 +467,13 @@ module axi_dma (
         reg [65:0] x2;
         reg [65:0] x3;
         reg [65:0] x4;
+        reg [65:0] x8;
         begin
             x1 = {34'd0, a_word};
             x2 = {33'd0, a_word, 1'b0};
             x3 = x1 + x2;
             x4 = {32'd0, a_word, 2'b0};
+            x8 = {31'd0, a_word, 3'b0};
             mm_a_shift[row] <= x1;
             mm_a_shift2[row] <= x2;
             mm_a_shift3[row] <= x3;
@@ -470,6 +481,14 @@ module axi_dma (
             mm_a_shift5[row] <= x1 + x4;
             mm_a_shift6[row] <= x2 + x4;
             mm_a_shift7[row] <= x3 + x4;
+            mm_a_shift8[row] <= x8;
+            mm_a_shift9[row] <= x8 + x1;
+            mm_a_shift10[row] <= x8 + x2;
+            mm_a_shift11[row] <= x8 + x3;
+            mm_a_shift12[row] <= x8 + x4;
+            mm_a_shift13[row] <= x8 + x4 + x1;
+            mm_a_shift14[row] <= x8 + x4 + x2;
+            mm_a_shift15[row] <= x8 + x4 + x3;
         end
     endtask
 
@@ -863,27 +882,27 @@ module axi_dma (
                             end
                         end
                         MM_CALC_RUN: begin
-                            mm_c[0] <= mm_c[0] + mm_addend3(2'd0, 2'd0);
-                            mm_c[1] <= mm_c[1] + mm_addend3(2'd0, 2'd1);
-                            mm_c[2] <= mm_c[2] + mm_addend3(2'd0, 2'd2);
-                            mm_c[3] <= mm_c[3] + mm_addend3(2'd0, 2'd3);
-                            mm_c[4] <= mm_c[4] + mm_addend3(2'd1, 2'd0);
-                            mm_c[5] <= mm_c[5] + mm_addend3(2'd1, 2'd1);
-                            mm_c[6] <= mm_c[6] + mm_addend3(2'd1, 2'd2);
-                            mm_c[7] <= mm_c[7] + mm_addend3(2'd1, 2'd3);
-                            mm_c[8] <= mm_c[8] + mm_addend3(2'd2, 2'd0);
-                            mm_c[9] <= mm_c[9] + mm_addend3(2'd2, 2'd1);
-                            mm_c[10] <= mm_c[10] + mm_addend3(2'd2, 2'd2);
-                            mm_c[11] <= mm_c[11] + mm_addend3(2'd2, 2'd3);
-                            mm_c[12] <= mm_c[12] + mm_addend3(2'd3, 2'd0);
-                            mm_c[13] <= mm_c[13] + mm_addend3(2'd3, 2'd1);
-                            mm_c[14] <= mm_c[14] + mm_addend3(2'd3, 2'd2);
-                            mm_c[15] <= mm_c[15] + mm_addend3(2'd3, 2'd3);
+                            mm_c[0] <= mm_c[0] + mm_addend4(2'd0, 2'd0);
+                            mm_c[1] <= mm_c[1] + mm_addend4(2'd0, 2'd1);
+                            mm_c[2] <= mm_c[2] + mm_addend4(2'd0, 2'd2);
+                            mm_c[3] <= mm_c[3] + mm_addend4(2'd0, 2'd3);
+                            mm_c[4] <= mm_c[4] + mm_addend4(2'd1, 2'd0);
+                            mm_c[5] <= mm_c[5] + mm_addend4(2'd1, 2'd1);
+                            mm_c[6] <= mm_c[6] + mm_addend4(2'd1, 2'd2);
+                            mm_c[7] <= mm_c[7] + mm_addend4(2'd1, 2'd3);
+                            mm_c[8] <= mm_c[8] + mm_addend4(2'd2, 2'd0);
+                            mm_c[9] <= mm_c[9] + mm_addend4(2'd2, 2'd1);
+                            mm_c[10] <= mm_c[10] + mm_addend4(2'd2, 2'd2);
+                            mm_c[11] <= mm_c[11] + mm_addend4(2'd2, 2'd3);
+                            mm_c[12] <= mm_c[12] + mm_addend4(2'd3, 2'd0);
+                            mm_c[13] <= mm_c[13] + mm_addend4(2'd3, 2'd1);
+                            mm_c[14] <= mm_c[14] + mm_addend4(2'd3, 2'd2);
+                            mm_c[15] <= mm_c[15] + mm_addend4(2'd3, 2'd3);
 
-                            if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd30)) begin
+                            if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd28)) begin
                                 mm_calc_state <= MM_CALC_STORE;
                             end
-                            else if (mm_calc_bit == 5'd30) begin
+                            else if (mm_calc_bit == 5'd28) begin
                                 mm_calc_bit <= 5'd0;
                                 mm_calc_k <= mm_calc_next_k;
                                 case (mm_calc_next_k)
@@ -910,13 +929,21 @@ module axi_dma (
                             else begin
                                 mm_calc_bit <= mm_calc_pair_next;
                                 for (i = 0; i < 4; i = i + 1) begin
-                                    mm_a_shift[i] <= {mm_a_shift[i][62:0], 3'b0};
-                                    mm_a_shift2[i] <= {mm_a_shift2[i][62:0], 3'b0};
-                                    mm_a_shift3[i] <= {mm_a_shift3[i][62:0], 3'b0};
-                                    mm_a_shift4[i] <= {mm_a_shift4[i][62:0], 3'b0};
-                                    mm_a_shift5[i] <= {mm_a_shift5[i][62:0], 3'b0};
-                                    mm_a_shift6[i] <= {mm_a_shift6[i][62:0], 3'b0};
-                                    mm_a_shift7[i] <= {mm_a_shift7[i][62:0], 3'b0};
+                                    mm_a_shift[i] <= {mm_a_shift[i][61:0], 4'b0};
+                                    mm_a_shift2[i] <= {mm_a_shift2[i][61:0], 4'b0};
+                                    mm_a_shift3[i] <= {mm_a_shift3[i][61:0], 4'b0};
+                                    mm_a_shift4[i] <= {mm_a_shift4[i][61:0], 4'b0};
+                                    mm_a_shift5[i] <= {mm_a_shift5[i][61:0], 4'b0};
+                                    mm_a_shift6[i] <= {mm_a_shift6[i][61:0], 4'b0};
+                                    mm_a_shift7[i] <= {mm_a_shift7[i][61:0], 4'b0};
+                                    mm_a_shift8[i] <= {mm_a_shift8[i][61:0], 4'b0};
+                                    mm_a_shift9[i] <= {mm_a_shift9[i][61:0], 4'b0};
+                                    mm_a_shift10[i] <= {mm_a_shift10[i][61:0], 4'b0};
+                                    mm_a_shift11[i] <= {mm_a_shift11[i][61:0], 4'b0};
+                                    mm_a_shift12[i] <= {mm_a_shift12[i][61:0], 4'b0};
+                                    mm_a_shift13[i] <= {mm_a_shift13[i][61:0], 4'b0};
+                                    mm_a_shift14[i] <= {mm_a_shift14[i][61:0], 4'b0};
+                                    mm_a_shift15[i] <= {mm_a_shift15[i][61:0], 4'b0};
                                 end
                             end
                         end
