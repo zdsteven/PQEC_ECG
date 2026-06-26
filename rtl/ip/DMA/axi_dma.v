@@ -202,6 +202,10 @@ module axi_dma (
     reg [65:0] mm_a_shift [0:3];
     reg [65:0] mm_a_shift2 [0:3];
     reg [65:0] mm_a_shift3 [0:3];
+    reg [65:0] mm_a_shift4 [0:3];
+    reg [65:0] mm_a_shift5 [0:3];
+    reg [65:0] mm_a_shift6 [0:3];
+    reg [65:0] mm_a_shift7 [0:3];
     integer i;
 
     wire ar_enter = s_arvalid & s_arready;
@@ -264,7 +268,7 @@ module axi_dma (
     wire chunk_allow_next = src_burst_allow_next | dst_burst_allow_next;
     wire [7:0] dma_words_from_next = chunk_allow_next ? ((dma_remain_next > burst_max_bytes) ? burst_max_words : dma_remain_next[9:2]) : 8'd1;
     wire [5:0] mm_wr_word_next = mm_wr_cnt + 6'd1;
-    wire [4:0] mm_calc_pair_next = mm_calc_bit + 5'd1;
+    wire [4:0] mm_calc_pair_next = mm_calc_bit + 5'd3;
     wire [1:0] mm_calc_next_k = mm_calc_k + 2'd1;
     wire mm_read_slot0_free = !mm_in0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b0));
     wire mm_read_slot1_free = !mm_in1_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b1));
@@ -401,23 +405,58 @@ module axi_dma (
         end
     endfunction
 
-    function [65:0] mm_addend2;
+    function [65:0] mm_addend3;
         input [1:0] row;
         input [1:0] col;
-        reg [1:0] b_pair;
+        reg [2:0] b_triplet;
+        reg [31:0] b_word;
         begin
-            b_pair = {
-                mm_b[{mm_calc_k, col}][{mm_calc_bit[3:0], 1'b1}],
-                mm_b[{mm_calc_k, col}][{mm_calc_bit[3:0], 1'b0}]
-            };
-            case (b_pair)
-                2'b00: mm_addend2 = 66'd0;
-                2'b01: mm_addend2 = mm_a_shift[row];
-                2'b10: mm_addend2 = mm_a_shift2[row];
-                default: mm_addend2 = mm_a_shift3[row];
+            b_word = mm_b[{mm_calc_k, col}];
+            if (mm_calc_bit == 5'd30) begin
+                b_triplet = {1'b0, b_word[31], b_word[30]};
+            end
+            else begin
+                b_triplet = {
+                    b_word[mm_calc_bit + 5'd2],
+                    b_word[mm_calc_bit + 5'd1],
+                    b_word[mm_calc_bit]
+                };
+            end
+
+            case (b_triplet)
+                3'd0: mm_addend3 = 66'd0;
+                3'd1: mm_addend3 = mm_a_shift[row];
+                3'd2: mm_addend3 = mm_a_shift2[row];
+                3'd3: mm_addend3 = mm_a_shift3[row];
+                3'd4: mm_addend3 = mm_a_shift4[row];
+                3'd5: mm_addend3 = mm_a_shift5[row];
+                3'd6: mm_addend3 = mm_a_shift6[row];
+                default: mm_addend3 = mm_a_shift7[row];
             endcase
         end
     endfunction
+
+    task mm_load_row_multiples;
+        input [1:0] row;
+        input [31:0] a_word;
+        reg [65:0] x1;
+        reg [65:0] x2;
+        reg [65:0] x3;
+        reg [65:0] x4;
+        begin
+            x1 = {34'd0, a_word};
+            x2 = {33'd0, a_word, 1'b0};
+            x3 = x1 + x2;
+            x4 = {32'd0, a_word, 2'b0};
+            mm_a_shift[row] <= x1;
+            mm_a_shift2[row] <= x2;
+            mm_a_shift3[row] <= x3;
+            mm_a_shift4[row] <= x4;
+            mm_a_shift5[row] <= x1 + x4;
+            mm_a_shift6[row] <= x2 + x4;
+            mm_a_shift7[row] <= x3 + x4;
+        end
+    endtask
 
     always @(posedge aclk) begin
         if (~aresetn) begin
@@ -576,6 +615,10 @@ module axi_dma (
                 mm_a_shift[i] <= 66'd0;
                 mm_a_shift2[i] <= 66'd0;
                 mm_a_shift3[i] <= 66'd0;
+                mm_a_shift4[i] <= 66'd0;
+                mm_a_shift5[i] <= 66'd0;
+                mm_a_shift6[i] <= 66'd0;
+                mm_a_shift7[i] <= 66'd0;
             end
         end
         else begin
@@ -779,18 +822,10 @@ module axi_dma (
                                         mm_a[i] <= mm_in0[i];
                                         mm_b[i] <= mm_in0[i + 16];
                                     end
-                                    mm_a_shift[0] <= {34'd0, mm_in0[0]};
-                                    mm_a_shift[1] <= {34'd0, mm_in0[4]};
-                                    mm_a_shift[2] <= {34'd0, mm_in0[8]};
-                                    mm_a_shift[3] <= {34'd0, mm_in0[12]};
-                                    mm_a_shift2[0] <= {33'd0, mm_in0[0], 1'b0};
-                                    mm_a_shift2[1] <= {33'd0, mm_in0[4], 1'b0};
-                                    mm_a_shift2[2] <= {33'd0, mm_in0[8], 1'b0};
-                                    mm_a_shift2[3] <= {33'd0, mm_in0[12], 1'b0};
-                                    mm_a_shift3[0] <= {34'd0, mm_in0[0]} + {33'd0, mm_in0[0], 1'b0};
-                                    mm_a_shift3[1] <= {34'd0, mm_in0[4]} + {33'd0, mm_in0[4], 1'b0};
-                                    mm_a_shift3[2] <= {34'd0, mm_in0[8]} + {33'd0, mm_in0[8], 1'b0};
-                                    mm_a_shift3[3] <= {34'd0, mm_in0[12]} + {33'd0, mm_in0[12], 1'b0};
+                                    mm_load_row_multiples(2'd0, mm_in0[0]);
+                                    mm_load_row_multiples(2'd1, mm_in0[4]);
+                                    mm_load_row_multiples(2'd2, mm_in0[8]);
+                                    mm_load_row_multiples(2'd3, mm_in0[12]);
                                     mm_in0_valid <= 1'b0;
                                 end
                                 else begin
@@ -798,98 +833,70 @@ module axi_dma (
                                         mm_a[i] <= mm_in1[i];
                                         mm_b[i] <= mm_in1[i + 16];
                                     end
-                                    mm_a_shift[0] <= {34'd0, mm_in1[0]};
-                                    mm_a_shift[1] <= {34'd0, mm_in1[4]};
-                                    mm_a_shift[2] <= {34'd0, mm_in1[8]};
-                                    mm_a_shift[3] <= {34'd0, mm_in1[12]};
-                                    mm_a_shift2[0] <= {33'd0, mm_in1[0], 1'b0};
-                                    mm_a_shift2[1] <= {33'd0, mm_in1[4], 1'b0};
-                                    mm_a_shift2[2] <= {33'd0, mm_in1[8], 1'b0};
-                                    mm_a_shift2[3] <= {33'd0, mm_in1[12], 1'b0};
-                                    mm_a_shift3[0] <= {34'd0, mm_in1[0]} + {33'd0, mm_in1[0], 1'b0};
-                                    mm_a_shift3[1] <= {34'd0, mm_in1[4]} + {33'd0, mm_in1[4], 1'b0};
-                                    mm_a_shift3[2] <= {34'd0, mm_in1[8]} + {33'd0, mm_in1[8], 1'b0};
-                                    mm_a_shift3[3] <= {34'd0, mm_in1[12]} + {33'd0, mm_in1[12], 1'b0};
+                                    mm_load_row_multiples(2'd0, mm_in1[0]);
+                                    mm_load_row_multiples(2'd1, mm_in1[4]);
+                                    mm_load_row_multiples(2'd2, mm_in1[8]);
+                                    mm_load_row_multiples(2'd3, mm_in1[12]);
                                     mm_in1_valid <= 1'b0;
                                 end
                                 mm_calc_state <= MM_CALC_RUN;
                             end
                         end
                         MM_CALC_RUN: begin
-                            mm_c[0] <= mm_c[0] + mm_addend2(2'd0, 2'd0);
-                            mm_c[1] <= mm_c[1] + mm_addend2(2'd0, 2'd1);
-                            mm_c[2] <= mm_c[2] + mm_addend2(2'd0, 2'd2);
-                            mm_c[3] <= mm_c[3] + mm_addend2(2'd0, 2'd3);
-                            mm_c[4] <= mm_c[4] + mm_addend2(2'd1, 2'd0);
-                            mm_c[5] <= mm_c[5] + mm_addend2(2'd1, 2'd1);
-                            mm_c[6] <= mm_c[6] + mm_addend2(2'd1, 2'd2);
-                            mm_c[7] <= mm_c[7] + mm_addend2(2'd1, 2'd3);
-                            mm_c[8] <= mm_c[8] + mm_addend2(2'd2, 2'd0);
-                            mm_c[9] <= mm_c[9] + mm_addend2(2'd2, 2'd1);
-                            mm_c[10] <= mm_c[10] + mm_addend2(2'd2, 2'd2);
-                            mm_c[11] <= mm_c[11] + mm_addend2(2'd2, 2'd3);
-                            mm_c[12] <= mm_c[12] + mm_addend2(2'd3, 2'd0);
-                            mm_c[13] <= mm_c[13] + mm_addend2(2'd3, 2'd1);
-                            mm_c[14] <= mm_c[14] + mm_addend2(2'd3, 2'd2);
-                            mm_c[15] <= mm_c[15] + mm_addend2(2'd3, 2'd3);
+                            mm_c[0] <= mm_c[0] + mm_addend3(2'd0, 2'd0);
+                            mm_c[1] <= mm_c[1] + mm_addend3(2'd0, 2'd1);
+                            mm_c[2] <= mm_c[2] + mm_addend3(2'd0, 2'd2);
+                            mm_c[3] <= mm_c[3] + mm_addend3(2'd0, 2'd3);
+                            mm_c[4] <= mm_c[4] + mm_addend3(2'd1, 2'd0);
+                            mm_c[5] <= mm_c[5] + mm_addend3(2'd1, 2'd1);
+                            mm_c[6] <= mm_c[6] + mm_addend3(2'd1, 2'd2);
+                            mm_c[7] <= mm_c[7] + mm_addend3(2'd1, 2'd3);
+                            mm_c[8] <= mm_c[8] + mm_addend3(2'd2, 2'd0);
+                            mm_c[9] <= mm_c[9] + mm_addend3(2'd2, 2'd1);
+                            mm_c[10] <= mm_c[10] + mm_addend3(2'd2, 2'd2);
+                            mm_c[11] <= mm_c[11] + mm_addend3(2'd2, 2'd3);
+                            mm_c[12] <= mm_c[12] + mm_addend3(2'd3, 2'd0);
+                            mm_c[13] <= mm_c[13] + mm_addend3(2'd3, 2'd1);
+                            mm_c[14] <= mm_c[14] + mm_addend3(2'd3, 2'd2);
+                            mm_c[15] <= mm_c[15] + mm_addend3(2'd3, 2'd3);
 
-                            if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd15)) begin
+                            if ((mm_calc_k == 2'd3) && (mm_calc_bit == 5'd30)) begin
                                 mm_calc_state <= MM_CALC_STORE;
                             end
-                            else if (mm_calc_bit == 5'd15) begin
+                            else if (mm_calc_bit == 5'd30) begin
                                 mm_calc_bit <= 5'd0;
                                 mm_calc_k <= mm_calc_next_k;
                                 case (mm_calc_next_k)
                                     2'd1: begin
-                                        mm_a_shift[0] <= {34'd0, mm_a[1]};
-                                        mm_a_shift[1] <= {34'd0, mm_a[5]};
-                                        mm_a_shift[2] <= {34'd0, mm_a[9]};
-                                        mm_a_shift[3] <= {34'd0, mm_a[13]};
-                                        mm_a_shift2[0] <= {33'd0, mm_a[1], 1'b0};
-                                        mm_a_shift2[1] <= {33'd0, mm_a[5], 1'b0};
-                                        mm_a_shift2[2] <= {33'd0, mm_a[9], 1'b0};
-                                        mm_a_shift2[3] <= {33'd0, mm_a[13], 1'b0};
-                                        mm_a_shift3[0] <= {34'd0, mm_a[1]} + {33'd0, mm_a[1], 1'b0};
-                                        mm_a_shift3[1] <= {34'd0, mm_a[5]} + {33'd0, mm_a[5], 1'b0};
-                                        mm_a_shift3[2] <= {34'd0, mm_a[9]} + {33'd0, mm_a[9], 1'b0};
-                                        mm_a_shift3[3] <= {34'd0, mm_a[13]} + {33'd0, mm_a[13], 1'b0};
+                                        mm_load_row_multiples(2'd0, mm_a[1]);
+                                        mm_load_row_multiples(2'd1, mm_a[5]);
+                                        mm_load_row_multiples(2'd2, mm_a[9]);
+                                        mm_load_row_multiples(2'd3, mm_a[13]);
                                     end
                                     2'd2: begin
-                                        mm_a_shift[0] <= {34'd0, mm_a[2]};
-                                        mm_a_shift[1] <= {34'd0, mm_a[6]};
-                                        mm_a_shift[2] <= {34'd0, mm_a[10]};
-                                        mm_a_shift[3] <= {34'd0, mm_a[14]};
-                                        mm_a_shift2[0] <= {33'd0, mm_a[2], 1'b0};
-                                        mm_a_shift2[1] <= {33'd0, mm_a[6], 1'b0};
-                                        mm_a_shift2[2] <= {33'd0, mm_a[10], 1'b0};
-                                        mm_a_shift2[3] <= {33'd0, mm_a[14], 1'b0};
-                                        mm_a_shift3[0] <= {34'd0, mm_a[2]} + {33'd0, mm_a[2], 1'b0};
-                                        mm_a_shift3[1] <= {34'd0, mm_a[6]} + {33'd0, mm_a[6], 1'b0};
-                                        mm_a_shift3[2] <= {34'd0, mm_a[10]} + {33'd0, mm_a[10], 1'b0};
-                                        mm_a_shift3[3] <= {34'd0, mm_a[14]} + {33'd0, mm_a[14], 1'b0};
+                                        mm_load_row_multiples(2'd0, mm_a[2]);
+                                        mm_load_row_multiples(2'd1, mm_a[6]);
+                                        mm_load_row_multiples(2'd2, mm_a[10]);
+                                        mm_load_row_multiples(2'd3, mm_a[14]);
                                     end
                                     default: begin
-                                        mm_a_shift[0] <= {34'd0, mm_a[3]};
-                                        mm_a_shift[1] <= {34'd0, mm_a[7]};
-                                        mm_a_shift[2] <= {34'd0, mm_a[11]};
-                                        mm_a_shift[3] <= {34'd0, mm_a[15]};
-                                        mm_a_shift2[0] <= {33'd0, mm_a[3], 1'b0};
-                                        mm_a_shift2[1] <= {33'd0, mm_a[7], 1'b0};
-                                        mm_a_shift2[2] <= {33'd0, mm_a[11], 1'b0};
-                                        mm_a_shift2[3] <= {33'd0, mm_a[15], 1'b0};
-                                        mm_a_shift3[0] <= {34'd0, mm_a[3]} + {33'd0, mm_a[3], 1'b0};
-                                        mm_a_shift3[1] <= {34'd0, mm_a[7]} + {33'd0, mm_a[7], 1'b0};
-                                        mm_a_shift3[2] <= {34'd0, mm_a[11]} + {33'd0, mm_a[11], 1'b0};
-                                        mm_a_shift3[3] <= {34'd0, mm_a[15]} + {33'd0, mm_a[15], 1'b0};
+                                        mm_load_row_multiples(2'd0, mm_a[3]);
+                                        mm_load_row_multiples(2'd1, mm_a[7]);
+                                        mm_load_row_multiples(2'd2, mm_a[11]);
+                                        mm_load_row_multiples(2'd3, mm_a[15]);
                                     end
                                 endcase
                             end
                             else begin
                                 mm_calc_bit <= mm_calc_pair_next;
                                 for (i = 0; i < 4; i = i + 1) begin
-                                    mm_a_shift[i] <= {mm_a_shift[i][63:0], 2'b0};
-                                    mm_a_shift2[i] <= {mm_a_shift2[i][63:0], 2'b0};
-                                    mm_a_shift3[i] <= {mm_a_shift3[i][63:0], 2'b0};
+                                    mm_a_shift[i] <= {mm_a_shift[i][62:0], 3'b0};
+                                    mm_a_shift2[i] <= {mm_a_shift2[i][62:0], 3'b0};
+                                    mm_a_shift3[i] <= {mm_a_shift3[i][62:0], 3'b0};
+                                    mm_a_shift4[i] <= {mm_a_shift4[i][62:0], 3'b0};
+                                    mm_a_shift5[i] <= {mm_a_shift5[i][62:0], 3'b0};
+                                    mm_a_shift6[i] <= {mm_a_shift6[i][62:0], 3'b0};
+                                    mm_a_shift7[i] <= {mm_a_shift7[i][62:0], 3'b0};
                                 end
                             end
                         end
