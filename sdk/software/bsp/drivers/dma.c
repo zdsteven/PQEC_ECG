@@ -20,6 +20,11 @@ U32 DMA_Get_Write_Count(void)
     return RegRead(DMA_WRITE_COUNT_ADDR);
 }
 
+U32 DMA_Get_CRC32(void)
+{
+    return RegRead(DMA_CRC32_ADDR);
+}
+
 int DMA_MatMul_Start(U32 src_phys, U32 dst_phys, U32 groups)
 {
     U32 status = DMA_Get_Status();

@@ -12,6 +12,7 @@
 #define DMA_READ_COUNT_ADDR    (DMA_BASE_ADDR + 0x14u)
 #define DMA_CALC_COUNT_ADDR    (DMA_BASE_ADDR + 0x18u)
 #define DMA_WRITE_COUNT_ADDR   (DMA_BASE_ADDR + 0x1cu)
+#define DMA_CRC32_ADDR         (DMA_BASE_ADDR + 0x20u)
 
 #define DMA_STATUS_BUSY        0x00000001u
 #define DMA_STATUS_DONE        0x00000002u
@@ -24,5 +25,6 @@ U32 DMA_Get_Status(void);
 U32 DMA_Get_Read_Count(void);
 U32 DMA_Get_Calc_Count(void);
 U32 DMA_Get_Write_Count(void);
+U32 DMA_Get_CRC32(void);
 
 #endif

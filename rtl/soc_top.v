@@ -397,6 +397,12 @@ wire [1 :0] dma_s_bresp  ;
 wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
+wire        dma_matmul_start;
+wire [1023:0] dma_matmul_words;
+wire        dma_matmul_ready;
+wire        dma_matmul_done;
+wire [3:0]  dma_matmul_result_index;
+wire [65:0] dma_matmul_result_data;
 
 
 //Kyber_ip (deleted)
@@ -694,6 +700,12 @@ matmul_dma #(
     .m_axi_rlast    (dma_m_rlast),
     .m_axi_rvalid   (dma_m_rvalid),
     .m_axi_rready   (dma_m_rready),
+    .matmul_start   (dma_matmul_start),
+    .matmul_matrix_words (dma_matmul_words),
+    .matmul_ready   (dma_matmul_ready),
+    .matmul_done    (dma_matmul_done),
+    .matmul_result_index (dma_matmul_result_index),
+    .matmul_result_data  (dma_matmul_result_data),
     .finish         (dma_finish)
 );
 
@@ -740,10 +752,18 @@ matmul_axi_slave u_matmul (
     .s_axi_rresp    ( axiOut_7_rresp    ),
     .s_axi_rlast    ( axiOut_7_rlast    ),
     .s_axi_rvalid   ( axiOut_7_rvalid   ),
-    .s_axi_rready   ( axiOut_7_rready   )
+    .s_axi_rready   ( axiOut_7_rready   ),
+
+    .dma_start      ( dma_matmul_start  ),
+    .dma_matrix_words ( dma_matmul_words ),
+    .dma_ready      ( dma_matmul_ready  ),
+    .dma_done       ( dma_matmul_done   ),
+    .dma_result_index ( dma_matmul_result_index ),
+    .dma_result_data  ( dma_matmul_result_data  )
 );
 
 wire confreg_int;
+wire fft_finish = 1'b0;
 
 AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
     .clk                     ( sys_clk             ),
@@ -1443,85 +1463,6 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
     .uart0_int (uart0_int )
-);
-
-//dma
-axi_dma u_axi_dma (
-    .s_awvalid ( dma_s_awvalid ),
-    .s_awready ( dma_s_awready ),
-    .s_awaddr  ( dma_s_awaddr ),
-    .s_awid    ( dma_s_awid ),
-    .s_awlen   ( dma_s_awlen ),
-    .s_awsize  ( dma_s_awsize ),
-    .s_awburst ( dma_s_awburst ),
-    .s_awlock  ( dma_s_awlock ),
-    .s_awcache ( dma_s_awcache ),
-    .s_awprot  ( dma_s_awprot ),
-    .s_wvalid  ( dma_s_wvalid ),
-    .s_wready  ( dma_s_wready ),
-    .s_wdata   ( dma_s_wdata ),
-    .s_wstrb   ( dma_s_wstrb ),
-    .s_wlast   ( dma_s_wlast ),
-    .s_bvalid  ( dma_s_bvalid ),
-    .s_bready  ( dma_s_bready ),
-    .s_bid     ( dma_s_bid ),
-    .s_bresp   ( dma_s_bresp ),
-    .s_arvalid ( dma_s_arvalid ),
-    .s_arready ( dma_s_arready ),
-    .s_araddr  ( dma_s_araddr ),
-    .s_arid    ( dma_s_arid ),
-    .s_arlen   ( dma_s_arlen ),
-    .s_arsize  ( dma_s_arsize ),
-    .s_arburst ( dma_s_arburst ),
-    .s_arlock  ( dma_s_arlock ),
-    .s_arcache ( dma_s_arcache ),
-    .s_arprot  ( dma_s_arprot ),
-    .s_rvalid  ( dma_s_rvalid ),
-    .s_rready  ( dma_s_rready ),
-    .s_rdata   ( dma_s_rdata ),
-    .s_rid     ( dma_s_rid ),
-    .s_rresp   ( dma_s_rresp ),
-    .s_rlast   ( dma_s_rlast ),
-
-    .m_arid    ( dma_m_arid ),
-    .m_araddr  ( dma_m_araddr ),
-    .m_arlen   ( dma_m_arlen ),
-    .m_arsize  ( dma_m_arsize ),
-    .m_arburst ( dma_m_arburst ),
-    .m_arlock  ( dma_m_arlock ),
-    .m_arcache ( dma_m_arcache ),
-    .m_arprot  ( dma_m_arprot ),
-    .m_arvalid ( dma_m_arvalid ),
-    .m_arready ( dma_m_arready ),
-    .m_rid     ( dma_m_rid ),
-    .m_rdata   ( dma_m_rdata ),
-    .m_rresp   ( dma_m_rresp ),
-    .m_rlast   ( dma_m_rlast ),
-    .m_rvalid  ( dma_m_rvalid ),
-    .m_rready  ( dma_m_rready ),
-    .m_awid    ( dma_m_awid ),
-    .m_awaddr  ( dma_m_awaddr ),
-    .m_awlen   ( dma_m_awlen ),
-    .m_awsize  ( dma_m_awsize ),
-    .m_awburst ( dma_m_awburst ),
-    .m_awlock  ( dma_m_awlock ),
-    .m_awcache ( dma_m_awcache ),
-    .m_awprot  ( dma_m_awprot ),
-    .m_awvalid ( dma_m_awvalid ),
-    .m_awready ( dma_m_awready ),
-    .m_wdata   ( dma_m_wdata ),
-    .m_wstrb   ( dma_m_wstrb ),
-    .m_wlast   ( dma_m_wlast ),
-    .m_wvalid  ( dma_m_wvalid ),
-    .m_wready  ( dma_m_wready ),
-    .m_bid     ( dma_m_bid ),
-    .m_bresp   ( dma_m_bresp ),
-    .m_bvalid  ( dma_m_bvalid ),
-    .m_bready  ( dma_m_bready ),
-
-    .dma_finish ( dma_finish ),
-    .aclk      ( sys_clk ),
-    .aresetn   ( sys_resetn )
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---
