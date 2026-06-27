@@ -7,6 +7,7 @@ LA32R_GDB     := loongarch32r-linux-gnusf-gdb
 LA32R_AR      := loongarch32r-linux-gnusf-ar
 LA32R_OBJCOPY := loongarch32r-linux-gnusf-objcopy
 LA32R_READELF := loongarch32r-linux-gnusf-readelf
+COPY_OUTPUT ?= 1
 
 .PHONY: all
 all: $(TARGET)
@@ -62,10 +63,12 @@ $(TARGET): $(LINK_OBJS) $(LINK_DEPS) convert Makefile
 	$(LA32R_OBJCOPY) -O binary $(OBJDIR)/$@.elf $(OBJDIR)/$@.bin
 	$(LA32R_OBJDUMP) --disassemble-all -S $(OBJDIR)/$@.elf > $(OBJDIR)/$@.s
 	$(OBJDIR)/convert $@.bin $(OBJDIR)/
+ifeq ($(COPY_OUTPUT),1)
 	cp ./$(OBJDIR)/axi_ram.mif $(COMMON_DIR)/../../
 ifdef LA32RSOC_WINDOWS_HOME
 	cp ./$(OBJDIR)/axi_ram.mif $(LA32RSOC_WINDOWS_HOME)/sdk
 	cp ./$(OBJDIR)/$(TARGET).bin $(LA32RSOC_WINDOWS_HOME)/sdk
+endif
 endif
 	rm -f $(LINK_OBJS)
 	rm -f $(OBJDIR)/convert
