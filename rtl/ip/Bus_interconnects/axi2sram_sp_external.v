@@ -74,7 +74,6 @@ module axi2sram_sp_external #(
     // - early termination of bursts is not supported.
 
     localparam LOG_NR_BYTES = $clog2(AXI_DATA_WIDTH/8);
-    localparam [AXI_ADDR_WIDTH-1:0] ADDR_INCR = {{(AXI_ADDR_WIDTH-LOG_NR_BYTES-1){1'b0}}, 1'b1, {LOG_NR_BYTES{1'b0}}};
 
     reg [AXI_ID_WIDTH-1:0]   ax_req_d_id;
     reg [AXI_ADDR_WIDTH-1:0] ax_req_d_addr;
@@ -100,17 +99,42 @@ module axi2sram_sp_external #(
     localparam              READ_ADDR   = 3'h6;
 
     localparam              FIXED       = 2'b00;
+    localparam              INCR        = 2'b01;
+    localparam              WRAP        = 2'b10;
     
     reg [AXI_ADDR_WIDTH-1:0] req_addr_d, req_addr_q;
     reg [7:0]                cnt_d, cnt_q;
 
-    reg [AXI_ADDR_WIDTH-1:0] next_addr;
-    reg [AXI_DATA_WIDTH-1:0] fast_rdata_q;
-    wire fast_dma_ext_read = ax_req_q_id[AXI_ID_WIDTH-1] & ax_req_q_addr[22];
+    function automatic [AXI_ADDR_WIDTH-1:0] get_wrap_boundary;
+        input [AXI_ADDR_WIDTH-1:0] unaligned_address;
+        input [7:0] len;
+    begin
+        get_wrap_boundary = 'h0;
+        //  for wrapping transfers ax_len can only be of size 1, 3, 7 or 15
+        if (len == 4'b1)
+            get_wrap_boundary[AXI_ADDR_WIDTH-1:1+LOG_NR_BYTES] = unaligned_address[AXI_ADDR_WIDTH-1:1+LOG_NR_BYTES];
+        else if (len == 4'b11)
+            get_wrap_boundary[AXI_ADDR_WIDTH-1:2+LOG_NR_BYTES] = unaligned_address[AXI_ADDR_WIDTH-1:2+LOG_NR_BYTES];
+        else if (len == 4'b111)
+            get_wrap_boundary[AXI_ADDR_WIDTH-1:3+LOG_NR_BYTES] = unaligned_address[AXI_ADDR_WIDTH-3:2+LOG_NR_BYTES];
+        else if (len == 4'b1111)
+            get_wrap_boundary[AXI_ADDR_WIDTH-1:4+LOG_NR_BYTES] = unaligned_address[AXI_ADDR_WIDTH-3:4+LOG_NR_BYTES];
+    end
+    endfunction
+
+    reg [AXI_ADDR_WIDTH-1:0] aligned_address;
+    reg [AXI_ADDR_WIDTH-1:0] wrap_boundary;
+    reg [AXI_ADDR_WIDTH-1:0] upper_wrap_boundary;
+    reg [AXI_ADDR_WIDTH-1:0] cons_addr;
 
     always @ (*) begin
-        // SoC masters issue INCR bursts; keep the SRAM address path short.
-        next_addr = (ax_req_q_burst == FIXED) ? req_addr_q : (req_addr_q + ADDR_INCR);
+        // address generation
+        aligned_address = {ax_req_q_addr[AXI_ADDR_WIDTH-1:LOG_NR_BYTES], {{LOG_NR_BYTES}{1'b0}}};
+        wrap_boundary = get_wrap_boundary(ax_req_q_addr, ax_req_q_len);
+        // this will overflow
+        upper_wrap_boundary = wrap_boundary + ((ax_req_q_len + 1) << LOG_NR_BYTES);
+        // calculate consecutive address
+        cons_addr = aligned_address + (cnt_q << LOG_NR_BYTES);
 
         // Transaction attributes
         // default assignments
@@ -134,7 +158,6 @@ module axi2sram_sp_external #(
         s_arready = 1'b0;
         // read response channel
         s_rvalid  = 1'b0;
-        s_rdata   = 'h0;
         s_rresp   = 'h0;
         s_rlast   = 'h0;
         s_rid     = ax_req_q_id;
@@ -212,7 +235,7 @@ module axi2sram_sp_external #(
                 addr_o = req_addr_q;
                 // send the response
                 s_rvalid = 1'b1;
-                s_rdata  = (fast_dma_ext_read && (cnt_q != 8'd1)) ? fast_rdata_q : data_i;
+                s_rdata  = data_i;
                 s_rid    = ax_req_q_id;
                 s_rlast  = (cnt_q == ax_req_q_len + 1);
                 // check that the master is ready, the slave must not wait on this
@@ -223,20 +246,7 @@ module axi2sram_sp_external #(
                         // we already got everything
                     end
                     else begin
-                        if (fast_dma_ext_read) begin
-                            if (cnt_q == 8'd1) begin
-                                state_d = READ_ADDR;
-                            end
-                            else begin
-                                addr_o = next_addr;
-                                cnt_d = cnt_q + 1;
-                                req_addr_d = next_addr;
-                                state_d = READ;
-                            end
-                        end
-                        else begin
-                            state_d = READ_ADDR;
-                        end
+                        state_d = READ_ADDR;
                     end
                 end
             end
@@ -250,7 +260,21 @@ module axi2sram_sp_external #(
                 // Next address generation
                 // ----------------------------
                 // handle the correct burst type
-                addr_o = next_addr;
+                case (ax_req_q_burst)
+                    FIXED, INCR: addr_o = cons_addr;
+                    WRAP:  begin
+                        // check if the address reached warp boundary
+                        if (cons_addr == upper_wrap_boundary) begin
+                            addr_o = wrap_boundary;
+                        // address warped beyond boundary
+                        end else if (cons_addr > upper_wrap_boundary) begin
+                            addr_o = ax_req_q_addr + ((cnt_q - ax_req_q_len) << LOG_NR_BYTES);
+                        // we are still in the incremental regime
+                        end else begin
+                            addr_o = cons_addr;
+                        end
+                    end
+                endcase
                 // we need to change the address here for the upcoming request
                 // we can decrease the counter as the master has consumed the read data
                 cnt_d = cnt_q + 1;
@@ -275,7 +299,26 @@ module axi2sram_sp_external #(
                 if (s_wvalid) begin
                     req_o         = 1'b1;
                     we_o          = 1'b1;
-                    addr_o = next_addr;
+                    // ----------------------------
+                    // Next address generation
+                    // ----------------------------
+                    // handle the correct burst type
+                    case (ax_req_q_burst)
+
+                        FIXED, INCR: addr_o = cons_addr;
+                        WRAP:  begin
+                            // check if the address reached warp boundary
+                            if (cons_addr == upper_wrap_boundary) begin
+                                addr_o = wrap_boundary;
+                            // address warped beyond boundary
+                            end else if (cons_addr > upper_wrap_boundary) begin
+                                addr_o = ax_req_q_addr + ((cnt_q - ax_req_q_len) << LOG_NR_BYTES);
+                            // we are still in the incremental regime
+                            end else begin
+                                addr_o = cons_addr;
+                            end
+                        end
+                    endcase
                     // save the request address for the next cycle
                     req_addr_d = addr_o;
                     // we can decrease the counter as the master has consumed the read data
@@ -309,7 +352,6 @@ module axi2sram_sp_external #(
             ax_req_q_size   <= 3'h0;
             req_addr_q      <= 'h0;
             cnt_q           <= 8'h0;
-            fast_rdata_q    <= 'h0;
         end else begin
             state_q         <= state_d;
             ax_req_q_addr   <= ax_req_d_addr;
@@ -319,12 +361,6 @@ module axi2sram_sp_external #(
             ax_req_q_size   <= ax_req_d_size;
             req_addr_q      <= req_addr_d;
             cnt_q           <= cnt_d;
-            if ((state_q == READ_ADDR) && fast_dma_ext_read) begin
-                fast_rdata_q <= data_i;
-            end
-            else if ((state_q == READ) && fast_dma_ext_read && (cnt_q != 8'd1) && s_rready && (cnt_q != ax_req_q_len + 1)) begin
-                fast_rdata_q <= data_i;
-            end
         end
     end
 

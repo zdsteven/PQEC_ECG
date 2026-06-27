@@ -67,21 +67,6 @@ int MATMul_Compute_Batch_DMA(uint32_t src_addr, uint32_t dst_addr, uint32_t grou
     return DMA_Matmul_Compute_Blocking(src_addr, dst_addr, group_num, timeout_cycles);
 }
 
-int MATMul_Compute_Batch_DMA_CRC(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles)
-{
-    return DMA_Matmul_Compute_CRC_Blocking(src_addr, dst_addr, group_num, timeout_cycles);
-}
-
-int MATMul_Start_Batch_DMA_CRC(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num)
-{
-    return DMA_Matmul_Start_CRC(src_addr, dst_addr, group_num);
-}
-
-int MATMul_Wait_Batch_DMA(uint32_t timeout_cycles)
-{
-    return DMA_Wait_Blocking(timeout_cycles);
-}
-
 uint32_t MATMul_Get_Batch_CRC(void)
 {
     return DMA_Get_Matmul_CRC();

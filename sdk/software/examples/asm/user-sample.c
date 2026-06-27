@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "matmul.h"
 #include "confreg_time.h"
 #include "core_time.h"
@@ -14,34 +15,6 @@ unsigned long CORE_CLOCKS_PER_SEC    = 33000000L;
 #define EXTRAM_BASE       0x1c400000u
 #define INPUT_OFFSET      0x00000000u
 #define RESULT_OFFSET     0x0009c400u
-#define UART_LSR_OFFSET   5u
-#define UART_TFE_BIT      0x20u
-
-static void uart_putc_fast(char c)
-{
-    volatile unsigned char *uart = (volatile unsigned char *)UART_BASE;
-
-    while ((uart[UART_LSR_OFFSET] & UART_TFE_BIT) == 0u) {
-    }
-    uart[0] = (unsigned char)c;
-}
-
-static void uart_puts_fast(const char *s)
-{
-    while (*s != '\0') {
-        uart_putc_fast(*s++);
-    }
-}
-
-static void uart_puthex32_fast(uint32_t value)
-{
-    static const char hex[] = "0123456789abcdef";
-    int shift;
-
-    for (shift = 28; shift >= 0; shift -= 4) {
-        uart_putc_fast(hex[(value >> shift) & 0xfu]);
-    }
-}
 
 int main(int argc, char **argv)
 {
@@ -50,21 +23,20 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
+    printf("MATMUL_START\n");
+
     /*
-     * The scorer consumes the UART CRC, so the benchmark path folds each
-     * generated result word directly into CRC32 and skips the ExtRAM writeback.
+     * Keep the timed section short: one hardware command handles all groups,
+     * writes the full result area, and computes the exact CRC32 over it.
      */
-    rc = MATMul_Start_Batch_DMA_CRC(EXTRAM_BASE + INPUT_OFFSET,
-                                    EXTRAM_BASE + RESULT_OFFSET,
-                                    MATMUL_GROUP_NUM);
-    uart_puts_fast("MATMUL_START\nMATMUL_CRC32=");
-    if (rc == 0) {
-        rc = MATMul_Wait_Batch_DMA(0);
-    }
+    rc = MATMul_Compute_Batch_DMA(EXTRAM_BASE + INPUT_OFFSET,
+                                  EXTRAM_BASE + RESULT_OFFSET,
+                                  MATMUL_GROUP_NUM,
+                                  0);
     crc = (rc == 0) ? MATMul_Get_Batch_CRC() : 0u;
 
-    uart_puthex32_fast(crc);
-    uart_puts_fast("\nMATMUL_DONE\n");
+    printf("MATMUL_CRC32=%08x\n", crc);
+    printf("MATMUL_DONE\n");
 
     while (1) {
     }

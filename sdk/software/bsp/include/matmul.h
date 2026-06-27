@@ -36,10 +36,6 @@ uint32_t MATMul_Has_Error(void);
 void MATMul_Compute(const uint32_t *a, const uint32_t *b, uint32_t *c);
 /* Fast benchmark path: DMA reads all groups, computes, writes results, and CRCs. */
 int MATMul_Compute_Batch_DMA(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles);
-/* Fastest scoring path: DMA computes the same CRC without storing the result area. */
-int MATMul_Compute_Batch_DMA_CRC(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles);
-int MATMul_Start_Batch_DMA_CRC(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num);
-int MATMul_Wait_Batch_DMA(uint32_t timeout_cycles);
 uint32_t MATMul_Get_Batch_CRC(void);
 
 #endif

@@ -91,11 +91,6 @@ int DMA_Transfer_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t byte_le
         return -1;
     }
 
-    return DMA_Wait_Blocking(timeout_cycles);
-}
-
-int DMA_Wait_Blocking(uint32_t timeout_cycles)
-{
     if (timeout_cycles == 0) {
         while (DMA_Is_Busy()) {
         }
@@ -120,11 +115,7 @@ uint32_t DMA_Get_Matmul_CRC(void)
     return RegRead(DMA_MATMUL_CRC_ADDR);
 }
 
-static int DMA_Matmul_Compute_Blocking_Ctrl(uint32_t src_addr,
-                                            uint32_t dst_addr,
-                                            uint32_t group_num,
-                                            uint32_t timeout_cycles,
-                                            uint32_t ctrl_flags)
+int DMA_Matmul_Compute_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles)
 {
     uint32_t src_bus = DMA_To_Bus_Addr(src_addr);
     uint32_t dst_bus = DMA_To_Bus_Addr(dst_addr);
@@ -143,38 +134,23 @@ static int DMA_Matmul_Compute_Blocking_Ctrl(uint32_t src_addr,
     DMA_Set_Destination(dst_bus);
     DMA_Set_Length(group_num);
     DMA_Clear_Done();
-    RegWrite(DMA_CTRL_ADDR, DMA_CTRL_START | DMA_CTRL_MATMUL | ctrl_flags);
+    RegWrite(DMA_CTRL_ADDR, DMA_CTRL_START | DMA_CTRL_MATMUL);
 
-    return DMA_Wait_Blocking(timeout_cycles);
-}
-
-int DMA_Matmul_Compute_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles)
-{
-    return DMA_Matmul_Compute_Blocking_Ctrl(src_addr, dst_addr, group_num, timeout_cycles, 0u);
-}
-
-int DMA_Matmul_Compute_CRC_Blocking(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num, uint32_t timeout_cycles)
-{
-    return DMA_Matmul_Compute_Blocking_Ctrl(src_addr,
-                                           dst_addr,
-                                           group_num,
-                                           timeout_cycles,
-                                           DMA_CTRL_MATMUL_CRC_ONLY);
-}
-
-int DMA_Matmul_Start_CRC(uint32_t src_addr, uint32_t dst_addr, uint32_t group_num)
-{
-    uint32_t src_bus = DMA_To_Bus_Addr(src_addr);
-    uint32_t dst_bus = DMA_To_Bus_Addr(dst_addr);
-
-    if ((group_num == 0) || ((src_bus & 0x3) != 0) || ((dst_bus & 0x3) != 0)) {
-        return -1;
+    if (timeout_cycles == 0) {
+        while (DMA_Is_Busy()) {
+        }
+    }
+    else {
+        while (DMA_Is_Busy() && timeout_cycles--) {
+        }
+        if (DMA_Is_Busy()) {
+            return -2;
+        }
     }
 
-    DMA_Set_Source(src_bus);
-    DMA_Set_Destination(dst_bus);
-    DMA_Set_Length(group_num);
-    DMA_Clear_Done();
-    RegWrite(DMA_CTRL_ADDR, DMA_CTRL_START | DMA_CTRL_MATMUL | DMA_CTRL_MATMUL_CRC_ONLY);
+    if (DMA_Has_Error()) {
+        return -3;
+    }
+
     return 0;
 }
