@@ -31,7 +31,7 @@
 │   │   ├── ram_wrap/              # AXI-to-SRAM 桥接
 │   │   ├── confreg/               # 控制寄存器（LED、开关、定时器、中断控制器、数码管）
 │   │   ├── APB_UART/              # UART 控制器
-│   │   ├── DMA/                   # DMA 引擎
+│   │   ├── DMA/                   # DMA 引擎(自己设计)
 │   │   ├── DVI/                   # DVI 显示控制器
 │   │   
 │   │   
@@ -48,9 +48,6 @@
 │       │   ├── include/           # 头文件
 │       │   │   ├── common_func.h  # 基础类型（uint32_t 等）、RegRead/RegWrite、CSR/Cache 操作
 │       │   │   ├── regdef.h       # LoongArch32 CSR 定义
-│       │   │   ├── fft.h          # FFT 驱动
-│       │   │   ├── dma.h          # DMA 驱动
-│       │   │   ├── Kyber.h        # Kyber 驱动
 │       │   │   ├── led.h          # LED 驱动
 │       │   │   ├── seg7.h         # 数码管驱动
 │       │   │   ├── dvi.h          # DVI 驱动
@@ -95,13 +92,6 @@ CPU 通过 DMW 映射访问外设：物理 `0x1F______` → 虚拟 `0xBF______`�
 | `0x60`~`0x9C` | B_DATA[0..15] | 矩阵 B 输入窗口（16 个 uint32） |
 | `0xA0`~`0x15C` | C_DATA[0..47] | 矩阵 C 输出窗口（16 元素 × 3 word） |
 
-### 计算流程
-
-1. CPU 将 A[16] 和 B[16] 写入寄存器
-2. 写 CTRL.bit0 = 1 启动计算
-3. 硬件执行 4×4 无符号矩阵乘法，每元素 66-bit 累加（4 个 32×32 乘积累加）
-4. 16 个时钟周期完成全部计算
-5. CPU 轮询 STATUS.done，然后读取 C_DATA[0..47]
 
 ### 结果格式
 
