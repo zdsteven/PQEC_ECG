@@ -4,8 +4,8 @@
 // Compute:     four external Matmul cores consume groups while DMA fills buffers.
 // Result hold: 5000 * 16 native 66-bit values are retained in block RAM.
 // Write phase: once all input reads have completed, finished results are
-//              serialized as low32/high32/top2 and written one group per
-//              uninterrupted 48-word burst while the remaining groups compute.
+//              serialized as low32/high32/top2 and written back in long linear
+//              bursts, continuing cleanly across AXI 4 KiB splits.
 module matmul_dma #(
     parameter MAX_GROUPS = 5000
 ) (
@@ -175,13 +175,13 @@ reg [2:0]  write_state;
 reg [31:0] write_address;
 reg [3:0]  write_element;
 reg [1:0]  write_part;
-reg [5:0]  write_burst_beat;
-reg [5:0]  write_burst_last;
+reg [7:0]  write_burst_beat;
+reg [7:0]  write_burst_last;
 reg [5:0]  write_group_word;
-reg        write_group_complete;
 reg [65:0] write_current_data;
 reg [65:0] write_next_data;
 reg [31:0] crc_value;
+reg        write_need_prefetch;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
@@ -210,12 +210,18 @@ wire [1:0] selected_launch_core =
     core_sched_scan[2] ? (next_core + 2'd2) :
                          (next_core + 2'd3);
 wire result_read_first = busy && (write_state == WB_PREFETCH);
-wire result_read_next = m_axi_wvalid && m_axi_wready &&
-                        (write_part == 2'd0) && (write_element != 4'd15);
+wire result_read_next_same_group = m_axi_wvalid && m_axi_wready &&
+                                   (write_part == 2'd0) && (write_element != 4'd15);
+wire result_read_next_cross_group = m_axi_wvalid && m_axi_wready &&
+                                    (write_part == 2'd1) && (write_element == 4'd15) &&
+                                    (write_burst_beat != write_burst_last);
+wire result_read_next = result_read_next_same_group || result_read_next_cross_group;
 wire result_read_enable = result_read_first || result_read_next;
 wire [16:0] result_read_address = result_read_first ?
                    ({write_group_count, 4'b0000}) :
-                   ({write_group_count, 4'b0000} + write_element + 17'd1);
+                   result_read_next_same_group ?
+                   ({write_group_count, 4'b0000} + write_element + 17'd1) :
+                   ({write_group_count + 13'd1, 4'b0000});
 
 function [31:0] apply_wstrb;
     input [31:0] old_value;
@@ -251,19 +257,19 @@ function [31:0] crc32_update32;
 endfunction
 
 // AXI4 INCR bursts must not cross a 4 KiB boundary.  Return AWLEN for the
-// largest legal fragment of the remaining words in the current result group.
-function [5:0] legal_burst_last;
+// largest legal fragment of the remaining linear result stream.
+function [7:0] legal_burst_last;
     input [11:0] address_offset;
-    input [5:0]  words_remaining;
+    input [7:0]  words_remaining;
     reg [12:0] bytes_remaining;
     reg [10:0] page_words;
     begin
         bytes_remaining = 13'h1000 - {1'b0, address_offset};
         page_words = bytes_remaining[12:2];
         if (page_words < words_remaining)
-            legal_burst_last = page_words[5:0] - 6'd1;
+            legal_burst_last = page_words[7:0] - 8'd1;
         else
-            legal_burst_last = words_remaining - 6'd1;
+            legal_burst_last = words_remaining - 8'd1;
     end
 endfunction
 
@@ -295,7 +301,7 @@ assign m_axi_rready  = busy && (read_state == RD_DATA);
 // straddles a 4 KiB boundary is split into the minimum two legal AXI4 bursts.
 assign m_axi_awid    = 4'h2;
 assign m_axi_awaddr  = write_address;
-assign m_axi_awlen   = {2'b00, write_burst_last};
+assign m_axi_awlen   = write_burst_last;
 assign m_axi_awsize  = 3'd2;
 assign m_axi_awburst = 2'b01;
 assign m_axi_awlock  = 1'b0;
@@ -441,13 +447,13 @@ always @(posedge clk) begin
         write_address       <= 32'd0;
         write_element       <= 4'd0;
         write_part          <= 2'd0;
-        write_burst_beat    <= 6'd0;
-        write_burst_last    <= 6'd47;
+        write_burst_beat    <= 8'd0;
+        write_burst_last    <= 8'd47;
         write_group_word    <= 6'd0;
-        write_group_complete<= 1'b0;
         write_current_data  <= 66'd0;
         write_next_data     <= 66'd0;
         crc_value            <= 32'hffffffff;
+        write_need_prefetch <= 1'b1;
         for (reset_index = 0; reset_index < 128; reset_index = reset_index + 1)
             input_buffer[reset_index] = 32'd0;
         for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
@@ -492,11 +498,11 @@ always @(posedge clk) begin
                 write_address       <= dst_base;
                 write_element       <= 4'd0;
                 write_part          <= 2'd0;
-                write_burst_beat    <= 6'd0;
-                write_burst_last    <= 6'd47;
+                write_burst_beat    <= 8'd0;
+                write_burst_last    <= 8'd47;
                 write_group_word    <= 6'd0;
-                write_group_complete<= 1'b0;
                 crc_value            <= 32'hffffffff;
+                write_need_prefetch <= 1'b1;
                 for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
@@ -595,25 +601,33 @@ always @(posedge clk) begin
                     if ((read_group_count == group_num[12:0]) &&
                         (read_state == RD_IDLE) &&
                         (write_group_count < calc_group_count)) begin
-                        write_element     <= 4'd0;
-                        write_part        <= 2'd0;
-                        write_burst_beat  <= 6'd0;
-                        write_group_word  <= 6'd0;
-                        write_group_complete <= 1'b0;
-                        write_state       <= WB_PREFETCH;
+                        write_burst_beat  <= 8'd0;
+                        if (write_need_prefetch)
+                            write_state <= WB_PREFETCH;
+                        else
+                            write_state <= WB_AW;
                     end
                 end
                 WB_PREFETCH: begin
                     write_element      <= 4'd0;
                     write_part         <= 2'd0;
-                    write_burst_beat   <= 6'd0;
+                    write_burst_beat   <= 8'd0;
                     write_group_word   <= 6'd0;
-                    write_group_complete <= 1'b0;
-                    write_burst_last   <= legal_burst_last(write_address[11:0], 6'd48);
+                    if ((calc_group_count - write_group_count) >= 13'd5)
+                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd240);
+                    else if ((calc_group_count - write_group_count) == 13'd4)
+                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd192);
+                    else if ((calc_group_count - write_group_count) == 13'd3)
+                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd144);
+                    else if ((calc_group_count - write_group_count) == 13'd2)
+                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd96);
+                    else
+                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd48);
                     write_state        <= WB_LOAD;
                 end
                 WB_LOAD: begin
                     write_current_data <= result_read_data;
+                    write_need_prefetch <= 1'b0;
                     write_state        <= WB_AW;
                 end
                 WB_AW: begin
@@ -624,14 +638,14 @@ always @(posedge clk) begin
                     if (m_axi_wvalid && m_axi_wready) begin
                         crc_value <= crc32_update32(crc_value, m_axi_wdata);
                         if (write_burst_beat == write_burst_last) begin
-                            write_burst_beat <= 6'd0;
+                            write_burst_beat <= 8'd0;
                             write_state      <= WB_RESP;
                         end else begin
-                            write_burst_beat <= write_burst_beat + 4'd1;
+                            write_burst_beat <= write_burst_beat + 8'd1;
                         end
 
                         if (write_group_word == 6'd47)
-                            write_group_complete <= 1'b1;
+                            write_group_word <= 6'd0;
                         else
                             write_group_word <= write_group_word + 6'd1;
 
@@ -643,9 +657,19 @@ always @(posedge clk) begin
                                 write_next_data <= result_read_data;
                         end else begin
                             write_part <= 2'd0;
-                            if (write_element != 4'd15) begin
+                            if (write_element == 4'd15) begin
+                                write_group_count <= write_group_count + 13'd1;
+                                if (write_burst_beat != write_burst_last) begin
+                                    write_element      <= 4'd0;
+                                    write_current_data <= result_read_data;
+                                    write_need_prefetch<= 1'b0;
+                                end else begin
+                                    write_need_prefetch<= 1'b1;
+                                end
+                            end else begin
                                 write_element      <= write_element + 4'd1;
                                 write_current_data <= write_next_data;
+                                write_need_prefetch<= 1'b0;
                             end
                         end
                     end
@@ -656,26 +680,17 @@ always @(posedge clk) begin
                             error <= 1'b1;
                         write_address <= write_address +
                                          {24'd0, write_burst_last, 2'b00} + 32'd4;
-                        if (write_group_complete) begin
-                            write_group_count <= write_group_count + 13'd1;
-                            if ((write_group_count + 13'd1) == group_num[12:0]) begin
-                                write_state <= WB_IDLE;
-                                busy        <= 1'b0;
-                                done        <= 1'b1;
-                            end else if ((write_group_count + 13'd1) < calc_group_count) begin
+                        if (write_group_count == group_num[12:0]) begin
+                            write_state <= WB_IDLE;
+                            busy        <= 1'b0;
+                            done        <= 1'b1;
+                        end else if (write_group_count < calc_group_count) begin
+                            if (write_need_prefetch)
                                 write_state <= WB_PREFETCH;
-                            end else begin
-                                write_state <= WB_IDLE;
-                            end
+                            else
+                                write_state <= WB_AW;
                         end else begin
-                            // Continue the same result group after a mandatory
-                            // AXI4 4 KiB boundary split.
-                            write_burst_last <= legal_burst_last(
-                                write_address[11:0] +
-                                {4'd0, write_burst_last, 2'b00} + 12'd4,
-                                6'd48 - write_group_word);
-                            write_burst_beat <= 6'd0;
-                            write_state <= WB_AW;
+                            write_state <= WB_IDLE;
                         end
                     end
                 end

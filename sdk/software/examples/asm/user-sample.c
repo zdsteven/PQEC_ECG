@@ -13,25 +13,17 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define MATMUL_INPUT_BYTES     0x0009c400u
 #define UART_TX_ADDR           (UART_BASE + 0u)
 #define UART_LSR_ADDR          (UART_BASE + 5u)
-#define UART_LSR_TFE           0x20u
-#define UART_TX_FIFO_DEPTH     16u
+#define UART_LSR_THRE          0x20u
 
 static void UART_Send_Fixed(const char *data, U32 length)
 {
     U32 sent = 0u;
-    U32 chunk;
-    U32 i;
 
     while (sent < length) {
-        // LSR.TFE guarantees all sixteen FIFO slots are available.
-        while ((*(volatile U8 *)UART_LSR_ADDR & UART_LSR_TFE) == 0u) {
+        while ((*(volatile U8 *)UART_LSR_ADDR & UART_LSR_THRE) == 0u) {
         }
-        chunk = length - sent;
-        if (chunk > UART_TX_FIFO_DEPTH)
-            chunk = UART_TX_FIFO_DEPTH;
-        for (i = 0u; i < chunk; ++i)
-            *(volatile U8 *)UART_TX_ADDR = (U8)data[sent + i];
-        sent += chunk;
+        *(volatile U8 *)UART_TX_ADDR = (U8)data[sent];
+        ++sent;
     }
 }
 
