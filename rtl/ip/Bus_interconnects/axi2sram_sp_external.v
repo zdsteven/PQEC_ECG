@@ -96,7 +96,6 @@ module axi2sram_sp_external #(
     localparam              SEND_B      = 3'h3;
     localparam              WAIT_WVALID = 3'h4;
     localparam              WRITE_NOP   = 3'h5;
-    localparam              READ_ADDR   = 3'h6;
 
     localparam              FIXED       = 2'b00;
     localparam              INCR        = 2'b01;
@@ -125,6 +124,13 @@ module axi2sram_sp_external #(
     reg [AXI_ADDR_WIDTH-1:0] wrap_boundary_d, wrap_boundary_q;
     reg [AXI_ADDR_WIDTH-1:0] upper_wrap_boundary_d, upper_wrap_boundary_q;
     reg [AXI_ADDR_WIDTH-1:0] next_addr;
+    reg                      rd_valid_d, rd_valid_q;
+    reg [AXI_DATA_WIDTH-1:0] rd_data_d, rd_data_q;
+    reg [AXI_ID_WIDTH-1:0]   rd_id_d, rd_id_q;
+    reg                      rd_last_d, rd_last_q;
+    reg                      rd_capture;
+    reg [AXI_ID_WIDTH-1:0]   rd_capture_id;
+    reg                      rd_capture_last;
 
     always @ (*) begin
         // Advance the registered current address directly.  The previous
@@ -144,6 +150,13 @@ module axi2sram_sp_external #(
         cnt_d           = cnt_q;
         wrap_boundary_d = wrap_boundary_q;
         upper_wrap_boundary_d = upper_wrap_boundary_q;
+        rd_valid_d      = rd_valid_q;
+        rd_data_d       = rd_data_q;
+        rd_id_d         = rd_id_q;
+        rd_last_d       = rd_last_q;
+        rd_capture      = 1'b0;
+        rd_capture_id   = rd_id_q;
+        rd_capture_last = rd_last_q;
         // Memory default assignments
         data_o = s_wdata;
         be_o   = s_wstrb;
@@ -155,10 +168,11 @@ module axi2sram_sp_external #(
         s_awready = 1'b0;
         s_arready = 1'b0;
         // read response channel
-        s_rvalid  = 1'b0;
+        s_rvalid  = rd_valid_q;
+        s_rdata   = rd_data_q;
         s_rresp   = 'h0;
-        s_rlast   = 'h0;
-        s_rid     = ax_req_q_id;
+        s_rlast   = rd_last_q;
+        s_rid     = rd_id_q;
         // slave write data channel
         s_wready  = 1'b0;
         // write response channel
@@ -185,8 +199,22 @@ module axi2sram_sp_external #(
                     //  we can request the first address, this saves us time
                     req_o          = 1'b1;
                     addr_o         = s_araddr;
+                    rd_capture     = 1'b1;
+                    rd_capture_id  = s_arid;
+                    rd_capture_last= (s_arlen == 8'd0);
                     // save the address
-                    req_addr_d     = s_araddr;
+                    case (s_arburst)
+                        FIXED: req_addr_d = s_araddr;
+                        INCR:  req_addr_d = s_araddr + {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
+                        WRAP:  begin
+                            if ((s_araddr + {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4}) >=
+                                (get_wrap_boundary(s_araddr, s_arlen) + ((s_arlen + 1) << LOG_NR_BYTES)))
+                                req_addr_d = get_wrap_boundary(s_araddr, s_arlen);
+                            else
+                                req_addr_d = s_araddr + {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
+                        end
+                        default: req_addr_d = s_araddr + {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
+                    endcase
                     wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen);
                     upper_wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen) +
                                             ((s_arlen + 1) << LOG_NR_BYTES);
@@ -235,53 +263,31 @@ module axi2sram_sp_external #(
             end
 
             READ: begin
-                // keep request to memory high
-                req_o  = 1'b1;
-                addr_o = req_addr_q;
-                // send the response
-                s_rvalid = 1'b1;
-                s_rdata  = data_i;
-                s_rid    = ax_req_q_id;
-                s_rlast  = (cnt_q == ax_req_q_len + 1);
-                // check that the master is ready, the slave must not wait on this
-                if (s_rready) begin
-                    // we sent the last byte -> go back to idle
-                    if (s_rlast) begin
+                if (!rd_valid_q || s_rready) begin
+                    if (cnt_q <= ax_req_q_len) begin
+                        req_o           = 1'b1;
+                        addr_o          = req_addr_q;
+                        rd_capture      = 1'b1;
+                        rd_capture_id   = ax_req_q_id;
+                        rd_capture_last = (cnt_q == ax_req_q_len);
+                        case (ax_req_q_burst)
+                            FIXED: req_addr_d = req_addr_q;
+                            INCR:  req_addr_d = next_addr;
+                            WRAP:  begin
+                                if (next_addr >= upper_wrap_boundary_q)
+                                    req_addr_d = wrap_boundary_q;
+                                else
+                                    req_addr_d = next_addr;
+                            end
+                            default: req_addr_d = next_addr;
+                        endcase
+                        cnt_d = cnt_q + 8'd1;
+                    end else if (rd_valid_q && s_rready && rd_last_q) begin
                         state_d = IDLE;
-                        // we already got everything
-                    end
-                    else begin
-                        state_d = READ_ADDR;
+                        rd_valid_d = 1'b0;
+                        rd_last_d  = 1'b0;
                     end
                 end
-            end
-
-            READ_ADDR: begin
-                // keep request to memory high
-                req_o  = 1'b1;
-                // send the response
-                s_rvalid = 1'b0;
-                // ----------------------------
-                // Next address generation
-                // ----------------------------
-                // handle the correct burst type
-                case (ax_req_q_burst)
-                    FIXED: addr_o = req_addr_q;
-                    INCR:  addr_o = next_addr;
-                    WRAP:  begin
-                        if (next_addr >= upper_wrap_boundary_q)
-                            addr_o = wrap_boundary_q;
-                        else
-                            addr_o = next_addr;
-                    end
-                    default: addr_o = next_addr;
-                endcase
-                // we need to change the address here for the upcoming request
-                // we can decrease the counter as the master has consumed the read data
-                cnt_d = cnt_q + 1;
-                // save the request address for the next cycle
-                req_addr_d = addr_o;
-                state_d = READ;
             end
 
             //ext SRAM need nop between continuous write operations
@@ -350,6 +356,10 @@ module axi2sram_sp_external #(
             cnt_q           <= 8'h0;
             wrap_boundary_q <= 'h0;
             upper_wrap_boundary_q <= 'h0;
+            rd_valid_q      <= 1'b0;
+            rd_data_q       <= 'h0;
+            rd_id_q         <= 'h0;
+            rd_last_q       <= 1'b0;
         end else begin
             state_q         <= state_d;
             ax_req_q_addr   <= ax_req_d_addr;
@@ -361,6 +371,16 @@ module axi2sram_sp_external #(
             cnt_q           <= cnt_d;
             wrap_boundary_q <= wrap_boundary_d;
             upper_wrap_boundary_q <= upper_wrap_boundary_d;
+            rd_valid_q      <= rd_valid_d;
+            rd_data_q       <= rd_data_d;
+            rd_id_q         <= rd_id_d;
+            rd_last_q       <= rd_last_d;
+            if (rd_capture) begin
+                rd_valid_q <= 1'b1;
+                rd_data_q  <= data_i;
+                rd_id_q    <= rd_capture_id;
+                rd_last_q  <= rd_capture_last;
+            end
         end
     end
 
