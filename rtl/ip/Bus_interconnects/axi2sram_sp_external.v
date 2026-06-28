@@ -122,19 +122,15 @@ module axi2sram_sp_external #(
     end
     endfunction
 
-    reg [AXI_ADDR_WIDTH-1:0] aligned_address;
-    reg [AXI_ADDR_WIDTH-1:0] wrap_boundary;
-    reg [AXI_ADDR_WIDTH-1:0] upper_wrap_boundary;
-    reg [AXI_ADDR_WIDTH-1:0] cons_addr;
+    reg [AXI_ADDR_WIDTH-1:0] wrap_boundary_d, wrap_boundary_q;
+    reg [AXI_ADDR_WIDTH-1:0] upper_wrap_boundary_d, upper_wrap_boundary_q;
+    reg [AXI_ADDR_WIDTH-1:0] next_addr;
 
     always @ (*) begin
-        // address generation
-        aligned_address = {ax_req_q_addr[AXI_ADDR_WIDTH-1:LOG_NR_BYTES], {{LOG_NR_BYTES}{1'b0}}};
-        wrap_boundary = get_wrap_boundary(ax_req_q_addr, ax_req_q_len);
-        // this will overflow
-        upper_wrap_boundary = wrap_boundary + ((ax_req_q_len + 1) << LOG_NR_BYTES);
-        // calculate consecutive address
-        cons_addr = aligned_address + (cnt_q << LOG_NR_BYTES);
+        // Advance the registered current address directly.  The previous
+        // base+(count<<2) expression placed the burst length and a 32-bit
+        // carry chain on the asynchronous SRAM output path.
+        next_addr = req_addr_q + {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
 
         // Transaction attributes
         // default assignments
@@ -146,6 +142,8 @@ module axi2sram_sp_external #(
         ax_req_d_burst  = ax_req_q_burst;
         req_addr_d      = req_addr_q;
         cnt_d           = cnt_q;
+        wrap_boundary_d = wrap_boundary_q;
+        upper_wrap_boundary_d = upper_wrap_boundary_q;
         // Memory default assignments
         data_o = s_wdata;
         be_o   = s_wstrb;
@@ -189,6 +187,9 @@ module axi2sram_sp_external #(
                     addr_o         = s_araddr;
                     // save the address
                     req_addr_d     = s_araddr;
+                    wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen);
+                    upper_wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen) +
+                                            ((s_arlen + 1) << LOG_NR_BYTES);
                     // save the ar_len
                     cnt_d          = 1;
                 // ------------
@@ -204,6 +205,10 @@ module axi2sram_sp_external #(
                     ax_req_d_len    = s_awlen;
                     ax_req_d_size   = s_awsize;
                     ax_req_d_burst  = s_awburst;
+                    req_addr_d      = s_awaddr;
+                    wrap_boundary_d = get_wrap_boundary(s_awaddr, s_awlen);
+                    upper_wrap_boundary_d = get_wrap_boundary(s_awaddr, s_awlen) +
+                                            ((s_awlen + 1) << LOG_NR_BYTES);
                     // we've got our first w_valid so start the write process
                     if (s_wvalid) begin
                         req_o          = 1'b1;
@@ -261,19 +266,15 @@ module axi2sram_sp_external #(
                 // ----------------------------
                 // handle the correct burst type
                 case (ax_req_q_burst)
-                    FIXED, INCR: addr_o = cons_addr;
+                    FIXED: addr_o = req_addr_q;
+                    INCR:  addr_o = next_addr;
                     WRAP:  begin
-                        // check if the address reached warp boundary
-                        if (cons_addr == upper_wrap_boundary) begin
-                            addr_o = wrap_boundary;
-                        // address warped beyond boundary
-                        end else if (cons_addr > upper_wrap_boundary) begin
-                            addr_o = ax_req_q_addr + ((cnt_q - ax_req_q_len) << LOG_NR_BYTES);
-                        // we are still in the incremental regime
-                        end else begin
-                            addr_o = cons_addr;
-                        end
+                        if (next_addr >= upper_wrap_boundary_q)
+                            addr_o = wrap_boundary_q;
+                        else
+                            addr_o = next_addr;
                     end
+                    default: addr_o = next_addr;
                 endcase
                 // we need to change the address here for the upcoming request
                 // we can decrease the counter as the master has consumed the read data
@@ -304,20 +305,15 @@ module axi2sram_sp_external #(
                     // ----------------------------
                     // handle the correct burst type
                     case (ax_req_q_burst)
-
-                        FIXED, INCR: addr_o = cons_addr;
+                        FIXED: addr_o = req_addr_q;
+                        INCR:  addr_o = next_addr;
                         WRAP:  begin
-                            // check if the address reached warp boundary
-                            if (cons_addr == upper_wrap_boundary) begin
-                                addr_o = wrap_boundary;
-                            // address warped beyond boundary
-                            end else if (cons_addr > upper_wrap_boundary) begin
-                                addr_o = ax_req_q_addr + ((cnt_q - ax_req_q_len) << LOG_NR_BYTES);
-                            // we are still in the incremental regime
-                            end else begin
-                                addr_o = cons_addr;
-                            end
+                            if (next_addr >= upper_wrap_boundary_q)
+                                addr_o = wrap_boundary_q;
+                            else
+                                addr_o = next_addr;
                         end
+                        default: addr_o = next_addr;
                     endcase
                     // save the request address for the next cycle
                     req_addr_d = addr_o;
@@ -352,6 +348,8 @@ module axi2sram_sp_external #(
             ax_req_q_size   <= 3'h0;
             req_addr_q      <= 'h0;
             cnt_q           <= 8'h0;
+            wrap_boundary_q <= 'h0;
+            upper_wrap_boundary_q <= 'h0;
         end else begin
             state_q         <= state_d;
             ax_req_q_addr   <= ax_req_d_addr;
@@ -361,6 +359,8 @@ module axi2sram_sp_external #(
             ax_req_q_size   <= ax_req_d_size;
             req_addr_q      <= req_addr_d;
             cnt_q           <= cnt_d;
+            wrap_boundary_q <= wrap_boundary_d;
+            upper_wrap_boundary_q <= upper_wrap_boundary_d;
         end
     end
 

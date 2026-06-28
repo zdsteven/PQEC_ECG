@@ -42,12 +42,14 @@ module matmul_axi_slave (
     output reg        s_axi_rvalid,
     input             s_axi_rready,
 
-    input             dma_start,
+    input             dma_active,
+    input      [1:0]  dma_start,
     input      [1023:0] dma_matrix_words,
-    output            dma_ready,
-    output            dma_done,
+    output     [1:0]  dma_ready,
+    output     [1:0]  dma_done,
     input      [3:0]  dma_result_index,
-    output     [65:0] dma_result_data
+    output     [65:0] dma_result_data0,
+    output     [65:0] dma_result_data1
 );
 
 localparam [11:0] ADDR_CTRL      = 12'h000;
@@ -83,10 +85,13 @@ reg [3:0]  capture_index;
 
 wire [1023:0] cpu_matrix_words;
 wire [1023:0] selected_matrix_words;
-wire          core_busy;
-wire          core_done;
-wire [3:0]    core_result_index;
-wire [65:0]   core_result_data;
+wire          core0_busy;
+wire          core0_done;
+wire [3:0]    core0_result_index;
+wire [65:0]   core0_result_data;
+wire          core1_busy;
+wire          core1_done;
+wire [65:0]   core1_result_data;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
@@ -94,16 +99,20 @@ wire aw_handshake = s_axi_awvalid && s_axi_awready;
 wire w_handshake  = s_axi_wvalid && s_axi_wready;
 wire write_fire   = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 wire start_write  = write_fire && (write_offset == ADDR_CTRL) && wdata_hold[0];
-wire busy_status  = core_busy || core_done || capture_active;
-wire dma_accept   = dma_start && dma_ready;
-wire cpu_accept   = start_write && !busy_status && !dma_accept;
-wire core_start   = dma_accept || cpu_accept;
+wire busy_status  = core0_busy || core0_done || core1_busy || core1_done || capture_active;
+wire dma_accept0  = dma_start[0] && dma_ready[0];
+wire dma_accept1  = dma_start[1] && dma_ready[1];
+wire cpu_accept   = start_write && !dma_active && !busy_status;
+wire core0_start  = dma_accept0 || cpu_accept;
 
-assign dma_ready          = !busy_status;
-assign dma_done           = core_done && owner_dma;
-assign dma_result_data    = core_result_data;
-assign core_result_index  = owner_dma ? dma_result_index : capture_index;
-assign selected_matrix_words = dma_accept ? dma_matrix_words : cpu_matrix_words;
+assign dma_ready[0]       = dma_active && !core0_busy && !core0_done && !capture_active;
+assign dma_ready[1]       = dma_active && !core1_busy && !core1_done;
+assign dma_done[0]        = core0_done && owner_dma;
+assign dma_done[1]        = core1_done;
+assign dma_result_data0   = core0_result_data;
+assign dma_result_data1   = core1_result_data;
+assign core0_result_index = owner_dma ? dma_result_index : capture_index;
+assign selected_matrix_words = dma_accept0 ? dma_matrix_words : cpu_matrix_words;
 
 function [31:0] apply_wstrb;
     input [31:0] old_value;
@@ -148,15 +157,26 @@ generate
     end
 endgenerate
 
-matmul_batch_core u_matmul_batch_core (
+matmul_batch_core u_matmul_batch_core0 (
     .clk          (clk),
     .resetn       (resetn),
-    .start        (core_start),
+    .start        (core0_start),
     .matrix_words (selected_matrix_words),
-    .busy         (core_busy),
-    .done         (core_done),
-    .result_index (core_result_index),
-    .result_data  (core_result_data)
+    .busy         (core0_busy),
+    .done         (core0_done),
+    .result_index (core0_result_index),
+    .result_data  (core0_result_data)
+);
+
+matmul_batch_core u_matmul_batch_core1 (
+    .clk          (clk),
+    .resetn       (resetn),
+    .start        (dma_accept1),
+    .matrix_words (dma_matrix_words),
+    .busy         (core1_busy),
+    .done         (core1_done),
+    .result_index (dma_result_index),
+    .result_data  (core1_result_data)
 );
 
 integer i;
@@ -267,7 +287,7 @@ always @(posedge clk) begin
             cpu_error <= 1'b0;
         end
 
-        if (dma_accept) begin
+        if (dma_accept0) begin
             owner_dma <= 1'b1;
         end else if (cpu_accept) begin
             owner_dma <= 1'b0;
@@ -275,11 +295,11 @@ always @(posedge clk) begin
             cpu_error <= 1'b0;
         end
 
-        if (core_done && !owner_dma) begin
+        if (core0_done && !owner_dma) begin
             capture_active <= 1'b1;
             capture_index  <= 4'd0;
         end else if (capture_active) begin
-            c_data[capture_index] <= core_result_data;
+            c_data[capture_index] <= core0_result_data;
             if (capture_index == 4'd15) begin
                 capture_active <= 1'b0;
                 cpu_done       <= 1'b1;

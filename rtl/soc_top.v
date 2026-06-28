@@ -397,12 +397,14 @@ wire [1 :0] dma_s_bresp  ;
 wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
-wire        dma_matmul_start;
+wire        dma_matmul_active;
+wire [1:0]  dma_matmul_start;
 wire [1023:0] dma_matmul_words;
-wire        dma_matmul_ready;
-wire        dma_matmul_done;
+wire [1:0]  dma_matmul_ready;
+wire [1:0]  dma_matmul_done;
 wire [3:0]  dma_matmul_result_index;
-wire [65:0] dma_matmul_result_data;
+wire [65:0] dma_matmul_result_data0;
+wire [65:0] dma_matmul_result_data1;
 
 
 //Kyber_ip (deleted)
@@ -700,12 +702,14 @@ matmul_dma #(
     .m_axi_rlast    (dma_m_rlast),
     .m_axi_rvalid   (dma_m_rvalid),
     .m_axi_rready   (dma_m_rready),
+    .matmul_active  (dma_matmul_active),
     .matmul_start   (dma_matmul_start),
     .matmul_matrix_words (dma_matmul_words),
     .matmul_ready   (dma_matmul_ready),
     .matmul_done    (dma_matmul_done),
     .matmul_result_index (dma_matmul_result_index),
-    .matmul_result_data  (dma_matmul_result_data),
+    .matmul_result_data0 (dma_matmul_result_data0),
+    .matmul_result_data1 (dma_matmul_result_data1),
     .finish         (dma_finish)
 );
 
@@ -754,12 +758,14 @@ matmul_axi_slave u_matmul (
     .s_axi_rvalid   ( axiOut_7_rvalid   ),
     .s_axi_rready   ( axiOut_7_rready   ),
 
+    .dma_active     ( dma_matmul_active ),
     .dma_start      ( dma_matmul_start  ),
     .dma_matrix_words ( dma_matmul_words ),
     .dma_ready      ( dma_matmul_ready  ),
     .dma_done       ( dma_matmul_done   ),
     .dma_result_index ( dma_matmul_result_index ),
-    .dma_result_data  ( dma_matmul_result_data  )
+    .dma_result_data0 ( dma_matmul_result_data0 ),
+    .dma_result_data1 ( dma_matmul_result_data1 )
 );
 
 wire confreg_int;
