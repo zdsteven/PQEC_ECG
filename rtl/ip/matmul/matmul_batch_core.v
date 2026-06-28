@@ -19,6 +19,9 @@ module matmul_batch_core (
 reg [31:0] a_data [0:15];
 reg [31:0] b_data [0:15];
 reg [65:0] accumulator [0:15];
+// Completed results are snapshotted in one cycle.  DMA may serialize this
+// bank while accumulator[] immediately starts the next matrix.
+reg [65:0] result_snapshot [0:15];
 reg [65:0] a_shift [0:3];
 reg [31:0] b_shift [0:3];
 reg [1:0]  k_index;
@@ -28,22 +31,22 @@ integer i;
 
 always @(*) begin
     case (result_index)
-        4'd0:  result_data = accumulator[0];
-        4'd1:  result_data = accumulator[1];
-        4'd2:  result_data = accumulator[2];
-        4'd3:  result_data = accumulator[3];
-        4'd4:  result_data = accumulator[4];
-        4'd5:  result_data = accumulator[5];
-        4'd6:  result_data = accumulator[6];
-        4'd7:  result_data = accumulator[7];
-        4'd8:  result_data = accumulator[8];
-        4'd9:  result_data = accumulator[9];
-        4'd10: result_data = accumulator[10];
-        4'd11: result_data = accumulator[11];
-        4'd12: result_data = accumulator[12];
-        4'd13: result_data = accumulator[13];
-        4'd14: result_data = accumulator[14];
-        4'd15: result_data = accumulator[15];
+        4'd0:  result_data = result_snapshot[0];
+        4'd1:  result_data = result_snapshot[1];
+        4'd2:  result_data = result_snapshot[2];
+        4'd3:  result_data = result_snapshot[3];
+        4'd4:  result_data = result_snapshot[4];
+        4'd5:  result_data = result_snapshot[5];
+        4'd6:  result_data = result_snapshot[6];
+        4'd7:  result_data = result_snapshot[7];
+        4'd8:  result_data = result_snapshot[8];
+        4'd9:  result_data = result_snapshot[9];
+        4'd10: result_data = result_snapshot[10];
+        4'd11: result_data = result_snapshot[11];
+        4'd12: result_data = result_snapshot[12];
+        4'd13: result_data = result_snapshot[13];
+        4'd14: result_data = result_snapshot[14];
+        4'd15: result_data = result_snapshot[15];
         default: result_data = 66'd0;
     endcase
 end
@@ -58,6 +61,7 @@ always @(posedge clk) begin
             a_data[i]     <= 32'd0;
             b_data[i]     <= 32'd0;
             accumulator[i] <= 66'd0;
+            result_snapshot[i] <= 66'd0;
         end
         for (i = 0; i < 4; i = i + 1) begin
             a_shift[i] <= 66'd0;
@@ -96,6 +100,14 @@ always @(posedge clk) begin
             if (bit_index == 5'd31) begin
                 bit_index <= 5'd0;
                 if (k_index == 2'd3) begin
+                    // accumulator[] receives its final conditional add on this
+                    // same edge, so include that term explicitly in the copy.
+                    for (i = 0; i < 16; i = i + 1) begin
+                        if (b_shift[i % 4][0])
+                            result_snapshot[i] <= accumulator[i] + a_shift[i / 4];
+                        else
+                            result_snapshot[i] <= accumulator[i];
+                    end
                     busy <= 1'b0;
                     done <= 1'b1;
                 end else begin

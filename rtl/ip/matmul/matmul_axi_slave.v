@@ -43,13 +43,15 @@ module matmul_axi_slave (
     input             s_axi_rready,
 
     input             dma_active,
-    input      [1:0]  dma_start,
+    input      [3:0]  dma_start,
     input      [1023:0] dma_matrix_words,
-    output     [1:0]  dma_ready,
-    output     [1:0]  dma_done,
+    output     [3:0]  dma_ready,
+    output     [3:0]  dma_done,
     input      [3:0]  dma_result_index,
     output     [65:0] dma_result_data0,
-    output     [65:0] dma_result_data1
+    output     [65:0] dma_result_data1,
+    output     [65:0] dma_result_data2,
+    output     [65:0] dma_result_data3
 );
 
 localparam [11:0] ADDR_CTRL      = 12'h000;
@@ -92,6 +94,12 @@ wire [65:0]   core0_result_data;
 wire          core1_busy;
 wire          core1_done;
 wire [65:0]   core1_result_data;
+wire          core2_busy;
+wire          core2_done;
+wire [65:0]   core2_result_data;
+wire          core3_busy;
+wire          core3_done;
+wire [65:0]   core3_result_data;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
@@ -99,18 +107,28 @@ wire aw_handshake = s_axi_awvalid && s_axi_awready;
 wire w_handshake  = s_axi_wvalid && s_axi_wready;
 wire write_fire   = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 wire start_write  = write_fire && (write_offset == ADDR_CTRL) && wdata_hold[0];
-wire busy_status  = core0_busy || core0_done || core1_busy || core1_done || capture_active;
+wire busy_status  = core0_busy || core0_done || core1_busy || core1_done ||
+                    core2_busy || core2_done || core3_busy || core3_done ||
+                    capture_active;
 wire dma_accept0  = dma_start[0] && dma_ready[0];
 wire dma_accept1  = dma_start[1] && dma_ready[1];
+wire dma_accept2  = dma_start[2] && dma_ready[2];
+wire dma_accept3  = dma_start[3] && dma_ready[3];
 wire cpu_accept   = start_write && !dma_active && !busy_status;
 wire core0_start  = dma_accept0 || cpu_accept;
 
 assign dma_ready[0]       = dma_active && !core0_busy && !core0_done && !capture_active;
 assign dma_ready[1]       = dma_active && !core1_busy && !core1_done;
+assign dma_ready[2]       = dma_active && !core2_busy && !core2_done;
+assign dma_ready[3]       = dma_active && !core3_busy && !core3_done;
 assign dma_done[0]        = core0_done && owner_dma;
 assign dma_done[1]        = core1_done;
+assign dma_done[2]        = core2_done;
+assign dma_done[3]        = core3_done;
 assign dma_result_data0   = core0_result_data;
 assign dma_result_data1   = core1_result_data;
+assign dma_result_data2   = core2_result_data;
+assign dma_result_data3   = core3_result_data;
 assign core0_result_index = owner_dma ? dma_result_index : capture_index;
 assign selected_matrix_words = dma_accept0 ? dma_matrix_words : cpu_matrix_words;
 
@@ -177,6 +195,28 @@ matmul_batch_core u_matmul_batch_core1 (
     .done         (core1_done),
     .result_index (dma_result_index),
     .result_data  (core1_result_data)
+);
+
+matmul_batch_core u_matmul_batch_core2 (
+    .clk          (clk),
+    .resetn       (resetn),
+    .start        (dma_accept2),
+    .matrix_words (dma_matrix_words),
+    .busy         (core2_busy),
+    .done         (core2_done),
+    .result_index (dma_result_index),
+    .result_data  (core2_result_data)
+);
+
+matmul_batch_core u_matmul_batch_core3 (
+    .clk          (clk),
+    .resetn       (resetn),
+    .start        (dma_accept3),
+    .matrix_words (dma_matrix_words),
+    .busy         (core3_busy),
+    .done         (core3_done),
+    .result_index (dma_result_index),
+    .result_data  (core3_result_data)
 );
 
 integer i;
