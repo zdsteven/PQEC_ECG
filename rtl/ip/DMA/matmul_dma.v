@@ -449,10 +449,10 @@ always @(posedge clk) begin
         write_next_data     <= 66'd0;
         crc_value            <= 32'hffffffff;
         for (reset_index = 0; reset_index < 128; reset_index = reset_index + 1)
-            input_buffer[reset_index] <= 32'd0;
+            input_buffer[reset_index] = 32'd0;
         for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
-            core_group[core_reset_index] <= 13'd0;
-            core_result_group[core_reset_index] <= 13'd0;
+            core_group[core_reset_index] = 13'd0;
+            core_result_group[core_reset_index] = 13'd0;
         end
     end else begin
         matmul_start <= 4'b0000;
@@ -498,8 +498,8 @@ always @(posedge clk) begin
                 write_group_complete<= 1'b0;
                 crc_value            <= 32'hffffffff;
                 for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
-                    core_group[core_reset_index] <= 13'd0;
-                    core_result_group[core_reset_index] <= 13'd0;
+                    core_group[core_reset_index] = 13'd0;
+                    core_result_group[core_reset_index] = 13'd0;
                 end
             end
         end else if (busy) begin

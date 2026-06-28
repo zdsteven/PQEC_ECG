@@ -48,11 +48,10 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
-    UART_Send_Fixed(start_text, 13u);
-
     (void)DMA_MatMul_Start(EXTRAM_PHYS_BASE,
                            EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES,
                            (U32)MATMUL_GROUP_NUM);
+    UART_Send_Fixed(start_text, 13u);
     (void)DMA_Wait(0u);
 
     // CRC is accumulated by hardware from the exact words accepted on AXI W.
