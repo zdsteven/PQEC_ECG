@@ -96,6 +96,7 @@ module axi2sram_sp_external #(
     localparam              SEND_B      = 3'h3;
     localparam              WAIT_WVALID = 3'h4;
     localparam              WRITE_NOP   = 3'h5;
+    localparam [5:0]        WRITE_RUN_LENGTH = 6'd32;
 
     localparam              FIXED       = 2'b00;
     localparam              INCR        = 2'b01;
@@ -124,6 +125,7 @@ module axi2sram_sp_external #(
     reg [AXI_ADDR_WIDTH-1:0] wrap_boundary_d, wrap_boundary_q;
     reg [AXI_ADDR_WIDTH-1:0] upper_wrap_boundary_d, upper_wrap_boundary_q;
     reg [AXI_ADDR_WIDTH-1:0] next_addr;
+    reg [5:0]                wr_run_d, wr_run_q;
     reg                      rd_valid_d, rd_valid_q;
     reg [AXI_DATA_WIDTH-1:0] rd_data_d, rd_data_q;
     reg [AXI_ID_WIDTH-1:0]   rd_id_d, rd_id_q;
@@ -150,6 +152,7 @@ module axi2sram_sp_external #(
         cnt_d           = cnt_q;
         wrap_boundary_d = wrap_boundary_q;
         upper_wrap_boundary_d = upper_wrap_boundary_q;
+        wr_run_d        = wr_run_q;
         rd_valid_d      = rd_valid_q;
         rd_data_d       = rd_data_q;
         rd_id_d         = rd_id_q;
@@ -241,8 +244,9 @@ module axi2sram_sp_external #(
                     if (s_wvalid) begin
                         req_o          = 1'b1;
                         we_o           = 1'b1;
-                        state_d        = (s_wlast) ? SEND_B : WRITE_NOP;
+                        state_d        = (s_wlast) ? SEND_B : WRITE;
                         cnt_d          = 1;
+                        wr_run_d       = 6'd1;
                     // we still have to wait for the first w_valid to arrive
                     end else
                         state_d = WAIT_WVALID;
@@ -259,6 +263,7 @@ module axi2sram_sp_external #(
                     we_o           = 1'b1;
                     state_d        = (s_wlast) ? SEND_B : WRITE;
                     cnt_d          = 1;
+                    wr_run_d       = 6'd1;
                 end
             end
 
@@ -293,6 +298,7 @@ module axi2sram_sp_external #(
             //ext SRAM need nop between continuous write operations
             WRITE_NOP: begin
                 s_wready = 1'b0;
+                wr_run_d = 6'd0;
                 state_d  = WRITE;
             end
 
@@ -300,7 +306,7 @@ module axi2sram_sp_external #(
             WRITE: begin
 
                 s_wready = 1'b1;
-                state_d  = WRITE_NOP;
+                state_d  = WRITE;
 
                 // consume a word here
                 if (s_wvalid) begin
@@ -326,8 +332,16 @@ module axi2sram_sp_external #(
                     // we can decrease the counter as the master has consumed the read data
                     cnt_d = cnt_q + 1;
 
-                    if (s_wlast)
+                    if (s_wlast) begin
+                        wr_run_d = 6'd0;
                         state_d = SEND_B;
+                    end else if (wr_run_q == (WRITE_RUN_LENGTH - 6'd1)) begin
+                        wr_run_d = WRITE_RUN_LENGTH;
+                        state_d  = WRITE_NOP;
+                    end else begin
+                        wr_run_d = wr_run_q + 6'd1;
+                        state_d  = WRITE;
+                    end
                 end
             end
             // ~> send a write acknowledge back
@@ -356,6 +370,7 @@ module axi2sram_sp_external #(
             cnt_q           <= 8'h0;
             wrap_boundary_q <= 'h0;
             upper_wrap_boundary_q <= 'h0;
+            wr_run_q        <= 6'd0;
             rd_valid_q      <= 1'b0;
             rd_data_q       <= 'h0;
             rd_id_q         <= 'h0;
@@ -371,6 +386,7 @@ module axi2sram_sp_external #(
             cnt_q           <= cnt_d;
             wrap_boundary_q <= wrap_boundary_d;
             upper_wrap_boundary_q <= upper_wrap_boundary_d;
+            wr_run_q        <= wr_run_d;
             rd_valid_q      <= rd_valid_d;
             rd_data_q       <= rd_data_d;
             rd_id_q         <= rd_id_d;

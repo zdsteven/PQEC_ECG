@@ -209,6 +209,13 @@ wire [1:0] selected_launch_core =
     core_sched_scan[1] ? (next_core + 2'd1) :
     core_sched_scan[2] ? (next_core + 2'd2) :
                          (next_core + 2'd3);
+wire read_bank_complete_now = (read_state == RD_DATA) && m_axi_rvalid && m_axi_rready &&
+                              (m_axi_rlast || (read_beat == 5'd31)) &&
+                              m_axi_rlast && (read_beat == 5'd31);
+wire launch_filled_bank_now = read_bank_complete_now &&
+                              (active_read_bank == compute_bank) &&
+                              any_core_sched_ready;
+wire bank_ready_for_launch = bank_valid[compute_bank] || launch_filled_bank_now;
 wire result_read_first = busy && (write_state == WB_PREFETCH);
 wire result_read_next_same_group = m_axi_wvalid && m_axi_wready &&
                                    (write_part == 2'd0) && (write_element != 4'd15);
@@ -320,6 +327,8 @@ genvar word_index;
 generate
     for (word_index = 0; word_index < 32; word_index = word_index + 1) begin: CORE_WORD_MUX
         assign launch_matrix_words[word_index*32 +: 32] =
+            (launch_filled_bank_now && (word_index == read_beat)) ?
+            m_axi_rdata :
             input_buffer[{compute_bank, 5'b0} + word_index];
     end
 endgenerate
@@ -523,7 +532,8 @@ always @(posedge clk) begin
                 if (m_axi_rlast || (read_beat == 5'd31)) begin
                     if (!m_axi_rlast || (read_beat != 5'd31))
                         error <= 1'b1;
-                    bank_valid[active_read_bank] <= 1'b1;
+                    if (!launch_filled_bank_now)
+                        bank_valid[active_read_bank] <= 1'b1;
                     read_group_count <= read_group_count + 13'd1;
                     read_bank        <= read_bank + 2'd1;
                     read_state       <= RD_IDLE;
@@ -535,10 +545,11 @@ always @(posedge clk) begin
             // Dispatch complete input banks to either compute core.  The
             // 1024-bit holding register lets a bank be released immediately;
             // each core latches the common bus with its own start pulse.
-            if ((launch_group_count < group_num[12:0]) && bank_valid[compute_bank] &&
+            if ((launch_group_count < group_num[12:0]) && bank_ready_for_launch &&
                 any_core_sched_ready) begin
                 matmul_matrix_hold <= launch_matrix_words;
-                bank_valid[compute_bank] <= 1'b0;
+                if (bank_valid[compute_bank])
+                    bank_valid[compute_bank] <= 1'b0;
                 compute_bank <= compute_bank + 2'd1;
                 launch_group_count <= launch_group_count + 13'd1;
                 next_core <= selected_launch_core + 2'd1;
