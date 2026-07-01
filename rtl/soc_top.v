@@ -628,7 +628,8 @@ wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
 
 matmul_dma #(
-    .MAX_GROUPS (5000)
+    .MAX_GROUPS      (5000),
+    .RESULT_WRITEBACK(0)
 ) u_matmul_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),

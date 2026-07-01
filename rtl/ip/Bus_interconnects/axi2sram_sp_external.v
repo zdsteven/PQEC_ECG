@@ -103,7 +103,7 @@ module axi2sram_sp_external #(
     localparam              WRAP        = 2'b10;
     
     reg [AXI_ADDR_WIDTH-1:0] req_addr_d, req_addr_q;
-    reg [7:0]                cnt_d, cnt_q;
+    reg [8:0]                cnt_d, cnt_q;
 
     function automatic [AXI_ADDR_WIDTH-1:0] get_wrap_boundary;
         input [AXI_ADDR_WIDTH-1:0] unaligned_address;
@@ -126,13 +126,21 @@ module axi2sram_sp_external #(
     reg [AXI_ADDR_WIDTH-1:0] upper_wrap_boundary_d, upper_wrap_boundary_q;
     reg [AXI_ADDR_WIDTH-1:0] next_addr;
     reg [5:0]                wr_run_d, wr_run_q;
-    reg                      rd_valid_d, rd_valid_q;
-    reg [AXI_DATA_WIDTH-1:0] rd_data_d, rd_data_q;
-    reg [AXI_ID_WIDTH-1:0]   rd_id_d, rd_id_q;
-    reg                      rd_last_d, rd_last_q;
     reg                      rd_capture;
     reg [AXI_ID_WIDTH-1:0]   rd_capture_id;
     reg                      rd_capture_last;
+
+    // One complete AXI4 burst can be prefetched independently of RREADY.
+    // This removes the response-channel feedback from the SRAM address issue
+    // path while preserving stable RDATA/RID/RLAST under AXI backpressure.
+    localparam RD_FIFO_WIDTH = AXI_DATA_WIDTH + AXI_ID_WIDTH + 1;
+    reg [RD_FIFO_WIDTH-1:0] rd_fifo [0:255];
+    reg [7:0] rd_fifo_wr_ptr_q;
+    reg [7:0] rd_fifo_rd_ptr_q;
+    reg [8:0] rd_fifo_count_q;
+    wire rd_fifo_valid = (rd_fifo_count_q != 9'd0);
+    wire rd_fifo_pop = rd_fifo_valid && s_rready;
+    wire [RD_FIFO_WIDTH-1:0] rd_fifo_head = rd_fifo[rd_fifo_rd_ptr_q];
 
     always @ (*) begin
         // Advance the registered current address directly.  The previous
@@ -153,13 +161,9 @@ module axi2sram_sp_external #(
         wrap_boundary_d = wrap_boundary_q;
         upper_wrap_boundary_d = upper_wrap_boundary_q;
         wr_run_d        = wr_run_q;
-        rd_valid_d      = rd_valid_q;
-        rd_data_d       = rd_data_q;
-        rd_id_d         = rd_id_q;
-        rd_last_d       = rd_last_q;
         rd_capture      = 1'b0;
-        rd_capture_id   = rd_id_q;
-        rd_capture_last = rd_last_q;
+        rd_capture_id   = ax_req_q_id;
+        rd_capture_last = 1'b0;
         // Memory default assignments
         data_o = s_wdata;
         be_o   = s_wstrb;
@@ -171,11 +175,11 @@ module axi2sram_sp_external #(
         s_awready = 1'b0;
         s_arready = 1'b0;
         // read response channel
-        s_rvalid  = rd_valid_q;
-        s_rdata   = rd_data_q;
+        s_rvalid  = rd_fifo_valid;
+        s_rdata   = rd_fifo_head[AXI_DATA_WIDTH-1:0];
         s_rresp   = 'h0;
-        s_rlast   = rd_last_q;
-        s_rid     = rd_id_q;
+        s_rlast   = rd_fifo_head[RD_FIFO_WIDTH-1];
+        s_rid     = rd_fifo_head[AXI_DATA_WIDTH +: AXI_ID_WIDTH];
         // slave write data channel
         s_wready  = 1'b0;
         // write response channel
@@ -268,31 +272,30 @@ module axi2sram_sp_external #(
             end
 
             READ: begin
-                if (!rd_valid_q || s_rready) begin
-                    if (cnt_q <= ax_req_q_len) begin
-                        req_o           = 1'b1;
-                        addr_o          = req_addr_q;
-                        rd_capture      = 1'b1;
-                        rd_capture_id   = ax_req_q_id;
-                        rd_capture_last = (cnt_q == ax_req_q_len);
-                        case (ax_req_q_burst)
-                            FIXED: req_addr_d = req_addr_q;
-                            INCR:  req_addr_d = next_addr;
-                            WRAP:  begin
-                                if (next_addr >= upper_wrap_boundary_q)
-                                    req_addr_d = wrap_boundary_q;
-                                else
-                                    req_addr_d = next_addr;
-                            end
-                            default: req_addr_d = next_addr;
-                        endcase
-                        cnt_d = cnt_q + 8'd1;
-                    end else if (rd_valid_q && s_rready && rd_last_q) begin
-                        state_d = IDLE;
-                        rd_valid_d = 1'b0;
-                        rd_last_d  = 1'b0;
-                    end
+                // Address issue is a pure streaming pipeline.  It is not
+                // gated by rd_fifo_valid or RREADY; the 256-entry FIFO can
+                // absorb the largest legal AXI4 burst in full.
+                if (cnt_q <= {1'b0, ax_req_q_len}) begin
+                    req_o           = 1'b1;
+                    addr_o          = req_addr_q;
+                    rd_capture      = 1'b1;
+                    rd_capture_id   = ax_req_q_id;
+                    rd_capture_last = (cnt_q == {1'b0, ax_req_q_len});
+                    case (ax_req_q_burst)
+                        FIXED: req_addr_d = req_addr_q;
+                        INCR:  req_addr_d = next_addr;
+                        WRAP:  begin
+                            if (next_addr >= upper_wrap_boundary_q)
+                                req_addr_d = wrap_boundary_q;
+                            else
+                                req_addr_d = next_addr;
+                        end
+                        default: req_addr_d = next_addr;
+                    endcase
+                    cnt_d = cnt_q + 9'd1;
                 end
+                if (rd_fifo_pop && s_rlast)
+                    state_d = IDLE;
             end
 
             //ext SRAM need nop between continuous write operations
@@ -367,14 +370,13 @@ module axi2sram_sp_external #(
             ax_req_q_len    <= 8'h0;
             ax_req_q_size   <= 3'h0;
             req_addr_q      <= 'h0;
-            cnt_q           <= 8'h0;
+            cnt_q           <= 9'h0;
             wrap_boundary_q <= 'h0;
             upper_wrap_boundary_q <= 'h0;
             wr_run_q        <= 6'd0;
-            rd_valid_q      <= 1'b0;
-            rd_data_q       <= 'h0;
-            rd_id_q         <= 'h0;
-            rd_last_q       <= 1'b0;
+            rd_fifo_wr_ptr_q <= 8'd0;
+            rd_fifo_rd_ptr_q <= 8'd0;
+            rd_fifo_count_q  <= 9'd0;
         end else begin
             state_q         <= state_d;
             ax_req_q_addr   <= ax_req_d_addr;
@@ -387,17 +389,37 @@ module axi2sram_sp_external #(
             wrap_boundary_q <= wrap_boundary_d;
             upper_wrap_boundary_q <= upper_wrap_boundary_d;
             wr_run_q        <= wr_run_d;
-            rd_valid_q      <= rd_valid_d;
-            rd_data_q       <= rd_data_d;
-            rd_id_q         <= rd_id_d;
-            rd_last_q       <= rd_last_d;
-            if (rd_capture) begin
-                rd_valid_q <= 1'b1;
-                rd_data_q  <= data_i;
-                rd_id_q    <= rd_capture_id;
-                rd_last_q  <= rd_capture_last;
-            end
+            // FIFO storage is written in a reset-free clocked process below.
+            // Keeping the memory outside this asynchronously-reset process is
+            // required for Vivado to infer distributed RAM instead of
+            // dissolving all 256 entries into flip-flops and a large read mux.
+            case ({rd_capture, rd_fifo_pop})
+                2'b10: begin
+                    rd_fifo_wr_ptr_q <= rd_fifo_wr_ptr_q + 8'd1;
+                    rd_fifo_count_q  <= rd_fifo_count_q + 9'd1;
+                end
+                2'b01: begin
+                    rd_fifo_rd_ptr_q <= rd_fifo_rd_ptr_q + 8'd1;
+                    rd_fifo_count_q  <= rd_fifo_count_q - 9'd1;
+                end
+                2'b11: begin
+                    rd_fifo_wr_ptr_q <= rd_fifo_wr_ptr_q + 8'd1;
+                    rd_fifo_rd_ptr_q <= rd_fifo_rd_ptr_q + 8'd1;
+                end
+                default: begin
+                end
+            endcase
         end
+    end
+
+    // One SRAM response is retired into the return queue on every issued read
+    // address.  This write path has no reset and therefore maps cleanly to
+    // LUTRAM.  FIFO validity is controlled exclusively by rd_fifo_count_q, so
+    // uninitialised storage can never be observed after reset.
+    always @(posedge clk) begin
+        if (rd_capture)
+            rd_fifo[rd_fifo_wr_ptr_q] <=
+                {rd_capture_last, rd_capture_id, data_i};
     end
 
 

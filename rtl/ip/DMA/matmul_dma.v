@@ -7,7 +7,8 @@
 //              serialized as low32/high32/top2 and written back in long linear
 //              bursts, continuing cleanly across AXI 4 KiB splits.
 module matmul_dma #(
-    parameter MAX_GROUPS = 5000
+    parameter MAX_GROUPS = 5000,
+    parameter RESULT_WRITEBACK = 1
 ) (
     input             clk,
     input             resetn,
@@ -182,6 +183,10 @@ reg [65:0] write_current_data;
 reg [65:0] write_next_data;
 reg [31:0] crc_value;
 reg        write_need_prefetch;
+reg        write_burst_prefetched;
+reg [65:0] crc_result_data;
+reg        crc_result_valid;
+reg        crc_finish_pending;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
@@ -280,6 +285,20 @@ function [7:0] legal_burst_last;
     end
 endfunction
 
+// CRC update for one 66-bit result in its specified three-word output order.
+function [31:0] crc32_update_result;
+    input [31:0] crc_in;
+    input [65:0] result_in;
+    reg [31:0] crc_mid0;
+    reg [31:0] crc_mid1;
+    begin
+        crc_mid0 = crc32_update32(crc_in, result_in[31:0]);
+        crc_mid1 = crc32_update32(crc_mid0, result_in[63:32]);
+        crc32_update_result = crc32_update32(crc_mid1,
+                                             {30'd0, result_in[65:64]});
+    end
+endfunction
+
 assign s_axi_awready = !aw_hold_valid && !s_axi_bvalid;
 assign s_axi_wready  = aw_hold_valid && !w_hold_valid && !s_axi_bvalid;
 assign s_axi_bresp   = 2'b00;
@@ -314,11 +333,11 @@ assign m_axi_awburst = 2'b01;
 assign m_axi_awlock  = 1'b0;
 assign m_axi_awcache = 4'b0000;
 assign m_axi_awprot  = 3'b000;
-assign m_axi_awvalid = busy && (write_state == WB_AW);
+assign m_axi_awvalid = RESULT_WRITEBACK && busy && (write_state == WB_AW);
 assign m_axi_wstrb   = 4'b1111;
-assign m_axi_wvalid  = busy && (write_state == WB_SEND);
+assign m_axi_wvalid  = RESULT_WRITEBACK && busy && (write_state == WB_SEND);
 assign m_axi_wlast   = (write_burst_beat == write_burst_last);
-assign m_axi_bready  = busy && (write_state == WB_RESP);
+assign m_axi_bready  = RESULT_WRITEBACK && busy && (write_state == WB_RESP);
 assign m_axi_wdata   = (write_part == 2'd0) ? write_current_data[31:0] :
                        (write_part == 2'd1) ? write_current_data[63:32] :
                                               {30'd0, write_current_data[65:64]};
@@ -426,7 +445,6 @@ always @(posedge clk) begin
     end
 end
 
-integer reset_index;
 integer core_reset_index;
 always @(posedge clk) begin
     if (!resetn) begin
@@ -463,8 +481,13 @@ always @(posedge clk) begin
         write_next_data     <= 66'd0;
         crc_value            <= 32'hffffffff;
         write_need_prefetch <= 1'b1;
-        for (reset_index = 0; reset_index < 128; reset_index = reset_index + 1)
-            input_buffer[reset_index] = 32'd0;
+        write_burst_prefetched <= 1'b0;
+        crc_result_data      <= 66'd0;
+        crc_result_valid     <= 1'b0;
+        crc_finish_pending   <= 1'b0;
+        // input_buffer is intentionally not reset.  bank_valid starts empty
+        // and every bank is completely overwritten by 32 R beats before use;
+        // clearing 4096 data bits created a very high-fanout reset path.
         for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
             core_group[core_reset_index] = 13'd0;
             core_result_group[core_reset_index] = 13'd0;
@@ -512,6 +535,10 @@ always @(posedge clk) begin
                 write_group_word    <= 6'd0;
                 crc_value            <= 32'hffffffff;
                 write_need_prefetch <= 1'b1;
+                write_burst_prefetched <= 1'b0;
+                crc_result_data      <= 66'd0;
+                crc_result_valid     <= 1'b0;
+                crc_finish_pending   <= 1'b0;
                 for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
@@ -567,25 +594,33 @@ always @(posedge clk) begin
             // may already be computing its next group.
             core_result_pending <= core_result_pending | matmul_done;
             if (!store_active) begin
-                if (core_result_pending[0] || matmul_done[0]) begin
+                if ((core_result_pending[0] &&
+                     (core_result_group[0] == calc_group_count)) ||
+                    (matmul_done[0] && (core_group[0] == calc_group_count))) begin
                     store_active <= 1'b1;
                     store_core <= 2'd0;
                     store_element <= 4'd0;
                     matmul_result_index <= 4'd0;
                     core_result_pending[0] <= 1'b0;
-                end else if (core_result_pending[1] || matmul_done[1]) begin
+                end else if ((core_result_pending[1] &&
+                              (core_result_group[1] == calc_group_count)) ||
+                             (matmul_done[1] && (core_group[1] == calc_group_count))) begin
                     store_active <= 1'b1;
                     store_core <= 2'd1;
                     store_element <= 4'd0;
                     matmul_result_index <= 4'd0;
                     core_result_pending[1] <= 1'b0;
-                end else if (core_result_pending[2] || matmul_done[2]) begin
+                end else if ((core_result_pending[2] &&
+                              (core_result_group[2] == calc_group_count)) ||
+                             (matmul_done[2] && (core_group[2] == calc_group_count))) begin
                     store_active <= 1'b1;
                     store_core <= 2'd2;
                     store_element <= 4'd0;
                     matmul_result_index <= 4'd0;
                     core_result_pending[2] <= 1'b0;
-                end else if (core_result_pending[3] || matmul_done[3]) begin
+                end else if ((core_result_pending[3] &&
+                              (core_result_group[3] == calc_group_count)) ||
+                             (matmul_done[3] && (core_group[3] == calc_group_count))) begin
                     store_active <= 1'b1;
                     store_core <= 2'd3;
                     store_element <= 4'd0;
@@ -595,8 +630,11 @@ always @(posedge clk) begin
             end else if (store_element == 4'd15) begin
                 store_active <= 1'b0;
                 calc_group_count <= calc_group_count + 13'd1;
-                if ((calc_group_count + 13'd1) == group_num[12:0])
+                if ((calc_group_count + 13'd1) == group_num[12:0]) begin
                     compute_complete <= 1'b1;
+                    if (!RESULT_WRITEBACK)
+                        crc_finish_pending <= 1'b1;
+                end
             end else begin
                 store_element <= store_element + 4'd1;
                 matmul_result_index <= matmul_result_index + 4'd1;
@@ -607,7 +645,7 @@ always @(posedge clk) begin
             // is then write-only, while both Matmul cores may keep computing.
             // The next 66-bit element is fetched while word1 of the current
             // element is accepted, hiding BRAM latency from the W channel.
-            case (write_state)
+            if (RESULT_WRITEBACK) case (write_state)
                 WB_IDLE: begin
                     if ((read_group_count == group_num[12:0]) &&
                         (read_state == RD_IDLE) &&
@@ -707,6 +745,22 @@ always @(posedge clk) begin
                 end
                 default: write_state <= WB_IDLE;
             endcase
+
+            // One pipeline register breaks the long result-index/mux-to-CRC
+            // route while preserving one complete result element per cycle.
+            if (!RESULT_WRITEBACK) begin
+                crc_result_valid <= result_write_enable;
+                if (result_write_enable)
+                    crc_result_data <= result_write_data;
+                if (crc_result_valid) begin
+                    crc_value <= crc32_update_result(crc_value, crc_result_data);
+                    if (crc_finish_pending) begin
+                        crc_finish_pending <= 1'b0;
+                        busy <= 1'b0;
+                        done <= 1'b1;
+                    end
+                end
+            end
         end
     end
 end

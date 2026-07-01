@@ -31,31 +31,26 @@ int main(int argc, char **argv)
 {
     U32 crc;
     U32 i;
-    char finish_text[34];
-    static const char start_text[13] = "MATMUL_START\n";
+    char finish_text[21];
+    static const char prelude_text[26] = "MATMUL_START\nMATMUL_CRC32=";
     static const char hex[16] = "0123456789ABCDEF";
-    static const char crc_prefix[13] = "MATMUL_CRC32=";
     static const char done_suffix[13] = "\nMATMUL_DONE\n";
 
     (void)argc;
     (void)argv;
 
-    (void)DMA_MatMul_Start(EXTRAM_PHYS_BASE,
-                           EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES,
-                           (U32)MATMUL_GROUP_NUM);
-    UART_Send_Fixed(start_text, 13u);
+    /* DMA was started from start.S before C runtime and UART initialization. */
+    UART_Send_FIFO(prelude_text, 26u);
     (void)DMA_Wait(0u);
 
     // CRC is accumulated by hardware from the exact words accepted on AXI W.
     // This avoids a second 960000-byte uncached scan of ExtRAM.
     crc = DMA_Get_CRC32();
-    for (i = 0u; i < 13u; ++i)
-        finish_text[i] = crc_prefix[i];
     for (i = 0u; i < 8u; ++i)
-        finish_text[13u + i] = hex[(crc >> (28u - (i << 2))) & 0x0fu];
+        finish_text[i] = hex[(crc >> (28u - (i << 2))) & 0x0fu];
     for (i = 0u; i < 13u; ++i)
-        finish_text[21u + i] = done_suffix[i];
-    UART_Send_Fixed(finish_text, 34u);
+        finish_text[8u + i] = done_suffix[i];
+    UART_Send_FIFO(finish_text, 21u);
 
     while (1) {
     }
