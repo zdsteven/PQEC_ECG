@@ -389,12 +389,10 @@ module axi2sram_sp_external #(
             wrap_boundary_q <= wrap_boundary_d;
             upper_wrap_boundary_q <= upper_wrap_boundary_d;
             wr_run_q        <= wr_run_d;
-            // FIFO storage is written in a reset-free clocked process below.
-            // Keeping the memory outside this asynchronously-reset process is
-            // required for Vivado to infer distributed RAM instead of
-            // dissolving all 256 entries into flip-flops and a large read mux.
             case ({rd_capture, rd_fifo_pop})
                 2'b10: begin
+                    rd_fifo[rd_fifo_wr_ptr_q] <=
+                        {rd_capture_last, rd_capture_id, data_i};
                     rd_fifo_wr_ptr_q <= rd_fifo_wr_ptr_q + 8'd1;
                     rd_fifo_count_q  <= rd_fifo_count_q + 9'd1;
                 end
@@ -403,6 +401,8 @@ module axi2sram_sp_external #(
                     rd_fifo_count_q  <= rd_fifo_count_q - 9'd1;
                 end
                 2'b11: begin
+                    rd_fifo[rd_fifo_wr_ptr_q] <=
+                        {rd_capture_last, rd_capture_id, data_i};
                     rd_fifo_wr_ptr_q <= rd_fifo_wr_ptr_q + 8'd1;
                     rd_fifo_rd_ptr_q <= rd_fifo_rd_ptr_q + 8'd1;
                 end

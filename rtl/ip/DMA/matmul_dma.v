@@ -299,6 +299,20 @@ function [31:0] crc32_update_result;
     end
 endfunction
 
+// CRC update for one 66-bit result in its specified three-word output order.
+function [31:0] crc32_update_result;
+    input [31:0] crc_in;
+    input [65:0] result_in;
+    reg [31:0] crc_mid0;
+    reg [31:0] crc_mid1;
+    begin
+        crc_mid0 = crc32_update32(crc_in, result_in[31:0]);
+        crc_mid1 = crc32_update32(crc_mid0, result_in[63:32]);
+        crc32_update_result = crc32_update32(crc_mid1,
+                                             {30'd0, result_in[65:64]});
+    end
+endfunction
+
 assign s_axi_awready = !aw_hold_valid && !s_axi_bvalid;
 assign s_axi_wready  = aw_hold_valid && !w_hold_valid && !s_axi_bvalid;
 assign s_axi_bresp   = 2'b00;
