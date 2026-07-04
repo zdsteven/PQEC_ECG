@@ -1,0 +1,11 @@
+﻿#ifndef KEM_API_H
+#define KEM_API_H
+
+#include "Kem_types.h"
+#include "Kem_hw_accelerator.h"
+#include "Kem_sw.h"
+void crypto_kem_init();
+int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins);
+int crypto_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk, const uint8_t *coins);
+int crypto_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
+#endif

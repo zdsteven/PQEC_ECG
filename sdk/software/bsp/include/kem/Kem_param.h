@@ -1,5 +1,5 @@
-#ifndef PARAMS_H
-#define PARAMS_H
+#ifndef KEM_PARAMS_H
+#define KEM_PARAMS_H
 
 #ifndef KYBER_K
 #define KYBER_K 2	/* Change this for different security strengths */

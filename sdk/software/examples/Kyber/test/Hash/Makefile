@@ -1,6 +1,7 @@
 TARGET = Kyber_Hash
 
 CFLAGS += -O3 -g
+EXCLUDE_KYBER_DRIVER = 1
 
 C_SRCS := $(wildcard ./*.c )
 

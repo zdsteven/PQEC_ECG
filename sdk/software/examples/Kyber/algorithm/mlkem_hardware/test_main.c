@@ -1,17 +1,8 @@
+#include <Kem_api.h>
 #include <stddef.h>
-#include <stdint.h>
+#include <stdio.h> 
 #include <string.h>
-#include <stdio.h>
-#include "params.h"
-#include "polyvec.h"
-#include "poly.h"
-#include "kem.h"
-#include "indcpa.h"
-#include "symmetric.h"
-#include "fips202.h"
-
 #include "confreg_time.h"
-#include "common_func.h"
 
 unsigned long UART_BASE = 0xbf000000;
 unsigned long CONFREG_TIMER_BASE = 0xbf20f100;
@@ -43,30 +34,30 @@ void print_poly(const char *name, const poly *v)
 			printf(",");
 		}
 	}
-  	printf("};\n");
+    printf("};\n");
 }
 
 void print_polyvec(const char *name, const polyvec *v)
 {
 	printf("const static uint32_t %s[%d][%d] = {\n", name, KYBER_K, KYBER_N);
-  for (int i = 0; i < KYBER_K; i++)
-  {
-	printf("{");
-	for (int j = 0; j < KYBER_N; j++)
-	{
-		printf("0x%04x", v[0].vec[i].coeffs[j] >= 0 ? v[0].vec[i].coeffs[j] % KYBER_Q : (v[0].vec[i].coeffs[j] % KYBER_Q + KYBER_Q) % KYBER_Q);
-		if (j < KYBER_N-1)
-		{
-			printf(",");
-		}
-	}
-	printf("}");
-	if (i < KYBER_K-1)
-	{
-		printf(",\n");
-	}
-  }
-  printf("};\n");
+    for (int i = 0; i < KYBER_K; i++)
+    {
+        printf("{");
+        for (int j = 0; j < KYBER_N; j++)
+        {
+            printf("0x%04x", v[0].vec[i].coeffs[j] >= 0 ? v[0].vec[i].coeffs[j] % KYBER_Q : (v[0].vec[i].coeffs[j] % KYBER_Q + KYBER_Q) % KYBER_Q);
+            if (j < KYBER_N-1)
+            {
+                printf(",");
+            }
+        }
+        printf("}");
+        if (i < KYBER_K-1)
+        {
+            printf(",\n");
+        }
+    }
+    printf("};\n");
 }
 
 void print_byte_array(const char *name, const uint8_t *arr, size_t len)
@@ -86,7 +77,7 @@ int main(){
 	unsigned long start_cycles;
 	unsigned long sw_cycles;
 
-	uint8_t coins[2*KYBER_SYMBYTES];
+	uint8_t coins[2*KYBER_SYMBYTES] __attribute__((aligned(4)));
 	for(int i=0;i<KYBER_SYMBYTES;i++)
 	{
 		coins[i]=i;
@@ -102,13 +93,15 @@ int main(){
 	// 	m[i] = coins[i + 16] ^ coins[i + 17];// rand() % 256;
 	// }
 
-	uint8_t pk[CRYPTO_PUBLICKEYBYTES];
-	uint8_t sk[CRYPTO_SECRETKEYBYTES];
-	uint8_t ct[CRYPTO_CIPHERTEXTBYTES];
-	uint8_t key_a[CRYPTO_BYTES];
-	uint8_t key_b[CRYPTO_BYTES];
+	uint8_t pk[KYBER_PUBLICKEYBYTES] __attribute__((aligned(4)));
+	uint8_t sk[KYBER_SECRETKEYBYTES] __attribute__((aligned(4)));
+	uint8_t ct[KYBER_CIPHERTEXTBYTES] __attribute__((aligned(4)));
+	uint8_t key_a[KYBER_SSBYTES] __attribute__((aligned(4)));
+	uint8_t key_b[KYBER_SSBYTES] __attribute__((aligned(4)));
 
-	printf("mlkem software test start\n");
+    printf("mlkem hardware accelerate test start\n");
+
+    crypto_kem_init();
 
 	//Alice generates a public key
 	printf("Generating keypair...\n");
@@ -131,7 +124,7 @@ int main(){
 	sw_cycles = get_confreg_clock_count() - start_cycles;
 	printf("Encapsulation done in %lu cycles, about %lu us\n", sw_cycles, cycles_to_us(sw_cycles));
 	// print_byte_array("ct_soft", ct, CRYPTO_CIPHERTEXTBYTES);
-	// print_byte_array("ss_soft", key_b, CRYPTO_BYTES);
+	// print_byte_array("ss_soft", key_b, KYBER_SSBYTES);
 
 	//Alice uses Bobs response to get her shared key
 	printf("Decapsulating...\n");
@@ -140,7 +133,7 @@ int main(){
 	crypto_kem_dec(key_a, ct, sk);
 	sw_cycles = get_confreg_clock_count() - start_cycles;
 	printf("Decapsulation done in %lu cycles, about %lu us\n", sw_cycles, cycles_to_us(sw_cycles));
-	// print_byte_array("key_soft", key_a, CRYPTO_BYTES);
+	// print_byte_array("key_soft", key_a, KYBER_SSBYTES);
 	// print_byte_array("ciphertext_soft", ct, CRYPTO_CIPHERTEXTBYTES);
 	// print_byte_array("dk_soft", sk, KYBER_SECRETKEYBYTES);
 
@@ -159,7 +152,7 @@ int main(){
 	// poly_basemul_montgomery(&mp, (poly*)skpv, (poly*)ntt_b);
 	// print_poly("mp", &mp);
 
-	if(memcmp(key_a, key_b, CRYPTO_BYTES)) {
+	if(memcmp(key_a, key_b, KYBER_SSBYTES)) {
 		printf("ERROR keys\n");
 		return 1;
 	}
