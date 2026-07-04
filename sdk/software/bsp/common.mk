@@ -40,12 +40,18 @@ C_SRCS   += $(COMMON_DIR)/drivers/common_func.c
 C_SRCS   += $(COMMON_DIR)/drivers/dvi.c \
 			$(COMMON_DIR)/drivers/dma.c \
 			$(COMMON_DIR)/drivers/fft.c \
-			$(COMMON_DIR)/drivers/Kyber.c \
 			$(COMMON_DIR)/drivers/led.c \
 			$(COMMON_DIR)/drivers/seg7.c
 
+ifneq ($(EXCLUDE_KYBER_DRIVER),1)
+C_SRCS   += $(COMMON_DIR)/drivers/kem/Kem_api.c \
+			$(COMMON_DIR)/drivers/kem/Kem_hw_accelerator.c \
+			$(COMMON_DIR)/drivers/kem/Kem_sw.c
+endif
+
 INCLUDES += -I./ \
 			-I$(COMMON_DIR)/include \
+			-I$(COMMON_DIR)/include/kem \
 			-I$(PICOLIBC_DIR)/include \
 			-I$(GCC_DIR)/lib/gcc/loongarch32r-linux-gnusf/8.3.0/include \
 			-I$(GCC_DIR)/lib/gcc/loongarch32r-linux-gnusf/8.3.0/include-fixed

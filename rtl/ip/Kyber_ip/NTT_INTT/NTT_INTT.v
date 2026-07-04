@@ -333,8 +333,9 @@ module NTT_INTT(
     wire read_valid_stage_A = !src_bank & src_address_valid;
     wire read_valid_stage_B = src_bank & src_address_valid;
 
-    assign load_data_modq = {signed_to_modq($signed(load_data[23:12])), signed_to_modq($signed(load_data[11:0]))};
-    
+    //assign load_data_modq = {signed_to_modq($signed(load_data[23:12])), signed_to_modq($signed(load_data[11:0]))};
+    assign load_data_modq = load_data;
+
     wire [5:0] ntt_src_addr_a = {1'b0, src_address};
     wire [5:0] ntt_src_addr_b = {1'b1, src_address};
     wire [5:0] ntt_dst_addr_a = {dst_address, 1'b0};
@@ -480,7 +481,8 @@ module NTT_INTT(
     end
 
     assign read_data_modq = data_address_reg[6] ? memB_rdata_1a : memB_rdata_0a;
-    assign read_data = {modq_to_signed(read_data_modq[23:12]), modq_to_signed(read_data_modq[11:0])};
+    //assign read_data = {modq_to_signed(read_data_modq[23:12]), modq_to_signed(read_data_modq[11:0])};
+    assign read_data = {4'b0, read_data_modq[23:12], 4'b0, read_data_modq[11:0]};
 //--------------------------------{ram access}end---------------------------//
 
 //----------------------------------{BPU}begin------------------------------//

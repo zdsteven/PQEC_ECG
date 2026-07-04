@@ -38,25 +38,37 @@ module Kyber (
     output  [1:0]    s_rresp,
     output           s_rlast
 );
-
     localparam CTRL_ADDR       = 16'h0000;
-    //ctrl[0] = 1: start operation, 0: idle
-    //ctrl[1] = 1: clear done status, 0: do not clear
+    //ctrl[0] = 1: ntt_intt_start, 0: idle
+    //ctrl[1] = 1: reserved
     //ctrl[2] = 1: start NTT, 0: start INTT (only valid when ctrl[0] is 1)
     //ctrl[3] = 1: reset Hash data
     //ctrl[4] = 1: iterate Hash
     //ctrl[6:5] Hash mode: 00:normal 01:rej 10:cbd(eta = 2) 11:cbd(eta = 3)
+    //ctrl[7] = 1: start basemul
+    //ctrl[8] = 1: polyvec fqadd from sample
+    //ctrl[9] = 1: polyvec fqadd from ntt_intt
+    //ctrl[11:10] : polyvec_addr_high
+    //ctrl [12] : polyvec reset
+    //ctrl [14:13] : polyvec reset bank quantity
+    //ctrl[15] : polyvec fqadd from intt 0: add 1: sub
     localparam STATUS_ADDR     = 16'h0004;
-    //status[0] = 1: operation done, 0: busy
-    //status[1] = 1: NTT, 0: INTT
+    //status[0] = 1: ntt_intt buzy
+    //status[1] = 1: Hash buzy
+    //status[2] = 1: polyvec reset buzy
+    //status[3] = 1: polyvec buzy
 
     localparam NTT_INTT_DATA_BASE_ADDR  = 16'h0100;
     localparam NTT_INTT_DATA_LAST_ADDR  = NTT_INTT_DATA_BASE_ADDR + 128 * 4 - 4;//16'h02FC
     localparam HASH_DATA_BASE_ADDR = 16'h0300;
     localparam HASH_DATA_LAST_ADDR = HASH_DATA_BASE_ADDR + 128 * 4 - 4;//16'h04FC
+    localparam BASEMUL_DATA_BASE_ADDR = 16'h0500;
+    localparam BASEMUL_DATA_LAST_ADDR = BASEMUL_DATA_BASE_ADDR + 128 * 4 - 4;//16'h06FC
+    localparam POLYVEC_DATA_BASE_ADDR = 16'h0700;
+    localparam POLYVEC_DATA_LAST_ADDR = POLYVEC_DATA_BASE_ADDR + 512 * 4 - 4;//16'h0EFC
 
 
-//-------------------------------{axi ctrl}begin----------------------------//
+//-------------------------------{axi ctrl}begin---------------------------//
     reg         busy, write, R_or_W;
     reg         s_wready_r;
     reg [4 :0]  buf_id;
@@ -81,6 +93,7 @@ module Kyber (
     reg         read_pipe_last;
     reg         read_pipe_is_ntt_intt;
     reg         read_pipe_is_hash;
+    reg         read_pipe_is_polyvec;
     reg [31:0]  read_pipe_rdata;
 
     wire ar_enter = s_arvalid & s_arready;
@@ -107,35 +120,61 @@ module Kyber (
     assign s_bresp  = 2'b0;
 
     reg [31:0] status_reg;
-    wire clear_done = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[1] == 1'b1);
-//--------------------------------{axi ctrl}end-----------------------------//
+    //wire clear_done = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[1] == 1'b1);
+//--------------------------------{axi ctrl}end----------------------------//
 
     wire [6:0] write_word_index = {~write_addr[8], write_addr[7:2]};
     wire [6:0] read_word_index = {~read_addr[8], read_addr[7:2]};
 
+//---------------------------------{basemul_ctrl}begin---------------------//
+    wire write_addr_is_basemul = write_addr[11:8] == 4'b0101 | write_addr[11:8] == 4'b0110;
+    wire basemul_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[7] == 1'b1);
+    wire basemul_state;
+    wire [6:0] basemul_request_addr;
+    wire basemul_valid_out;
+    wire [23:0] basemul_result;
+//---------------------------------{basemul_ctrl}end------------------------//
+
+//---------------------------------{polyvec}begin---------------------------//
+    wire read_addr_is_polyvec = read_addr[11:8] >= 4'b0111 & read_addr[11:8] <= 4'b1110;
+    wire write_addr_is_polyvec = write_addr[11:8] >= 4'b0111 & write_addr[11:8] <= 4'b1110;
+    wire [8:0] polyvec_read_addr_ext = {read_addr[11] & (read_addr[10] | (read_addr[9] & read_addr[8])),
+                                        (read_addr[9] ^ read_addr[8]), read_word_index};
+    wire [8:0] polyvec_write_addr_ext = {write_addr[11] & (write_addr[10] | (write_addr[9] & write_addr[8])),
+                                        (write_addr[9] ^ write_addr[8]), write_word_index};
+    wire polyvec_write_from_ext = w_fire & write_addr_is_polyvec;
+    wire polyvec_fqadd_from_sample_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[8] == 1'b1);
+    wire polyvec_fqadd_from_intt_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[9] == 1'b1);
+    wire polyvec_reset_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[12] == 1'b1);
+    wire polyvec_from_sample_state;
+    wire [6:0] polyvec_sample_take_addr;
+    wire polyvec_from_intt_state;
+    wire [6:0] polyvec_intt_take_addr;
+    wire [31:0] polyvec_read_data;
+    wire polyvec_done;
+    wire polyvec_reset_done;
+//---------------------------------{polyvec}end-----------------------------//
+
+
 //---------------------------------{NTT}begin-------------------------------//
-    //wire write_addr_is_ntt_intt = (write_addr[15:0] >= NTT_INTT_DATA_BASE_ADDR) & (write_addr[15:0] <= NTT_INTT_DATA_LAST_ADDR);
-    //wire read_addr_is_ntt_intt = (read_addr[15:0] >= NTT_INTT_DATA_BASE_ADDR) & (read_addr[15:0] <= NTT_INTT_DATA_LAST_ADDR);
-    wire write_addr_is_ntt_intt = write_addr[9] ^ write_addr[8];
-    wire read_addr_is_ntt_intt = read_addr[9] ^ read_addr[8];
+    wire write_addr_is_ntt_intt = write_addr[11:8] == 4'b0001 | write_addr[11:8] == 4'b0010;
+    wire read_addr_is_ntt_intt = read_addr[11:8] == 4'b0001 | read_addr[11:8] == 4'b0010;
     wire ntt_intt_load_en = w_fire & write_addr_is_ntt_intt;
     wire [23:0] ntt_intt_load_data = {s_wdata[27:16], s_wdata[11:0]};
     wire ntt_intt_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[0] == 1'b1);
-    //wire [7:0] ntt_write_word_index = write_addr[9:2] - NTT_INTT_DATA_BASE_ADDR[9:2];
-    //wire [7:0] ntt_read_word_index = read_addr[9:2] - NTT_INTT_DATA_BASE_ADDR[9:2];
-    wire [6:0] ntt_intt_data_address = write_active ? write_word_index : read_word_index;
-    wire ntt_intt_read_en = read_issue & read_addr_is_ntt_intt;
+    wire [6:0] ntt_intt_data_address = basemul_state ? basemul_request_addr
+                                        : polyvec_from_intt_state ? polyvec_intt_take_addr
+                                        : write_active ? write_word_index
+                                        : read_word_index;
+    wire ntt_intt_read_en = (read_issue & read_addr_is_ntt_intt) |
+                            basemul_state | polyvec_from_intt_state;
     wire [31:0] ntt_intt_read_data;
     wire ntt_intt_done;
 //---------------------------------{NTT}end---------------------------------//
 
 //---------------------------------{Hash}begin------------------------------//
-    //wire write_addr_is_hash = (write_addr[15:0] >= HASH_DATA_BASE_ADDR) & (write_addr[15:0] <= HASH_DATA_LAST_ADDR);
-    //wire read_addr_is_hash = (read_addr[15:0] >= HASH_DATA_BASE_ADDR) & (read_addr[15:0] <= HASH_DATA_LAST_ADDR);
-    wire write_addr_is_hash = write_addr[10] | (write_addr[9] & write_addr[8]);
-    wire read_addr_is_hash = read_addr[10] | (read_addr[9] & read_addr[8]);
-    //wire [8:0] hash_write_word_index = write_addr[10:2] - HASH_DATA_BASE_ADDR[10:2];
-    //wire [8:0] hash_read_word_index = read_addr[10:2] - HASH_DATA_BASE_ADDR[10:2];
+    wire write_addr_is_hash = write_addr[11:8] == 4'b0011 | write_addr[11:8] == 4'b0100;
+    wire read_addr_is_hash = read_addr[11:8] == 4'b0011 | read_addr[11:8] == 4'b0100;
     wire Hash_reset_data = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[3] == 1'b1);
     wire Hash_absorb = w_fire & write_addr_is_hash;
     wire [5:0] Hash_absorb_address = write_word_index[5:0];
@@ -146,8 +185,8 @@ module Kyber (
     wire Hash_squeeze = read_issue & read_addr_is_hash & ~Hash_mode_is_sample;
     wire [5:0] Hash_squeeze_address = read_word_index[5:0];
     wire [31:0] Hash_squeeze_data;
-    wire Hash_sample = read_issue & read_addr_is_hash & Hash_mode_is_sample;
-    wire [6:0] Hash_sample_out_address = read_word_index;
+    wire Hash_sample = (read_issue & read_addr_is_hash & Hash_mode_is_sample) | polyvec_from_sample_state;
+    wire [6:0] Hash_sample_out_address = polyvec_from_sample_state ? polyvec_sample_take_addr : read_word_index;
     wire [31:0] Hash_sample_data;
     wire Hash_done;
 //---------------------------------{Hash}end--------------------------------//
@@ -278,6 +317,7 @@ module Kyber (
             read_pipe_last <= 1'b0;
             read_pipe_is_ntt_intt <= 1'b0;
             read_pipe_is_hash <= 1'b0;
+            read_pipe_is_polyvec <= 1'b0;
             read_pipe_rdata <= 32'b0;
         end
         else begin
@@ -287,6 +327,9 @@ module Kyber (
                 end
                 else if (read_pipe_is_hash) begin
                     s_rdata_r <= Hash_mode_is_sample ? Hash_sample_data : Hash_squeeze_data;
+                end
+                else if (read_pipe_is_polyvec) begin
+                    s_rdata_r <= polyvec_read_data;
                 end
                 else begin
                     s_rdata_r <= read_pipe_rdata;
@@ -302,6 +345,7 @@ module Kyber (
                 read_pipe_last <= (read_beats_left == 8'd1);
                 read_pipe_is_ntt_intt <= read_addr_is_ntt_intt;
                 read_pipe_is_hash <= read_addr_is_hash;
+                read_pipe_is_polyvec <= read_addr_is_polyvec;
                 read_pipe_rdata <= rdata_d;
             end
 
@@ -319,20 +363,82 @@ module Kyber (
         if(~aresetn) begin
             status_reg <= 32'b0;
         end
-        else if (ntt_intt_start) begin
-            status_reg[1:0] <= {s_wdata[2], 1'b0};
-        end
-        else if (Hash_iterate) begin
-            status_reg[0] <= 1'b0;
-        end
-        else if (clear_done) begin
-            status_reg[0] <= 1'b0;
-        end
-        else if (ntt_intt_done | Hash_done) begin
-            status_reg[0] <= 1'b1;
+        else begin
+            if (ntt_intt_done) begin
+                status_reg[0] <= 1'b0;
+            end
+            else if (ntt_intt_start) begin
+                status_reg[0] <= 1'b1;
+            end
+            if (Hash_done) begin
+                status_reg[1] <= 1'b0;
+            end
+            else if (Hash_iterate) begin
+                status_reg[1] <= 1'b1;
+            end
+            if (polyvec_reset_done) begin
+                status_reg[2] <= 1'b0;
+            end
+            else if (polyvec_reset_start) begin
+                status_reg[2] <= 1'b1;
+            end
+            if (polyvec_done) begin
+                status_reg[3] <= 1'b0;
+            end
+            else if (basemul_start | polyvec_fqadd_from_sample_start | polyvec_fqadd_from_intt_start) begin
+                status_reg[3] <= 1'b1;
+            end
         end
     end
 //--------------------------------{axi ctrl}end-----------------------------//
+
+//---------------------------------{basemul}begin---------------------------//
+    Basemul_ctrl u_Basemul_ctrl (
+        .aclk                       (aclk                            ),
+        .aresetn                    (aresetn                         ),
+        .basemul_start              (basemul_start                   ),
+        .basemul_bank_in_we         (w_fire & write_addr_is_basemul  ),
+        .basemul_bank_in_write_addr (write_word_index                ),
+        .basemul_bank_in_din        ({s_wdata[27:16], s_wdata[11:0]} ),
+        .ntt_intt_read_data         (ntt_intt_read_data              ),
+        .basemul_state              (basemul_state                   ),
+        .basemul_request_addr       (basemul_request_addr            ),
+        .basemul_result             (basemul_result                  ),
+        .basemul_valid_out          (basemul_valid_out               )
+    );
+
+//---------------------------------{basemul}end-----------------------------//
+
+//---------------------------------{polyvec}begin---------------------------//
+    Polyvec u_Polyvec (
+        .aclk                            (aclk                            ),
+        .aresetn                         (aresetn                         ),
+        .basemul_start                   (basemul_start                   ),
+        .basemul_valid_out               (basemul_valid_out               ),
+        .basemul_result                  (basemul_result                  ),
+        .polyvec_fqadd_from_sample_start (polyvec_fqadd_from_sample_start ),
+        .polyvec_fqadd_from_intt_start   (polyvec_fqadd_from_intt_start   ),
+        .polyvec_reset_start             (polyvec_reset_start             ),
+        .polyvec_addr_high_in            (s_wdata[11:10]                  ),
+        .polyvec_is_sub_in               (s_wdata[15]                     ),
+        .polyvec_reset_mode              (s_wdata[14:13]                  ),
+        .polyvec_read_from_ext           (read_issue & read_addr_is_polyvec),
+        .polyvec_read_addr_ext           (polyvec_read_addr_ext           ),
+        .polyvec_write_from_ext          (polyvec_write_from_ext          ),
+        .polyvec_write_addr_ext          (polyvec_write_addr_ext          ),
+        .polyvec_write_data_ext          ({s_wdata[27:16], s_wdata[11:0]} ),
+        .Hash_sample_data                (Hash_sample_data                ),
+        .ntt_intt_read_data              (ntt_intt_read_data              ),
+        .polyvec_from_sample_state       (polyvec_from_sample_state       ),
+        .polyvec_sample_take_addr        (polyvec_sample_take_addr        ),
+        .polyvec_from_intt_state         (polyvec_from_intt_state         ),
+        .polyvec_intt_take_addr          (polyvec_intt_take_addr          ),
+        .polyvec_read_data               (polyvec_read_data               ),
+        .polyvec_done                    (polyvec_done                    ),
+        .polyvec_reset_done              (polyvec_reset_done              )
+    );
+
+//---------------------------------{polyvec}end-----------------------------//
 
 //---------------------------------{NTT}begin-------------------------------//
     NTT_INTT u_NTT_INTT(
@@ -378,6 +484,4 @@ module Kyber (
     );
 //---------------------------------{Hash}end--------------------------------//
 
-
-    
 endmodule
