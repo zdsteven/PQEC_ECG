@@ -397,6 +397,7 @@ wire [1 :0] dma_s_bresp  ;
 wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
+wire        dma_start_banner_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
 wire        dma_matmul_active;
@@ -718,6 +719,7 @@ matmul_dma #(
     .matmul_result_data2 (dma_matmul_result_data2),
     .matmul_result_data3 (dma_matmul_result_data3),
     .finish         (dma_finish),
+    .start_banner_valid(dma_start_banner_valid),
     .crc32_valid    (dma_crc32_valid),
     .crc32_final    (dma_crc32_final)
 );
@@ -1480,6 +1482,7 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
     .uart0_int (uart0_int ),
+    .auto_start_valid (dma_start_banner_valid ),
     .auto_crc_valid (dma_crc32_valid ),
     .auto_crc32 (dma_crc32_final )
 );

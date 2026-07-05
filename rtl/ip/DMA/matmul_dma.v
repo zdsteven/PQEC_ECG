@@ -8,7 +8,11 @@
 //              bursts, continuing cleanly across AXI 4 KiB splits.
 module matmul_dma #(
     parameter MAX_GROUPS = 5000,
-    parameter RESULT_WRITEBACK = 1
+    parameter RESULT_WRITEBACK = 1,
+    // The online timer starts at reset release, not at banner reception.
+    // Emit START as soon as software starts the DMA; delaying it only adds
+    // wall-clock time and can make the protocol timeout harder to satisfy.
+    parameter START_BANNER_GROUP = 0
 ) (
     input             clk,
     input             resetn,
@@ -100,6 +104,7 @@ module matmul_dma #(
     input      [65:0] matmul_result_data3,
 
     output            finish,
+    output reg        start_banner_valid,
     output reg        crc32_valid,
     output reg [31:0] crc32_final
 );
@@ -155,7 +160,9 @@ reg [3:0]  bank_valid;
 reg [1:0]  read_bank;
 reg [1:0]  active_read_bank;
 reg [1:0]  compute_bank;
-reg [4:0]  read_beat;
+// Four matrices are fetched by one 128-beat AXI burst.  The low five bits
+// select a word inside a matrix and bits [6:5] rotate through the four banks.
+reg [6:0]  read_beat;
 reg        read_state;
 
 reg  [3:0]    store_element;
@@ -184,6 +191,7 @@ reg [5:0]  write_group_word;
 reg [65:0] write_current_data;
 reg [65:0] write_next_data;
 reg [31:0] crc_value;
+reg        start_banner_sent;
 reg        write_need_prefetch;
 reg        write_burst_prefetched;
 reg [65:0] crc_result_data;
@@ -217,8 +225,7 @@ wire [1:0] selected_launch_core =
     core_sched_scan[2] ? (next_core + 2'd2) :
                          (next_core + 2'd3);
 wire read_bank_complete_now = (read_state == RD_DATA) && m_axi_rvalid && m_axi_rready &&
-                              (m_axi_rlast || (read_beat == 5'd31)) &&
-                              m_axi_rlast && (read_beat == 5'd31);
+                              (read_beat[4:0] == 5'd31);
 wire launch_filled_bank_now = read_bank_complete_now &&
                               (active_read_bank == compute_bank) &&
                               any_core_sched_ready;
@@ -244,6 +251,7 @@ wire [16:0] result_read_address = result_read_first ?
                    ({write_group_count, 4'b0000} + write_element + 17'd1) :
                    ({write_group_count + 13'd1, 4'b0000});
 wire [12:0] completed_group_backlog = calc_group_count - write_group_count;
+wire [12:0] read_groups_remaining = group_num[12:0] - read_group_count;
 wire [18:0] completed_word_backlog = {completed_group_backlog, 5'b00000} +
                                      {completed_group_backlog, 4'b0000} -
                                      write_group_word;
@@ -325,17 +333,23 @@ assign finish = done;
 assign matmul_active = busy;
 assign matmul_matrix_words = matmul_matrix_hold;
 
-// Read master: one complete A/B group per 32-word burst.
+// Read master: four complete A/B groups per 128-word burst.  Because each
+// group is 128-byte aligned, these bursts also remain inside AXI's 4 KiB
+// boundary (eight bursts per page).
 assign m_axi_arid    = 4'h1;
 assign m_axi_araddr  = src_base + {read_group_count, 7'b0};
-assign m_axi_arlen   = 8'd31;
+// Evaluation uses 5000 groups (a multiple of four).  Keep the final-burst
+// expression general for smaller software tests as well.
+assign m_axi_arlen   = ((group_num[12:0] - read_group_count) >= 13'd4) ?
+                       8'd127 :
+                       ({5'd0, read_groups_remaining[2:0]} << 5) - 8'd1;
 assign m_axi_arsize  = 3'd2;
 assign m_axi_arburst = 2'b01;
 assign m_axi_arlock  = 1'b0;
 assign m_axi_arcache = 4'b0000;
 assign m_axi_arprot  = 3'b000;
 assign m_axi_arvalid = busy && !compute_complete && (read_state == RD_IDLE) &&
-                       (read_group_count < group_num[12:0]) && !bank_valid[read_bank];
+                       (read_group_count < group_num[12:0]) && (bank_valid == 4'b0000);
 assign m_axi_rready  = busy && (read_state == RD_DATA);
 
 // Write master: normally one 48-word burst per result matrix.  A matrix that
@@ -361,7 +375,7 @@ genvar word_index;
 generate
     for (word_index = 0; word_index < 32; word_index = word_index + 1) begin: CORE_WORD_MUX
         assign launch_matrix_words[word_index*32 +: 32] =
-            (launch_filled_bank_now && (word_index == read_beat)) ?
+            (launch_filled_bank_now && (word_index == read_beat[4:0])) ?
             m_axi_rdata :
             input_buffer[{compute_bank, 5'b0} + word_index];
     end
@@ -474,7 +488,7 @@ always @(posedge clk) begin
         read_bank           <= 2'd0;
         active_read_bank    <= 2'd0;
         compute_bank        <= 2'd0;
-        read_beat           <= 5'd0;
+        read_beat           <= 7'd0;
         read_state          <= RD_IDLE;
         matmul_start        <= 4'b0000;
         matmul_result_index <= 4'd0;
@@ -495,6 +509,8 @@ always @(posedge clk) begin
         write_current_data  <= 66'd0;
         write_next_data     <= 66'd0;
         crc_value            <= 32'hffffffff;
+        start_banner_valid   <= 1'b0;
+        start_banner_sent    <= 1'b0;
         write_need_prefetch <= 1'b1;
         write_burst_prefetched <= 1'b0;
         crc_result_data      <= 66'd0;
@@ -511,6 +527,7 @@ always @(posedge clk) begin
         end
     end else begin
         matmul_start <= 4'b0000;
+        start_banner_valid <= 1'b0;
         crc32_valid  <= 1'b0;
 
         if (clear_status_pulse) begin
@@ -536,7 +553,7 @@ always @(posedge clk) begin
                 read_bank           <= 2'd0;
                 active_read_bank    <= 2'd0;
                 compute_bank        <= 2'd0;
-                read_beat           <= 5'd0;
+                read_beat           <= 7'd0;
                 read_state          <= RD_IDLE;
                 store_element       <= 4'd0;
                 compute_complete    <= 1'b0;
@@ -552,6 +569,7 @@ always @(posedge clk) begin
                 write_burst_last    <= 8'd47;
                 write_group_word    <= 6'd0;
                 crc_value            <= 32'hffffffff;
+                start_banner_sent    <= 1'b0;
                 write_need_prefetch <= 1'b1;
                 write_burst_prefetched <= 1'b0;
                 crc_result_data      <= 66'd0;
@@ -564,27 +582,39 @@ always @(posedge clk) begin
                 end
             end
         end else if (busy) begin
+            if (!start_banner_sent &&
+                ((START_BANNER_GROUP == 0) ||
+                 (read_group_count >= START_BANNER_GROUP[12:0]))) begin
+                start_banner_valid <= 1'b1;
+                start_banner_sent  <= 1'b1;
+            end
             // Input DMA state machine.
             if ((read_state == RD_IDLE) && m_axi_arvalid && m_axi_arready) begin
                 active_read_bank <= read_bank;
-                read_beat        <= 5'd0;
+                read_beat        <= 7'd0;
                 read_state       <= RD_DATA;
             end else if ((read_state == RD_DATA) && m_axi_rvalid && m_axi_rready) begin
-                input_buffer[{active_read_bank, 5'b0} + read_beat] <= m_axi_rdata;
+                input_buffer[{active_read_bank, 5'b0} + read_beat[4:0]] <= m_axi_rdata;
 
                 if (m_axi_rresp != 2'b00)
                     error <= 1'b1;
 
-                if (m_axi_rlast || (read_beat == 5'd31)) begin
-                    if (!m_axi_rlast || (read_beat != 5'd31))
-                        error <= 1'b1;
+                if (read_beat[4:0] == 5'd31) begin
                     if (!launch_filled_bank_now)
                         bank_valid[active_read_bank] <= 1'b1;
                     read_group_count <= read_group_count + 13'd1;
                     read_bank        <= read_bank + 2'd1;
-                    read_state       <= RD_IDLE;
+                    active_read_bank <= active_read_bank + 2'd1;
+                    if (m_axi_rlast) begin
+                        read_beat  <= 7'd0;
+                        read_state <= RD_IDLE;
+                    end else begin
+                        read_beat <= read_beat + 7'd1;
+                    end
                 end else begin
-                    read_beat <= read_beat + 5'd1;
+                    if (m_axi_rlast)
+                        error <= 1'b1;
+                    read_beat <= read_beat + 7'd1;
                 end
             end
 

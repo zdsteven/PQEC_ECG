@@ -37,6 +37,7 @@ module UART_TOP(
         PCLK,        PRST_,
         PSEL,        PENABLE,     PADDR,       PWRITE,
         PWDATA,      URT_PRDATA,
+        auto_start_valid,
         auto_crc_valid, auto_crc32,
 
         INT, clk_carrier, 
@@ -53,6 +54,7 @@ input   PSEL,        PENABLE,     PWRITE;
 input   [7:0]     PADDR;
 input   [7:0]     PWDATA;
 output  [7:0]     URT_PRDATA;
+input             auto_start_valid;
 input             auto_crc_valid;
 input   [31:0]    auto_crc32;
 
@@ -83,51 +85,47 @@ wire tx_idle;
 reg  auto_tx_valid;
 reg  [7:0] auto_tx_data;
 reg  [5:0] auto_index;
-reg  [11:0] auto_boot_delay;
 reg  [31:0] auto_crc_hold;
 reg  [2:0] auto_state;
 reg  auto_crc_pending;
 
-localparam [2:0] AUTO_BOOT  = 3'd0;
-localparam [2:0] AUTO_WAIT  = 3'd1;
-localparam [2:0] AUTO_HEX   = 3'd2;
-localparam [2:0] AUTO_DONE  = 3'd3;
-localparam [2:0] AUTO_IDLE  = 3'd4;
+localparam [2:0] AUTO_ARM   = 3'd0;
+localparam [2:0] AUTO_BOOT  = 3'd1;
+localparam [2:0] AUTO_WAIT  = 3'd2;
+localparam [2:0] AUTO_HEX   = 3'd3;
+localparam [2:0] AUTO_DONE  = 3'd4;
+localparam [2:0] AUTO_IDLE  = 3'd5;
 
 function [7:0] auto_boot_char;
     input [5:0] index;
     begin
         case (index)
-            6'd0:  auto_boot_char = "\n";
-            6'd1:  auto_boot_char = "\n";
-            6'd2:  auto_boot_char = "\n";
-            6'd3:  auto_boot_char = "\n";
-            6'd4:  auto_boot_char = "M";
-            6'd5:  auto_boot_char = "A";
-            6'd6:  auto_boot_char = "T";
-            6'd7:  auto_boot_char = "M";
-            6'd8:  auto_boot_char = "U";
-            6'd9:  auto_boot_char = "L";
-            6'd10: auto_boot_char = "_";
-            6'd11: auto_boot_char = "S";
-            6'd12: auto_boot_char = "T";
-            6'd13: auto_boot_char = "A";
-            6'd14: auto_boot_char = "R";
+            6'd0:  auto_boot_char = "M";
+            6'd1:  auto_boot_char = "A";
+            6'd2:  auto_boot_char = "T";
+            6'd3:  auto_boot_char = "M";
+            6'd4:  auto_boot_char = "U";
+            6'd5:  auto_boot_char = "L";
+            6'd6:  auto_boot_char = "_";
+            6'd7:  auto_boot_char = "S";
+            6'd8:  auto_boot_char = "T";
+            6'd9:  auto_boot_char = "A";
+            6'd10: auto_boot_char = "R";
+            6'd11: auto_boot_char = "T";
+            6'd12: auto_boot_char = "\n";
+            6'd13: auto_boot_char = "M";
+            6'd14: auto_boot_char = "A";
             6'd15: auto_boot_char = "T";
-            6'd16: auto_boot_char = "\n";
-            6'd17: auto_boot_char = "M";
-            6'd18: auto_boot_char = "A";
-            6'd19: auto_boot_char = "T";
-            6'd20: auto_boot_char = "M";
-            6'd21: auto_boot_char = "U";
-            6'd22: auto_boot_char = "L";
-            6'd23: auto_boot_char = "_";
-            6'd24: auto_boot_char = "C";
-            6'd25: auto_boot_char = "R";
-            6'd26: auto_boot_char = "C";
-            6'd27: auto_boot_char = "3";
-            6'd28: auto_boot_char = "2";
-            6'd29: auto_boot_char = "=";
+            6'd16: auto_boot_char = "M";
+            6'd17: auto_boot_char = "U";
+            6'd18: auto_boot_char = "L";
+            6'd19: auto_boot_char = "_";
+            6'd20: auto_boot_char = "C";
+            6'd21: auto_boot_char = "R";
+            6'd22: auto_boot_char = "C";
+            6'd23: auto_boot_char = "3";
+            6'd24: auto_boot_char = "2";
+            6'd25: auto_boot_char = "=";
             default: auto_boot_char = 8'h00;
         endcase
     end
@@ -187,9 +185,8 @@ always @(posedge PCLK or negedge PRST_) begin
         auto_tx_valid   <= 1'b0;
         auto_tx_data    <= 8'h00;
         auto_index      <= 6'd0;
-        auto_boot_delay <= 12'd4095;
         auto_crc_hold   <= 32'd0;
-        auto_state      <= AUTO_BOOT;
+        auto_state      <= AUTO_ARM;
         auto_crc_pending<= 1'b0;
     end else begin
         auto_tx_valid <= 1'b0;
@@ -198,13 +195,17 @@ always @(posedge PCLK or negedge PRST_) begin
             auto_crc_pending <= 1'b1;
         end
         case (auto_state)
+            AUTO_ARM: begin
+                if (auto_start_valid) begin
+                    auto_index <= 6'd0;
+                    auto_state <= AUTO_BOOT;
+                end
+            end
             AUTO_BOOT: begin
-                if (auto_boot_delay != 12'd0) begin
-                    auto_boot_delay <= auto_boot_delay - 12'd1;
-                end else if (tx_idle) begin
+                if (tx_idle) begin
                     auto_tx_valid <= 1'b1;
                     auto_tx_data  <= auto_boot_char(auto_index);
-                    if (auto_index == 6'd29) begin
+                    if (auto_index == 6'd25) begin
                         auto_index <= 6'd0;
                         auto_state <= AUTO_WAIT;
                     end else begin

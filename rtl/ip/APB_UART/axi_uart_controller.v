@@ -102,6 +102,7 @@ uart0_dcd_i,
 uart0_ri_i,
 
 uart0_int,
+auto_start_valid,
 auto_crc_valid,
 auto_crc32
 );
@@ -176,6 +177,7 @@ input               uart0_dcd_i;
 input               uart0_ri_i;
 
 output uart0_int;
+input  auto_start_valid;
 input  auto_crc_valid;
 input  [31:0] auto_crc32;
 
@@ -340,6 +342,7 @@ UART_TOP uart0
 .PWRITE            (apb_uart0_rw     ),
 .PWDATA            (apb_uart0_datai  ),
 .URT_PRDATA        (apb_uart0_datao  ),
+.auto_start_valid  (auto_start_valid ),
 .auto_crc_valid    (auto_crc_valid   ),
 .auto_crc32        (auto_crc32       ),
 .INT               (uart0_int         ),
