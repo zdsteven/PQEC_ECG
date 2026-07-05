@@ -407,6 +407,9 @@ wire [65:0] dma_matmul_result_data0;
 wire [65:0] dma_matmul_result_data1;
 wire [65:0] dma_matmul_result_data2;
 wire [65:0] dma_matmul_result_data3;
+wire        dma_uart_start_pulse;
+wire        dma_uart_done_pulse;
+wire [31:0] dma_uart_crc32;
 
 
 //Kyber_ip (deleted)
@@ -715,7 +718,10 @@ matmul_dma #(
     .matmul_result_data1 (dma_matmul_result_data1),
     .matmul_result_data2 (dma_matmul_result_data2),
     .matmul_result_data3 (dma_matmul_result_data3),
-    .finish         (dma_finish)
+    .finish         (dma_finish),
+    .uart_start_pulse (dma_uart_start_pulse),
+    .uart_done_pulse  (dma_uart_done_pulse),
+    .uart_crc32       (dma_uart_crc32)
 );
 
 matmul_axi_slave u_matmul (
@@ -1475,7 +1481,10 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dsr_i (uart0_dsr_i ),
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
-    .uart0_int (uart0_int )
+    .uart0_int (uart0_int ),
+    .matmul_uart_start_pulse (dma_uart_start_pulse),
+    .matmul_uart_done_pulse  (dma_uart_done_pulse),
+    .matmul_uart_crc32       (dma_uart_crc32)
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---

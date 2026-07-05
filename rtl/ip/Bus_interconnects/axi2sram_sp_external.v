@@ -412,17 +412,6 @@ module axi2sram_sp_external #(
         end
     end
 
-    // One SRAM response is retired into the return queue on every issued read
-    // address.  This write path has no reset and therefore maps cleanly to
-    // LUTRAM.  FIFO validity is controlled exclusively by rd_fifo_count_q, so
-    // uninitialised storage can never be observed after reset.
-    always @(posedge clk) begin
-        if (rd_capture)
-            rd_fifo[rd_fifo_wr_ptr_q] <=
-                {rd_capture_last, rd_capture_id, data_i};
-    end
-
-
     // always @(posedge clk or negedge resetn) begin
     //     if (~resetn) begin
     //         s_rdata         <= 'h0;     

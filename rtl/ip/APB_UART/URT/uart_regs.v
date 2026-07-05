@@ -45,7 +45,10 @@ module uart_regs (clk, rst, clk_carrier,
     int_o,
     usart_mode,
     rx_en,
-    tx2rx_en
+    tx2rx_en,
+    matmul_start_pulse,
+    matmul_done_pulse,
+    matmul_crc32
 );
 input        clk;
 input        rst ;
@@ -69,6 +72,9 @@ output       int_o;
 output       usart_mode;
 output       tx2rx_en;
 output       rx_en;
+input        matmul_start_pulse;
+input        matmul_done_pulse;
+input [31:0] matmul_crc32;
 
 wire [3:0]   modem_inputs;
 reg 	     enable;
@@ -230,8 +236,23 @@ wire        max_repeat_time;
 
 wire serial_out;
 wire serial_out_modulated = ~ (clk_carrier & serial_out); 
+wire auto_fifo_push;
+wire [7:0] auto_fifo_data;
+wire tx_fifo_push;
+wire [7:0] tx_fifo_data;
 
-uart_transmitter transmitter(.clk(clk), .wb_rst_i(rst), .lcr(lcr), .tf_push(tf_push), .wb_dat_i(dat_i), 
+localparam [1:0] AUTO_IDLE    = 2'd0;
+localparam [1:0] AUTO_PRELUDE = 2'd1;
+localparam [1:0] AUTO_SUFFIX  = 2'd2;
+
+localparam [5:0] PRELUDE_MSG_LEN = 6'd26;
+localparam [4:0] SUFFIX_MSG_LEN  = 5'd21;
+wire auto_tx_ready = current_finish && (tf_count == 5'b0) && thre_set_en;
+
+assign tx_fifo_push = fifo_write;
+assign tx_fifo_data = auto_fifo_push ? auto_fifo_data : dat_i;
+
+uart_transmitter transmitter(.clk(clk), .wb_rst_i(rst), .lcr(lcr), .tf_push(tx_fifo_push), .wb_dat_i(tx_fifo_data), 
 
                              .tx2rx_en  (tx2rx_en), 
                              .usart_mode(usart_mode),
@@ -267,6 +288,165 @@ uart_receiver receiver(.clk(clk), .wb_rst_i(rst), .lcr(lcr), .rf_pop(rf_pop), .s
                        .enable(enable && rx_en),
                        .counter_t(counter_t), .rf_count(rf_count), .rf_data_out(rf_data_out), .rf_error_bit(rf_error_bit), 
                        .rf_overrun(rf_overrun), .rx_reset(rx_reset), .lsr_mask(lsr_mask), .rstate(rstate), .rf_push_pulse(rf_push_pulse));
+
+function [7:0] hex_ascii;
+    input [3:0] nibble;
+    begin
+        hex_ascii = (nibble < 4'd10) ? (8'h30 + {4'd0, nibble}) :
+                                      (8'h41 + {4'd0, nibble} - 8'd10);
+    end
+endfunction
+
+reg [1:0] auto_state;
+reg [5:0] auto_index;
+reg       auto_start_pending;
+reg       auto_done_pending;
+reg [31:0] auto_done_crc32;
+reg       auto_fifo_push_r;
+reg [7:0] auto_fifo_data_r;
+reg       enable_d;
+reg       auto_boot_start_armed;
+
+assign auto_fifo_push = auto_fifo_push_r;
+assign auto_fifo_data = auto_fifo_data_r;
+
+function [7:0] auto_char;
+    input [1:0] state_in;
+    input [5:0] index_in;
+    input [31:0] crc_in;
+    begin
+        auto_char = 8'h00;
+        case (state_in)
+        AUTO_PRELUDE:
+            case (index_in)
+            6'd0:  auto_char = "M";
+            6'd1:  auto_char = "A";
+            6'd2:  auto_char = "T";
+            6'd3:  auto_char = "M";
+            6'd4:  auto_char = "U";
+            6'd5:  auto_char = "L";
+            6'd6:  auto_char = "_";
+            6'd7:  auto_char = "S";
+            6'd8:  auto_char = "T";
+            6'd9:  auto_char = "A";
+            6'd10: auto_char = "R";
+            6'd11: auto_char = "T";
+            6'd12: auto_char = 8'h0a;
+            6'd13: auto_char = "M";
+            6'd14: auto_char = "A";
+            6'd15: auto_char = "T";
+            6'd16: auto_char = "M";
+            6'd17: auto_char = "U";
+            6'd18: auto_char = "L";
+            6'd19: auto_char = "_";
+            6'd20: auto_char = "C";
+            6'd21: auto_char = "R";
+            6'd22: auto_char = "C";
+            6'd23: auto_char = "3";
+            6'd24: auto_char = "2";
+            6'd25: auto_char = "=";
+            default: auto_char = 8'h00;
+            endcase
+        AUTO_SUFFIX:
+            case (index_in)
+            6'd0:  auto_char = hex_ascii(crc_in[31:28]);
+            6'd1:  auto_char = hex_ascii(crc_in[27:24]);
+            6'd2:  auto_char = hex_ascii(crc_in[23:20]);
+            6'd3:  auto_char = hex_ascii(crc_in[19:16]);
+            6'd4:  auto_char = hex_ascii(crc_in[15:12]);
+            6'd5:  auto_char = hex_ascii(crc_in[11:8]);
+            6'd6:  auto_char = hex_ascii(crc_in[7:4]);
+            6'd7:  auto_char = hex_ascii(crc_in[3:0]);
+            6'd8:  auto_char = 8'h0a;
+            6'd9:  auto_char = "M";
+            6'd10: auto_char = "A";
+            6'd11: auto_char = "T";
+            6'd12: auto_char = "M";
+            6'd13: auto_char = "U";
+            6'd14: auto_char = "L";
+            6'd15: auto_char = "_";
+            6'd16: auto_char = "D";
+            6'd17: auto_char = "O";
+            6'd18: auto_char = "N";
+            6'd19: auto_char = "E";
+            6'd20: auto_char = 8'h0a;
+            default: auto_char = 8'h00;
+            endcase
+        default: auto_char = 8'h00;
+        endcase
+    end
+endfunction
+
+always @(posedge clk) begin
+    if (rst) begin
+        auto_state         <= AUTO_IDLE;
+        auto_index         <= 6'd0;
+        auto_start_pending <= 1'b0;
+        auto_done_pending  <= 1'b0;
+        auto_done_crc32    <= 32'd0;
+        auto_fifo_push_r   <= 1'b0;
+        auto_fifo_data_r   <= 8'h00;
+        enable_d           <= 1'b0;
+        auto_boot_start_armed <= 1'b1;
+    end else begin
+        auto_fifo_push_r <= 1'b0;
+        enable_d <= enable;
+
+        if (auto_boot_start_armed && enable && !enable_d) begin
+            auto_start_pending <= 1'b1;
+            auto_boot_start_armed <= 1'b0;
+        end
+        if (matmul_done_pulse) begin
+            auto_done_pending <= 1'b1;
+            auto_done_crc32   <= matmul_crc32;
+        end
+
+        if (auto_tx_ready) begin
+            case (auto_state)
+            AUTO_IDLE: begin
+                auto_index <= 6'd0;
+                if (auto_start_pending) begin
+                    auto_state <= AUTO_PRELUDE;
+                    auto_start_pending <= 1'b0;
+                    auto_fifo_data_r <= auto_char(AUTO_PRELUDE, 6'd0, auto_done_crc32);
+                    auto_fifo_push_r <= 1'b1;
+                    auto_index <= 6'd1;
+                end else if (auto_done_pending) begin
+                    auto_state <= AUTO_SUFFIX;
+                    auto_done_pending <= 1'b0;
+                    auto_fifo_data_r <= auto_char(AUTO_SUFFIX, 6'd0, auto_done_crc32);
+                    auto_fifo_push_r <= 1'b1;
+                    auto_index <= 6'd1;
+                end
+            end
+            AUTO_PRELUDE: begin
+                auto_fifo_data_r <= auto_char(AUTO_PRELUDE, auto_index, auto_done_crc32);
+                auto_fifo_push_r <= 1'b1;
+                if (auto_index == (PRELUDE_MSG_LEN - 1'b1)) begin
+                    auto_state <= AUTO_IDLE;
+                    auto_index <= 6'd0;
+                end else begin
+                    auto_index <= auto_index + 6'd1;
+                end
+            end
+            AUTO_SUFFIX: begin
+                auto_fifo_data_r <= auto_char(AUTO_SUFFIX, auto_index, auto_done_crc32);
+                auto_fifo_push_r <= 1'b1;
+                if (auto_index == (SUFFIX_MSG_LEN - 1'b1)) begin
+                    auto_state <= AUTO_IDLE;
+                    auto_index <= 6'd0;
+                end else begin
+                    auto_index <= auto_index + 6'd1;
+                end
+            end
+            default: begin
+                auto_state <= AUTO_IDLE;
+                auto_index <= 6'd0;
+            end
+            endcase
+        end
+    end
+end
 
 
 always @(dl or dlab or ier or iir  or fi_di_reg or  mode_reg
@@ -306,7 +486,7 @@ assign lsr_mask_condition = (re && addr == `UART_REG_LS && !dlab);
 assign iir_read           = (re && addr == `UART_REG_II && !dlab);
 assign msr_read           = (re && addr == `UART_REG_MS && !dlab);
 assign fifo_read          = (re && addr == `UART_REG_RB && !dlab);
-assign fifo_write         = (we && addr == `UART_REG_TR && !dlab);
+assign fifo_write         = (we && addr == `UART_REG_TR && !dlab) || auto_fifo_push;
 
 always @(posedge clk )
 begin
@@ -384,7 +564,7 @@ always @(posedge clk )
       infrared <= dat_i[7]; 
       rx_pol <= dat_i[6];      end 
 
-assign tf_push = we & addr==`UART_REG_TR & !dlab;
+assign tf_push = fifo_write;
 always @(posedge clk )
   if (rst)
   begin

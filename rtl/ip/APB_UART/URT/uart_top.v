@@ -44,7 +44,10 @@ module UART_TOP(
         RXD_i, RXD_o, RXD_oe,
         
         RTS,         CTS,         DSR,
-        DCD,         DTR,         RI
+        DCD,         DTR,         RI,
+        matmul_start_pulse,
+        matmul_done_pulse,
+        matmul_crc32
     );
 
 input   PCLK,        PRST_;
@@ -67,6 +70,9 @@ output  RTS;
 input   CTS,         DSR,         DCD;
 output  DTR;
 input   RI;
+input   matmul_start_pulse;
+input   matmul_done_pulse;
+input   [31:0] matmul_crc32;
 
 wire prst = !PRST_;
 wire we   = PSEL & PENABLE & PWRITE;      
@@ -99,7 +105,10 @@ uart_regs	regs(
     .int_o       ( INT     ),
     .tx2rx_en    (tx2rx_en ),
     .rx_en       (rx_en    ),
-    .usart_mode  (isomode  )
+    .usart_mode  (isomode  ),
+    .matmul_start_pulse (matmul_start_pulse),
+    .matmul_done_pulse  (matmul_done_pulse ),
+    .matmul_crc32       (matmul_crc32      )
 
 );
 

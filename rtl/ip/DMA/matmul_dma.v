@@ -99,7 +99,10 @@ module matmul_dma #(
     input      [65:0] matmul_result_data2,
     input      [65:0] matmul_result_data3,
 
-    output            finish
+    output            finish,
+    output reg        uart_start_pulse,
+    output reg        uart_done_pulse,
+    output reg [31:0] uart_crc32
 );
 
 localparam [11:0] ADDR_CTRL       = 12'h000;
@@ -282,20 +285,6 @@ function [7:0] legal_burst_last;
             legal_burst_last = page_words[7:0] - 8'd1;
         else
             legal_burst_last = words_remaining - 8'd1;
-    end
-endfunction
-
-// CRC update for one 66-bit result in its specified three-word output order.
-function [31:0] crc32_update_result;
-    input [31:0] crc_in;
-    input [65:0] result_in;
-    reg [31:0] crc_mid0;
-    reg [31:0] crc_mid1;
-    begin
-        crc_mid0 = crc32_update32(crc_in, result_in[31:0]);
-        crc_mid1 = crc32_update32(crc_mid0, result_in[63:32]);
-        crc32_update_result = crc32_update32(crc_mid1,
-                                             {30'd0, result_in[65:64]});
     end
 endfunction
 
@@ -499,6 +488,9 @@ always @(posedge clk) begin
         crc_result_data      <= 66'd0;
         crc_result_valid     <= 1'b0;
         crc_finish_pending   <= 1'b0;
+        uart_start_pulse     <= 1'b0;
+        uart_done_pulse      <= 1'b0;
+        uart_crc32           <= 32'd0;
         // input_buffer is intentionally not reset.  bank_valid starts empty
         // and every bank is completely overwritten by 32 R beats before use;
         // clearing 4096 data bits created a very high-fanout reset path.
@@ -508,6 +500,8 @@ always @(posedge clk) begin
         end
     end else begin
         matmul_start <= 4'b0000;
+        uart_start_pulse <= 1'b0;
+        uart_done_pulse  <= 1'b0;
 
         if (clear_status_pulse) begin
             done  <= 1'b0;
@@ -553,6 +547,7 @@ always @(posedge clk) begin
                 crc_result_data      <= 66'd0;
                 crc_result_valid     <= 1'b0;
                 crc_finish_pending   <= 1'b0;
+                uart_start_pulse     <= 1'b1;
                 for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
@@ -747,6 +742,8 @@ always @(posedge clk) begin
                             write_state <= WB_IDLE;
                             busy        <= 1'b0;
                             done        <= 1'b1;
+                            uart_crc32  <= crc32_update32(crc_value, m_axi_wdata) ^ 32'hffffffff;
+                            uart_done_pulse <= 1'b1;
                         end else if (write_group_count < calc_group_count) begin
                             if (write_need_prefetch)
                                 write_state <= WB_PREFETCH;
@@ -767,11 +764,13 @@ always @(posedge clk) begin
                 if (result_write_enable)
                     crc_result_data <= result_write_data;
                 if (crc_result_valid) begin
+                    uart_crc32 <= crc32_update_result(crc_value, crc_result_data) ^ 32'hffffffff;
                     crc_value <= crc32_update_result(crc_value, crc_result_data);
                     if (crc_finish_pending) begin
                         crc_finish_pending <= 1'b0;
                         busy <= 1'b0;
                         done <= 1'b1;
+                        uart_done_pulse <= 1'b1;
                     end
                 end
             end
