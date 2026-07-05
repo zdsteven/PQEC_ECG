@@ -100,9 +100,8 @@ module matmul_dma #(
     input      [65:0] matmul_result_data3,
 
     output            finish,
-    output reg        uart_start_pulse,
-    output reg        uart_done_pulse,
-    output reg [31:0] uart_crc32
+    output reg        crc32_valid,
+    output reg [31:0] crc32_final
 );
 
 localparam [11:0] ADDR_CTRL       = 12'h000;
@@ -224,19 +223,32 @@ wire launch_filled_bank_now = read_bank_complete_now &&
                               (active_read_bank == compute_bank) &&
                               any_core_sched_ready;
 wire bank_ready_for_launch = bank_valid[compute_bank] || launch_filled_bank_now;
-wire result_read_first = busy && (write_state == WB_PREFETCH);
+wire result_read_first = busy && (write_state == WB_PREFETCH) && write_need_prefetch;
 wire result_read_next_same_group = m_axi_wvalid && m_axi_wready &&
                                    (write_part == 2'd0) && (write_element != 4'd15);
 wire result_read_next_cross_group = m_axi_wvalid && m_axi_wready &&
                                     (write_part == 2'd1) && (write_element == 4'd15) &&
                                     (write_burst_beat != write_burst_last);
-wire result_read_next = result_read_next_same_group || result_read_next_cross_group;
+// If WLAST lands exactly on a group boundary, use the otherwise idle B-response
+// interval to fetch the first element of the next already-complete group.
+wire result_read_next_burst_group = m_axi_wvalid && m_axi_wready &&
+                                    (write_part == 2'd2) && (write_element == 4'd15) &&
+                                    (write_burst_beat == write_burst_last) &&
+                                    ((write_group_count + 13'd1) < calc_group_count);
+wire result_read_next = result_read_next_same_group || result_read_next_cross_group ||
+                        result_read_next_burst_group;
 wire result_read_enable = result_read_first || result_read_next;
 wire [16:0] result_read_address = result_read_first ?
                    ({write_group_count, 4'b0000}) :
                    result_read_next_same_group ?
                    ({write_group_count, 4'b0000} + write_element + 17'd1) :
                    ({write_group_count + 13'd1, 4'b0000});
+wire [12:0] completed_group_backlog = calc_group_count - write_group_count;
+wire [18:0] completed_word_backlog = {completed_group_backlog, 5'b00000} +
+                                     {completed_group_backlog, 4'b0000} -
+                                     write_group_word;
+wire [31:0] write_address_after_burst = write_address +
+                                        {24'd0, write_burst_last, 2'b00} + 32'd4;
 
 function [31:0] apply_wstrb;
     input [31:0] old_value;
@@ -275,7 +287,7 @@ endfunction
 // largest legal fragment of the remaining linear result stream.
 function [7:0] legal_burst_last;
     input [11:0] address_offset;
-    input [7:0]  words_remaining;
+    input [8:0]  words_remaining;
     reg [12:0] bytes_remaining;
     reg [10:0] page_words;
     begin
@@ -284,7 +296,7 @@ function [7:0] legal_burst_last;
         if (page_words < words_remaining)
             legal_burst_last = page_words[7:0] - 8'd1;
         else
-            legal_burst_last = words_remaining - 8'd1;
+            legal_burst_last = words_remaining[7:0] - 8'd1;
     end
 endfunction
 
@@ -488,9 +500,8 @@ always @(posedge clk) begin
         crc_result_data      <= 66'd0;
         crc_result_valid     <= 1'b0;
         crc_finish_pending   <= 1'b0;
-        uart_start_pulse     <= 1'b0;
-        uart_done_pulse      <= 1'b0;
-        uart_crc32           <= 32'd0;
+        crc32_valid          <= 1'b0;
+        crc32_final          <= 32'd0;
         // input_buffer is intentionally not reset.  bank_valid starts empty
         // and every bank is completely overwritten by 32 R beats before use;
         // clearing 4096 data bits created a very high-fanout reset path.
@@ -500,8 +511,7 @@ always @(posedge clk) begin
         end
     end else begin
         matmul_start <= 4'b0000;
-        uart_start_pulse <= 1'b0;
-        uart_done_pulse  <= 1'b0;
+        crc32_valid  <= 1'b0;
 
         if (clear_status_pulse) begin
             done  <= 1'b0;
@@ -547,7 +557,7 @@ always @(posedge clk) begin
                 crc_result_data      <= 66'd0;
                 crc_result_valid     <= 1'b0;
                 crc_finish_pending   <= 1'b0;
-                uart_start_pulse     <= 1'b1;
+                crc32_final          <= 32'd0;
                 for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
@@ -660,28 +670,25 @@ always @(posedge clk) begin
                         (read_state == RD_IDLE) &&
                         (write_group_count < calc_group_count)) begin
                         write_burst_beat  <= 8'd0;
-                        if (write_need_prefetch)
-                            write_state <= WB_PREFETCH;
-                        else
-                            write_state <= WB_AW;
+                        write_state <= WB_PREFETCH;
                     end
                 end
                 WB_PREFETCH: begin
-                    write_element      <= 4'd0;
-                    write_part         <= 2'd0;
                     write_burst_beat   <= 8'd0;
-                    write_group_word   <= 6'd0;
-                    if ((calc_group_count - write_group_count) >= 13'd5)
-                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd240);
-                    else if ((calc_group_count - write_group_count) == 13'd4)
-                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd192);
-                    else if ((calc_group_count - write_group_count) == 13'd3)
-                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd144);
-                    else if ((calc_group_count - write_group_count) == 13'd2)
-                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd96);
+                    if (write_need_prefetch) begin
+                        write_element    <= 4'd0;
+                        write_part       <= 2'd0;
+                        write_group_word <= 6'd0;
+                    end
+                    if (completed_word_backlog >= 19'd256)
+                        write_burst_last <= legal_burst_last(write_address[11:0], 9'd256);
                     else
-                        write_burst_last <= legal_burst_last(write_address[11:0], 8'd48);
-                    write_state        <= WB_LOAD;
+                        write_burst_last <= legal_burst_last(write_address[11:0],
+                                                             completed_word_backlog[8:0]);
+                    if (write_need_prefetch)
+                        write_state <= WB_LOAD;
+                    else
+                        write_state <= WB_AW;
                 end
                 WB_LOAD: begin
                     write_current_data <= result_read_data;
@@ -722,7 +729,12 @@ always @(posedge clk) begin
                                     write_current_data <= result_read_data;
                                     write_need_prefetch<= 1'b0;
                                 end else begin
-                                    write_need_prefetch<= 1'b1;
+                                    if (result_read_next_burst_group) begin
+                                        write_need_prefetch   <= 1'b0;
+                                        write_burst_prefetched<= 1'b1;
+                                    end else begin
+                                        write_need_prefetch   <= 1'b1;
+                                    end
                                 end
                             end else begin
                                 write_element      <= write_element + 4'd1;
@@ -736,19 +748,31 @@ always @(posedge clk) begin
                     if (m_axi_bvalid && m_axi_bready) begin
                         if (m_axi_bresp != 2'b00)
                             error <= 1'b1;
-                        write_address <= write_address +
-                                         {24'd0, write_burst_last, 2'b00} + 32'd4;
+                        write_address <= write_address_after_burst;
+                        if (write_burst_prefetched) begin
+                            write_current_data      <= result_read_data;
+                            write_element           <= 4'd0;
+                            write_burst_prefetched <= 1'b0;
+                        end
                         if (write_group_count == group_num[12:0]) begin
                             write_state <= WB_IDLE;
                             busy        <= 1'b0;
                             done        <= 1'b1;
-                            uart_crc32  <= crc32_update32(crc_value, m_axi_wdata) ^ 32'hffffffff;
-                            uart_done_pulse <= 1'b1;
+                            crc32_valid <= 1'b1;
+                            crc32_final <= crc_value ^ 32'hffffffff;
                         end else if (write_group_count < calc_group_count) begin
-                            if (write_need_prefetch)
+                            if (write_need_prefetch) begin
                                 write_state <= WB_PREFETCH;
-                            else
+                            end else begin
+                                if (completed_word_backlog >= 19'd256)
+                                    write_burst_last <= legal_burst_last(
+                                        write_address_after_burst[11:0], 9'd256);
+                                else
+                                    write_burst_last <= legal_burst_last(
+                                        write_address_after_burst[11:0],
+                                        completed_word_backlog[8:0]);
                                 write_state <= WB_AW;
+                            end
                         end else begin
                             write_state <= WB_IDLE;
                         end
@@ -764,13 +788,14 @@ always @(posedge clk) begin
                 if (result_write_enable)
                     crc_result_data <= result_write_data;
                 if (crc_result_valid) begin
-                    uart_crc32 <= crc32_update_result(crc_value, crc_result_data) ^ 32'hffffffff;
                     crc_value <= crc32_update_result(crc_value, crc_result_data);
                     if (crc_finish_pending) begin
                         crc_finish_pending <= 1'b0;
                         busy <= 1'b0;
                         done <= 1'b1;
-                        uart_done_pulse <= 1'b1;
+                        crc32_valid <= 1'b1;
+                        crc32_final <= crc32_update_result(crc_value, crc_result_data)
+                                       ^ 32'hffffffff;
                     end
                 end
             end

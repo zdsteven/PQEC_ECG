@@ -96,6 +96,10 @@ module axi2sram_sp_external #(
     localparam              SEND_B      = 3'h3;
     localparam              WAIT_WVALID = 3'h4;
     localparam              WRITE_NOP   = 3'h5;
+    // Full-rate mode: keep WRITE_NOP available for board-level fallback, but
+    // do not insert periodic gaps.  A valid INCR burst therefore commits one
+    // ExtRAM word on every clock while WVALID remains asserted.
+    localparam              WRITE_GAP_ENABLE = 1'b0;
     localparam [5:0]        WRITE_RUN_LENGTH = 6'd32;
 
     localparam              FIXED       = 2'b00;
@@ -338,7 +342,8 @@ module axi2sram_sp_external #(
                     if (s_wlast) begin
                         wr_run_d = 6'd0;
                         state_d = SEND_B;
-                    end else if (wr_run_q == (WRITE_RUN_LENGTH - 6'd1)) begin
+                    end else if (WRITE_GAP_ENABLE &&
+                                 (wr_run_q == (WRITE_RUN_LENGTH - 6'd1))) begin
                         wr_run_d = WRITE_RUN_LENGTH;
                         state_d  = WRITE_NOP;
                     end else begin
@@ -389,10 +394,12 @@ module axi2sram_sp_external #(
             wrap_boundary_q <= wrap_boundary_d;
             upper_wrap_boundary_q <= upper_wrap_boundary_d;
             wr_run_q        <= wr_run_d;
+            // FIFO storage is written in a reset-free clocked process below.
+            // Keeping the memory outside this asynchronously-reset process is
+            // required for Vivado to infer distributed RAM instead of
+            // dissolving all 256 entries into flip-flops and a large read mux.
             case ({rd_capture, rd_fifo_pop})
                 2'b10: begin
-                    rd_fifo[rd_fifo_wr_ptr_q] <=
-                        {rd_capture_last, rd_capture_id, data_i};
                     rd_fifo_wr_ptr_q <= rd_fifo_wr_ptr_q + 8'd1;
                     rd_fifo_count_q  <= rd_fifo_count_q + 9'd1;
                 end
@@ -401,8 +408,6 @@ module axi2sram_sp_external #(
                     rd_fifo_count_q  <= rd_fifo_count_q - 9'd1;
                 end
                 2'b11: begin
-                    rd_fifo[rd_fifo_wr_ptr_q] <=
-                        {rd_capture_last, rd_capture_id, data_i};
                     rd_fifo_wr_ptr_q <= rd_fifo_wr_ptr_q + 8'd1;
                     rd_fifo_rd_ptr_q <= rd_fifo_rd_ptr_q + 8'd1;
                 end
@@ -411,6 +416,17 @@ module axi2sram_sp_external #(
             endcase
         end
     end
+
+    // One SRAM response is retired into the return queue on every issued read
+    // address.  This write path has no reset and therefore maps cleanly to
+    // LUTRAM.  FIFO validity is controlled exclusively by rd_fifo_count_q, so
+    // uninitialised storage can never be observed after reset.
+    always @(posedge clk) begin
+        if (rd_capture)
+            rd_fifo[rd_fifo_wr_ptr_q] <=
+                {rd_capture_last, rd_capture_id, data_i};
+    end
+
 
     // always @(posedge clk or negedge resetn) begin
     //     if (~resetn) begin

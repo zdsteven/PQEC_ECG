@@ -37,6 +37,7 @@ module UART_TOP(
         PCLK,        PRST_,
         PSEL,        PENABLE,     PADDR,       PWRITE,
         PWDATA,      URT_PRDATA,
+        auto_crc_valid, auto_crc32,
 
         INT, clk_carrier, 
         
@@ -44,10 +45,7 @@ module UART_TOP(
         RXD_i, RXD_o, RXD_oe,
         
         RTS,         CTS,         DSR,
-        DCD,         DTR,         RI,
-        matmul_start_pulse,
-        matmul_done_pulse,
-        matmul_crc32
+        DCD,         DTR,         RI
     );
 
 input   PCLK,        PRST_;
@@ -55,6 +53,8 @@ input   PSEL,        PENABLE,     PWRITE;
 input   [7:0]     PADDR;
 input   [7:0]     PWDATA;
 output  [7:0]     URT_PRDATA;
+input             auto_crc_valid;
+input   [31:0]    auto_crc32;
 
 output  INT;
 input   clk_carrier; 
@@ -70,9 +70,6 @@ output  RTS;
 input   CTS,         DSR,         DCD;
 output  DTR;
 input   RI;
-input   matmul_start_pulse;
-input   matmul_done_pulse;
-input   [31:0] matmul_crc32;
 
 wire prst = !PRST_;
 wire we   = PSEL & PENABLE & PWRITE;      
@@ -81,9 +78,186 @@ wire re   = PSEL & PENABLE & !PWRITE;
 wire rx_en;
 wire tx2rx_en;
 wire isomode;
+wire auto_tx_ready;
+wire tx_idle;
+reg  auto_tx_valid;
+reg  [7:0] auto_tx_data;
+reg  [5:0] auto_index;
+reg  [11:0] auto_boot_delay;
+reg  [31:0] auto_crc_hold;
+reg  [2:0] auto_state;
+reg  auto_crc_pending;
+
+localparam [2:0] AUTO_BOOT  = 3'd0;
+localparam [2:0] AUTO_WAIT  = 3'd1;
+localparam [2:0] AUTO_HEX   = 3'd2;
+localparam [2:0] AUTO_DONE  = 3'd3;
+localparam [2:0] AUTO_IDLE  = 3'd4;
+
+function [7:0] auto_boot_char;
+    input [5:0] index;
+    begin
+        case (index)
+            6'd0:  auto_boot_char = "\n";
+            6'd1:  auto_boot_char = "\n";
+            6'd2:  auto_boot_char = "\n";
+            6'd3:  auto_boot_char = "\n";
+            6'd4:  auto_boot_char = "M";
+            6'd5:  auto_boot_char = "A";
+            6'd6:  auto_boot_char = "T";
+            6'd7:  auto_boot_char = "M";
+            6'd8:  auto_boot_char = "U";
+            6'd9:  auto_boot_char = "L";
+            6'd10: auto_boot_char = "_";
+            6'd11: auto_boot_char = "S";
+            6'd12: auto_boot_char = "T";
+            6'd13: auto_boot_char = "A";
+            6'd14: auto_boot_char = "R";
+            6'd15: auto_boot_char = "T";
+            6'd16: auto_boot_char = "\n";
+            6'd17: auto_boot_char = "M";
+            6'd18: auto_boot_char = "A";
+            6'd19: auto_boot_char = "T";
+            6'd20: auto_boot_char = "M";
+            6'd21: auto_boot_char = "U";
+            6'd22: auto_boot_char = "L";
+            6'd23: auto_boot_char = "_";
+            6'd24: auto_boot_char = "C";
+            6'd25: auto_boot_char = "R";
+            6'd26: auto_boot_char = "C";
+            6'd27: auto_boot_char = "3";
+            6'd28: auto_boot_char = "2";
+            6'd29: auto_boot_char = "=";
+            default: auto_boot_char = 8'h00;
+        endcase
+    end
+endfunction
+
+function [7:0] auto_done_char;
+    input [5:0] index;
+    begin
+        case (index)
+            6'd0:  auto_done_char = "\n";
+            6'd1:  auto_done_char = "M";
+            6'd2:  auto_done_char = "A";
+            6'd3:  auto_done_char = "T";
+            6'd4:  auto_done_char = "M";
+            6'd5:  auto_done_char = "U";
+            6'd6:  auto_done_char = "L";
+            6'd7:  auto_done_char = "_";
+            6'd8:  auto_done_char = "D";
+            6'd9:  auto_done_char = "O";
+            6'd10: auto_done_char = "N";
+            6'd11: auto_done_char = "E";
+            6'd12: auto_done_char = "\n";
+            default: auto_done_char = 8'h00;
+        endcase
+    end
+endfunction
+
+function [7:0] auto_hex_char;
+    input [3:0] nibble;
+    begin
+        case (nibble)
+            4'h0: auto_hex_char = "0";
+            4'h1: auto_hex_char = "1";
+            4'h2: auto_hex_char = "2";
+            4'h3: auto_hex_char = "3";
+            4'h4: auto_hex_char = "4";
+            4'h5: auto_hex_char = "5";
+            4'h6: auto_hex_char = "6";
+            4'h7: auto_hex_char = "7";
+            4'h8: auto_hex_char = "8";
+            4'h9: auto_hex_char = "9";
+            4'ha: auto_hex_char = "A";
+            4'hb: auto_hex_char = "B";
+            4'hc: auto_hex_char = "C";
+            4'hd: auto_hex_char = "D";
+            4'he: auto_hex_char = "E";
+            default: auto_hex_char = "F";
+        endcase
+    end
+endfunction
 
 assign  TXD_oe = isomode&&(rx_en||tx2rx_en) ? 1'b1:1'b0;
 assign  RXD_oe =~isomode;
+
+always @(posedge PCLK or negedge PRST_) begin
+    if (!PRST_) begin
+        auto_tx_valid   <= 1'b0;
+        auto_tx_data    <= 8'h00;
+        auto_index      <= 6'd0;
+        auto_boot_delay <= 12'd4095;
+        auto_crc_hold   <= 32'd0;
+        auto_state      <= AUTO_BOOT;
+        auto_crc_pending<= 1'b0;
+    end else begin
+        auto_tx_valid <= 1'b0;
+        if (auto_crc_valid) begin
+            auto_crc_hold    <= auto_crc32;
+            auto_crc_pending <= 1'b1;
+        end
+        case (auto_state)
+            AUTO_BOOT: begin
+                if (auto_boot_delay != 12'd0) begin
+                    auto_boot_delay <= auto_boot_delay - 12'd1;
+                end else if (tx_idle) begin
+                    auto_tx_valid <= 1'b1;
+                    auto_tx_data  <= auto_boot_char(auto_index);
+                    if (auto_index == 6'd29) begin
+                        auto_index <= 6'd0;
+                        auto_state <= AUTO_WAIT;
+                    end else begin
+                        auto_index <= auto_index + 6'd1;
+                    end
+                end
+            end
+            AUTO_WAIT: begin
+                if (auto_crc_pending) begin
+                    auto_crc_pending <= 1'b0;
+                    auto_index <= 6'd0;
+                    auto_state <= AUTO_HEX;
+                end
+            end
+            AUTO_HEX: begin
+                if (tx_idle) begin
+                    auto_tx_valid <= 1'b1;
+                    auto_tx_data  <= auto_hex_char(
+                        auto_crc_hold[31 - {auto_index[2:0], 2'b00} -: 4]
+                    );
+                    if (auto_index == 6'd7) begin
+                        auto_index <= 6'd0;
+                        auto_state <= AUTO_DONE;
+                    end else begin
+                        auto_index <= auto_index + 6'd1;
+                    end
+                end
+            end
+            AUTO_DONE: begin
+                if (tx_idle) begin
+                    auto_tx_valid <= 1'b1;
+                    auto_tx_data  <= auto_done_char(auto_index);
+                    if (auto_index == 6'd12) begin
+                        auto_index <= 6'd0;
+                        auto_state <= AUTO_IDLE;
+                    end else begin
+                        auto_index <= auto_index + 6'd1;
+                    end
+                end
+            end
+            default: begin
+                if (auto_crc_valid) begin
+                    auto_crc_pending <= 1'b1;
+                end
+                if (tx_idle && auto_crc_pending) begin
+                    auto_crc_pending <= 1'b0;
+                    auto_index <= 6'd0;
+                    auto_state <= AUTO_HEX;
+                end
+            end
+        endcase
+    end
+end
 
 uart_regs	regs(
     .clk         (PCLK       ),
@@ -94,6 +268,10 @@ uart_regs	regs(
     .dat_o       (URT_PRDATA ),
     .we          (we         ),
     .re          (re         ),
+    .auto_tx_valid(auto_tx_valid),
+    .auto_tx_data (auto_tx_data ),
+    .auto_tx_ready(auto_tx_ready),
+    .tx_idle      (tx_idle      ),
     
     .modem_inputs({ CTS, DSR, RI, DCD }	),
     .rts_pad_o   (RTS      ),
@@ -105,10 +283,7 @@ uart_regs	regs(
     .int_o       ( INT     ),
     .tx2rx_en    (tx2rx_en ),
     .rx_en       (rx_en    ),
-    .usart_mode  (isomode  ),
-    .matmul_start_pulse (matmul_start_pulse),
-    .matmul_done_pulse  (matmul_done_pulse ),
-    .matmul_crc32       (matmul_crc32      )
+    .usart_mode  (isomode  )
 
 );
 
