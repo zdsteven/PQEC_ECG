@@ -1,10 +1,10 @@
 // 4x4 unsigned matrix-multiply core for the DMA batch engine.
 //
 // The implementation deliberately contains no Verilog multiplication
-// operator.  Sixteen output elements are accumulated in parallel; one bit of
-// the current B row is consumed per cycle.  A complete matrix therefore takes
-// 4 * 32 cycles plus start/finish overhead, while the longest arithmetic path
-// is a single 66-bit addition.
+// operator.  Sixteen output elements are accumulated in parallel; two bits of
+// the current B row are consumed per cycle using registered radix-4 multiples.
+// A complete matrix therefore takes 4 * 16 cycles plus start/finish overhead,
+// while the recurring arithmetic path remains a single 66-bit addition.
 module matmul_batch_core (
     input               clk,
     input               resetn,
@@ -23,11 +23,29 @@ reg [65:0] accumulator [0:15];
 // bank while accumulator[] immediately starts the next matrix.
 reg [65:0] result_snapshot [0:15];
 reg [65:0] a_shift [0:3];
+reg [65:0] a3_shift [0:3];
 reg [31:0] b_shift [0:3];
 reg [1:0]  k_index;
-reg [4:0]  bit_index;
+reg [3:0]  digit_index;
 
 integer i;
+
+// Select 0*A, 1*A, 2*A or 3*A without a multiplier.  The 3*A value is
+// registered when a new K term is loaded, so the accumulation loop contains
+// only this mux followed by one 66-bit adder.
+function [65:0] radix4_term;
+    input [65:0] a_value;
+    input [65:0] a3_value;
+    input [1:0] digit;
+    begin
+        case (digit)
+            2'b00: radix4_term = 66'd0;
+            2'b01: radix4_term = a_value;
+            2'b10: radix4_term = {a_value[64:0], 1'b0};
+            default: radix4_term = a3_value;
+        endcase
+    end
+endfunction
 
 always @(*) begin
     case (result_index)
@@ -56,7 +74,7 @@ always @(posedge clk) begin
         busy      <= 1'b0;
         done      <= 1'b0;
         k_index   <= 2'd0;
-        bit_index <= 5'd0;
+        digit_index <= 4'd0;
         for (i = 0; i < 16; i = i + 1) begin
             a_data[i]     <= 32'd0;
             b_data[i]     <= 32'd0;
@@ -65,6 +83,7 @@ always @(posedge clk) begin
         end
         for (i = 0; i < 4; i = i + 1) begin
             a_shift[i] <= 66'd0;
+            a3_shift[i] <= 66'd0;
             b_shift[i] <= 32'd0;
         end
     end else begin
@@ -73,7 +92,7 @@ always @(posedge clk) begin
         if (start && !busy) begin
             busy      <= 1'b1;
             k_index   <= 2'd0;
-            bit_index <= 5'd0;
+            digit_index <= 4'd0;
 
             for (i = 0; i < 16; i = i + 1) begin
                 a_data[i]      <= matrix_words[i*32 +: 32];
@@ -85,6 +104,14 @@ always @(posedge clk) begin
             a_shift[1] <= {34'd0, matrix_words[4*32 +: 32]};
             a_shift[2] <= {34'd0, matrix_words[8*32 +: 32]};
             a_shift[3] <= {34'd0, matrix_words[12*32 +: 32]};
+            a3_shift[0] <= {33'd0, matrix_words[0*32 +: 32], 1'b0} +
+                           {34'd0, matrix_words[0*32 +: 32]};
+            a3_shift[1] <= {33'd0, matrix_words[4*32 +: 32], 1'b0} +
+                           {34'd0, matrix_words[4*32 +: 32]};
+            a3_shift[2] <= {33'd0, matrix_words[8*32 +: 32], 1'b0} +
+                           {34'd0, matrix_words[8*32 +: 32]};
+            a3_shift[3] <= {33'd0, matrix_words[12*32 +: 32], 1'b0} +
+                           {34'd0, matrix_words[12*32 +: 32]};
             b_shift[0] <= matrix_words[(16+0)*32 +: 32];
             b_shift[1] <= matrix_words[(16+1)*32 +: 32];
             b_shift[2] <= matrix_words[(16+2)*32 +: 32];
@@ -93,20 +120,20 @@ always @(posedge clk) begin
             // Each conditional add is independent.  The constant loop indices
             // are unrolled into sixteen parallel 66-bit accumulator lanes.
             for (i = 0; i < 16; i = i + 1) begin
-                if (b_shift[i % 4][0])
-                    accumulator[i] <= accumulator[i] + a_shift[i / 4];
+                accumulator[i] <= accumulator[i] +
+                    radix4_term(a_shift[i / 4], a3_shift[i / 4],
+                                b_shift[i % 4][1:0]);
             end
 
-            if (bit_index == 5'd31) begin
-                bit_index <= 5'd0;
+            if (digit_index == 4'd15) begin
+                digit_index <= 4'd0;
                 if (k_index == 2'd3) begin
                     // accumulator[] receives its final conditional add on this
                     // same edge, so include that term explicitly in the copy.
                     for (i = 0; i < 16; i = i + 1) begin
-                        if (b_shift[i % 4][0])
-                            result_snapshot[i] <= accumulator[i] + a_shift[i / 4];
-                        else
-                            result_snapshot[i] <= accumulator[i];
+                        result_snapshot[i] <= accumulator[i] +
+                            radix4_term(a_shift[i / 4], a3_shift[i / 4],
+                                        b_shift[i % 4][1:0]);
                     end
                     busy <= 1'b0;
                     done <= 1'b1;
@@ -116,21 +143,33 @@ always @(posedge clk) begin
                     a_shift[1] <= {34'd0, a_data[k_index + 5]};
                     a_shift[2] <= {34'd0, a_data[k_index + 9]};
                     a_shift[3] <= {34'd0, a_data[k_index + 13]};
+                    a3_shift[0] <= {33'd0, a_data[k_index + 1], 1'b0} +
+                                   {34'd0, a_data[k_index + 1]};
+                    a3_shift[1] <= {33'd0, a_data[k_index + 5], 1'b0} +
+                                   {34'd0, a_data[k_index + 5]};
+                    a3_shift[2] <= {33'd0, a_data[k_index + 9], 1'b0} +
+                                   {34'd0, a_data[k_index + 9]};
+                    a3_shift[3] <= {33'd0, a_data[k_index + 13], 1'b0} +
+                                   {34'd0, a_data[k_index + 13]};
                     b_shift[0] <= b_data[{k_index + 2'd1, 2'b00} + 0];
                     b_shift[1] <= b_data[{k_index + 2'd1, 2'b00} + 1];
                     b_shift[2] <= b_data[{k_index + 2'd1, 2'b00} + 2];
                     b_shift[3] <= b_data[{k_index + 2'd1, 2'b00} + 3];
                 end
             end else begin
-                bit_index <= bit_index + 5'd1;
-                a_shift[0] <= {a_shift[0][64:0], 1'b0};
-                a_shift[1] <= {a_shift[1][64:0], 1'b0};
-                a_shift[2] <= {a_shift[2][64:0], 1'b0};
-                a_shift[3] <= {a_shift[3][64:0], 1'b0};
-                b_shift[0] <= {1'b0, b_shift[0][31:1]};
-                b_shift[1] <= {1'b0, b_shift[1][31:1]};
-                b_shift[2] <= {1'b0, b_shift[2][31:1]};
-                b_shift[3] <= {1'b0, b_shift[3][31:1]};
+                digit_index <= digit_index + 4'd1;
+                a_shift[0] <= {a_shift[0][63:0], 2'b0};
+                a_shift[1] <= {a_shift[1][63:0], 2'b0};
+                a_shift[2] <= {a_shift[2][63:0], 2'b0};
+                a_shift[3] <= {a_shift[3][63:0], 2'b0};
+                a3_shift[0] <= {a3_shift[0][63:0], 2'b0};
+                a3_shift[1] <= {a3_shift[1][63:0], 2'b0};
+                a3_shift[2] <= {a3_shift[2][63:0], 2'b0};
+                a3_shift[3] <= {a3_shift[3][63:0], 2'b0};
+                b_shift[0] <= {2'b0, b_shift[0][31:2]};
+                b_shift[1] <= {2'b0, b_shift[1][31:2]};
+                b_shift[2] <= {2'b0, b_shift[2][31:2]};
+                b_shift[3] <= {2'b0, b_shift[3][31:2]};
             end
         end
     end

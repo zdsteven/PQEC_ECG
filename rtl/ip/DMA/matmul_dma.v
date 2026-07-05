@@ -106,7 +106,10 @@ module matmul_dma #(
     output            finish,
     output reg        start_banner_valid,
     output reg        crc32_valid,
-    output reg [31:0] crc32_final
+    output reg [31:0] crc32_final,
+    output reg [31:0] perf_read_cycles,
+    output reg [31:0] perf_calc_cycles,
+    output reg [31:0] perf_done_cycles
 );
 
 localparam [11:0] ADDR_CTRL       = 12'h000;
@@ -197,6 +200,8 @@ reg        write_burst_prefetched;
 reg [65:0] crc_result_data;
 reg        crc_result_valid;
 reg        crc_finish_pending;
+reg [31:0] perf_cycle_count;
+reg        auto_start_armed;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
@@ -518,6 +523,11 @@ always @(posedge clk) begin
         crc_finish_pending   <= 1'b0;
         crc32_valid          <= 1'b0;
         crc32_final          <= 32'd0;
+        perf_cycle_count     <= 32'd0;
+        perf_read_cycles     <= 32'd0;
+        perf_calc_cycles     <= 32'd0;
+        perf_done_cycles     <= 32'd0;
+        auto_start_armed     <= 1'b1;
         // input_buffer is intentionally not reset.  bank_valid starts empty
         // and every bank is completely overwritten by 32 R beats before use;
         // clearing 4096 data bits created a very high-fanout reset path.
@@ -535,7 +545,10 @@ always @(posedge clk) begin
             error <= 1'b0;
         end
 
-        if (start_pulse) begin
+        if (auto_start_armed || start_pulse) begin
+            auto_start_armed <= 1'b0;
+            start_banner_valid <= 1'b1;
+            start_banner_sent  <= 1'b1;
             done <= 1'b0;
             if ((group_num == 32'd0) || (group_num > MAX_GROUPS) ||
                 (src_base[1:0] != 2'b00) || (dst_base[1:0] != 2'b00)) begin
@@ -576,18 +589,17 @@ always @(posedge clk) begin
                 crc_result_valid     <= 1'b0;
                 crc_finish_pending   <= 1'b0;
                 crc32_final          <= 32'd0;
+                perf_cycle_count     <= 32'd0;
+                perf_read_cycles     <= 32'd0;
+                perf_calc_cycles     <= 32'd0;
+                perf_done_cycles     <= 32'd0;
                 for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
                 end
             end
         end else if (busy) begin
-            if (!start_banner_sent &&
-                ((START_BANNER_GROUP == 0) ||
-                 (read_group_count >= START_BANNER_GROUP[12:0]))) begin
-                start_banner_valid <= 1'b1;
-                start_banner_sent  <= 1'b1;
-            end
+            perf_cycle_count <= perf_cycle_count + 32'd1;
             // Input DMA state machine.
             if ((read_state == RD_IDLE) && m_axi_arvalid && m_axi_arready) begin
                 active_read_bank <= read_bank;
@@ -603,6 +615,8 @@ always @(posedge clk) begin
                     if (!launch_filled_bank_now)
                         bank_valid[active_read_bank] <= 1'b1;
                     read_group_count <= read_group_count + 13'd1;
+                    if ((read_group_count + 13'd1) == group_num[12:0])
+                        perf_read_cycles <= perf_cycle_count;
                     read_bank        <= read_bank + 2'd1;
                     active_read_bank <= active_read_bank + 2'd1;
                     if (m_axi_rlast) begin
@@ -681,6 +695,7 @@ always @(posedge clk) begin
                 calc_group_count <= calc_group_count + 13'd1;
                 if ((calc_group_count + 13'd1) == group_num[12:0]) begin
                     compute_complete <= 1'b1;
+                    perf_calc_cycles <= perf_cycle_count;
                     if (!RESULT_WRITEBACK)
                         crc_finish_pending <= 1'b1;
                 end
@@ -826,6 +841,7 @@ always @(posedge clk) begin
                         crc32_valid <= 1'b1;
                         crc32_final <= crc32_update_result(crc_value, crc_result_data)
                                        ^ 32'hffffffff;
+                        perf_done_cycles <= perf_cycle_count;
                     end
                 end
             end

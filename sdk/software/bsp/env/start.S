@@ -103,7 +103,9 @@ _start:
 
 #endif
 
-	/* init UART */
+#if 0
+	/* UART has hardware reset defaults for the autonomous matmul reporter.
+	 * Do not reset its FIFO while MATMUL_START is already being transmitted. */
 	la.local    t0, UART_BASE
 	ld.w        t1, t0, 0
 	#WRITE(li.wne,OFS_FIFO,FIFO_ENABLE|FIFO_RCV_RST|FIFO_XMT_RST|FIFO_TRIGGER_0);
@@ -129,6 +131,7 @@ _start:
 	#WRITE(li.wne,OFS_MODEM_CONTROL,0);
 	li.w       t2, 0x0 
 	st.b     t2, t1, 4 
+#endif
 
     /* init exception */
 #ifdef RTThread

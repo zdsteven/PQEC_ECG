@@ -17,9 +17,7 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
-    (void)DMA_MatMul_Start(EXTRAM_PHYS_BASE,
-                           EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES,
-                           MATMUL_GROUP_NUM);
+    /* DMA starts from its fixed evaluation defaults at reset release. */
     (void)DMA_Wait(0u);
 
     while (1) {

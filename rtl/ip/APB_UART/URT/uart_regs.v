@@ -400,7 +400,10 @@ assign tx_idle = lsr5;
 always @(posedge clk )
   if (rst)
   begin
-    dl[`UART_DL1]  <= 8'b0;
+    // FPGA evaluation clock is 50 MHz; divisor 27 gives 115200 baud.
+    // A valid reset default lets the hardware banner start immediately,
+    // without waiting for CPU firmware to program the UART.
+    dl[`UART_DL1]  <= 8'h1b;
     start_dlc      <= 1'b0;
   end
   else

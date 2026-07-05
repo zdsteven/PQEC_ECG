@@ -400,6 +400,9 @@ wire        dma_finish   ;
 wire        dma_start_banner_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
+wire [31:0] dma_perf_read_cycles;
+wire [31:0] dma_perf_calc_cycles;
+wire [31:0] dma_perf_done_cycles;
 wire        dma_matmul_active;
 wire [3:0]  dma_matmul_start;
 wire [1023:0] dma_matmul_words;
@@ -721,7 +724,10 @@ matmul_dma #(
     .finish         (dma_finish),
     .start_banner_valid(dma_start_banner_valid),
     .crc32_valid    (dma_crc32_valid),
-    .crc32_final    (dma_crc32_final)
+    .crc32_final    (dma_crc32_final),
+    .perf_read_cycles(dma_perf_read_cycles),
+    .perf_calc_cycles(dma_perf_calc_cycles),
+    .perf_done_cycles(dma_perf_done_cycles)
 );
 
 matmul_axi_slave u_matmul (
