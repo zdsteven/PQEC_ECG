@@ -298,8 +298,49 @@ module axi2sram_sp_external #(
                     endcase
                     cnt_d = cnt_q + 9'd1;
                 end
-                if (rd_fifo_pop && s_rlast)
-                    state_d = IDLE;
+                if (rd_fifo_pop && s_rlast) begin
+                    // Retire the old burst and accept the next one in the same
+                    // cycle.  The FIFO simultaneously pops the old RLAST and
+                    // captures the first word of the new burst.
+                    if (s_arvalid) begin
+                        s_arready       = 1'b1;
+                        ax_req_d_id     = s_arid;
+                        ax_req_d_addr   = s_araddr;
+                        ax_req_d_len    = s_arlen;
+                        ax_req_d_size   = s_arsize;
+                        ax_req_d_burst  = s_arburst;
+                        state_d         = READ;
+                        req_o           = 1'b1;
+                        addr_o          = s_araddr;
+                        rd_capture      = 1'b1;
+                        rd_capture_id   = s_arid;
+                        rd_capture_last = (s_arlen == 8'd0);
+                        case (s_arburst)
+                            FIXED: req_addr_d = s_araddr;
+                            INCR:  req_addr_d = s_araddr +
+                                                   {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
+                            WRAP: begin
+                                wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen);
+                                upper_wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen) +
+                                                        ((s_arlen + 1) << LOG_NR_BYTES);
+                                if ((s_araddr + {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4}) >=
+                                    upper_wrap_boundary_d)
+                                    req_addr_d = wrap_boundary_d;
+                                else
+                                    req_addr_d = s_araddr +
+                                                   {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
+                            end
+                            default: req_addr_d = s_araddr +
+                                                   {{(AXI_ADDR_WIDTH-3){1'b0}}, 3'd4};
+                        endcase
+                        wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen);
+                        upper_wrap_boundary_d = get_wrap_boundary(s_araddr, s_arlen) +
+                                                ((s_arlen + 1) << LOG_NR_BYTES);
+                        cnt_d = 9'd1;
+                    end else begin
+                        state_d = IDLE;
+                    end
+                end
             end
 
             //ext SRAM need nop between continuous write operations

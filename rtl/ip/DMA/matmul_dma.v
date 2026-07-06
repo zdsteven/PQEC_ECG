@@ -258,7 +258,14 @@ wire [16:0] result_read_address = result_read_first ?
                    ({write_group_count, 4'b0000} + write_element + 17'd1) :
                    ({write_group_count + 13'd1, 4'b0000});
 wire [12:0] completed_group_backlog = calc_group_count - write_group_count;
-wire [12:0] read_groups_remaining = group_num[12:0] - read_group_count;
+wire read_last_fire = (read_state == RD_DATA) && m_axi_rvalid &&
+                      m_axi_rready && m_axi_rlast;
+// For full 256-beat evaluation bursts, present the following AR throughout
+// the final 32 beats.  The bridge accepts it only alongside the old RLAST,
+// avoiding an RLAST-to-ARVALID combinational timing path.
+wire read_chain_offer = (read_state == RD_DATA) && (read_beat[7:5] == 3'b111);
+wire [12:0] read_ar_group = read_group_count + (read_chain_offer ? 13'd1 : 13'd0);
+wire [12:0] read_ar_remaining = group_num[12:0] - read_ar_group;
 wire [18:0] completed_word_backlog = {completed_group_backlog, 5'b00000} +
                                      {completed_group_backlog, 4'b0000} -
                                      write_group_word;
@@ -343,19 +350,21 @@ assign matmul_matrix_words = matmul_matrix_hold;
 // Read master: eight complete A/B groups per maximum 256-word burst.  Each
 // burst is 1024-byte aligned and therefore remains inside a 4 KiB page.
 assign m_axi_arid    = 4'h1;
-assign m_axi_araddr  = src_base + {read_group_count, 7'b0};
+assign m_axi_araddr  = src_base + {read_ar_group, 7'b0};
 // Evaluation uses 5000 groups (a multiple of four).  Keep the final-burst
 // expression general for smaller software tests as well.
-assign m_axi_arlen   = (read_groups_remaining >= 13'd8) ?
+assign m_axi_arlen   = (read_ar_remaining >= 13'd8) ?
                        8'd255 :
-                       ({5'd0, read_groups_remaining[2:0]} << 5) - 8'd1;
+                       ({5'd0, read_ar_remaining[2:0]} << 5) - 8'd1;
 assign m_axi_arsize  = 3'd2;
 assign m_axi_arburst = 2'b01;
 assign m_axi_arlock  = 1'b0;
 assign m_axi_arcache = 4'b0000;
 assign m_axi_arprot  = 3'b000;
-assign m_axi_arvalid = busy && !compute_complete && (read_state == RD_IDLE) &&
-                       (read_group_count < group_num[12:0]) && (bank_valid == 4'b0000);
+assign m_axi_arvalid = busy && !compute_complete &&
+                       ((read_state == RD_IDLE) || read_chain_offer) &&
+                       (read_ar_group < group_num[12:0]) &&
+                       (bank_valid == 4'b0000);
 assign m_axi_rready  = busy && (read_state == RD_DATA);
 
 // Write master: normally one 48-word burst per result matrix.  A matrix that
@@ -622,7 +631,12 @@ always @(posedge clk) begin
                     active_read_bank <= active_read_bank + 2'd1;
                     if (m_axi_rlast) begin
                         read_beat  <= 8'd0;
-                        read_state <= RD_IDLE;
+                        // If the bridge accepts the next AR alongside RLAST,
+                        // remain in RD_DATA and remove the burst-boundary gap.
+                        if (m_axi_arvalid && m_axi_arready)
+                            read_state <= RD_DATA;
+                        else
+                            read_state <= RD_IDLE;
                     end else begin
                         read_beat <= read_beat + 8'd1;
                     end
