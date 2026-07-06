@@ -108,13 +108,18 @@ else begin: pll_clk
     clk_pll u_clk_pll(
         .cpu_clk    (cpu_clk),
         .sys_clk    (sys_clk),
-        .resetn     (~reset),
+        // Keep the PLL running while the platform holds CPU/SoC reset.
+        // Its lock time is then paid before the timed reset release.
+        .resetn     (1'b1),
         .locked     (pll_locked),
         .clk_in1    (clk)
     );
     rst_sync u_rst_sys(
         .clk(sys_clk),
-        .rst_n_in(pll_locked),
+        // PLL lock and external reset are separate concerns: clocks remain
+        // locked, while all system state stays reset until the platform
+        // explicitly releases reset.
+        .rst_n_in(pll_locked & ~reset),
         .rst_n_out(sys_resetn)
     );
     rst_sync u_rst_cpu(
