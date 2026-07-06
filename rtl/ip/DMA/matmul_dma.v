@@ -163,9 +163,11 @@ reg [3:0]  bank_valid;
 reg [1:0]  read_bank;
 reg [1:0]  active_read_bank;
 reg [1:0]  compute_bank;
-// Four matrices are fetched by one 128-beat AXI burst.  The low five bits
-// select a word inside a matrix and bits [6:5] rotate through the four banks.
-reg [6:0]  read_beat;
+// Eight matrices are fetched by one maximum-length 256-beat AXI burst.  The
+// low five bits select a word and bits [6:5] rotate through the four banks.
+// A bank is released when its matrix is dispatched, before it is reused by
+// the second half of the burst.
+reg [7:0]  read_beat;
 reg        read_state;
 
 reg  [3:0]    store_element;
@@ -338,15 +340,14 @@ assign finish = done;
 assign matmul_active = busy;
 assign matmul_matrix_words = matmul_matrix_hold;
 
-// Read master: four complete A/B groups per 128-word burst.  Because each
-// group is 128-byte aligned, these bursts also remain inside AXI's 4 KiB
-// boundary (eight bursts per page).
+// Read master: eight complete A/B groups per maximum 256-word burst.  Each
+// burst is 1024-byte aligned and therefore remains inside a 4 KiB page.
 assign m_axi_arid    = 4'h1;
 assign m_axi_araddr  = src_base + {read_group_count, 7'b0};
 // Evaluation uses 5000 groups (a multiple of four).  Keep the final-burst
 // expression general for smaller software tests as well.
-assign m_axi_arlen   = ((group_num[12:0] - read_group_count) >= 13'd4) ?
-                       8'd127 :
+assign m_axi_arlen   = (read_groups_remaining >= 13'd8) ?
+                       8'd255 :
                        ({5'd0, read_groups_remaining[2:0]} << 5) - 8'd1;
 assign m_axi_arsize  = 3'd2;
 assign m_axi_arburst = 2'b01;
@@ -493,7 +494,7 @@ always @(posedge clk) begin
         read_bank           <= 2'd0;
         active_read_bank    <= 2'd0;
         compute_bank        <= 2'd0;
-        read_beat           <= 7'd0;
+        read_beat           <= 8'd0;
         read_state          <= RD_IDLE;
         matmul_start        <= 4'b0000;
         matmul_result_index <= 4'd0;
@@ -566,7 +567,7 @@ always @(posedge clk) begin
                 read_bank           <= 2'd0;
                 active_read_bank    <= 2'd0;
                 compute_bank        <= 2'd0;
-                read_beat           <= 7'd0;
+                read_beat           <= 8'd0;
                 read_state          <= RD_IDLE;
                 store_element       <= 4'd0;
                 compute_complete    <= 1'b0;
@@ -603,7 +604,7 @@ always @(posedge clk) begin
             // Input DMA state machine.
             if ((read_state == RD_IDLE) && m_axi_arvalid && m_axi_arready) begin
                 active_read_bank <= read_bank;
-                read_beat        <= 7'd0;
+                read_beat        <= 8'd0;
                 read_state       <= RD_DATA;
             end else if ((read_state == RD_DATA) && m_axi_rvalid && m_axi_rready) begin
                 input_buffer[{active_read_bank, 5'b0} + read_beat[4:0]] <= m_axi_rdata;
@@ -620,15 +621,15 @@ always @(posedge clk) begin
                     read_bank        <= read_bank + 2'd1;
                     active_read_bank <= active_read_bank + 2'd1;
                     if (m_axi_rlast) begin
-                        read_beat  <= 7'd0;
+                        read_beat  <= 8'd0;
                         read_state <= RD_IDLE;
                     end else begin
-                        read_beat <= read_beat + 7'd1;
+                        read_beat <= read_beat + 8'd1;
                     end
                 end else begin
                     if (m_axi_rlast)
                         error <= 1'b1;
-                    read_beat <= read_beat + 7'd1;
+                    read_beat <= read_beat + 8'd1;
                 end
             end
 
