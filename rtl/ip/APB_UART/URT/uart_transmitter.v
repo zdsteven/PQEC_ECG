@@ -248,10 +248,43 @@ begin
 	      else if (counter == 5'b00001) begin
 		       counter <= 5'b0;
                        tx2rx_en<= 1'b0;
-		       tstate  <= s_idle;
+		       // In UART mode, chain directly into the next byte once the
+		       // complete stop bit has elapsed.  The auto sender keeps one
+		       // byte queued, so going through IDLE and POP only inserted
+		       // dead baud ticks between otherwise contiguous characters.
+		       if (!usart_mode && (|tf_count)) begin
+		         tf_pop     <= 1'b1;
+		         error_time <= 3'h0;
+		         case (lcr[1:0])
+		         2'b00: begin
+		           bit_counter <= 3'b100;
+		           parity_xor  <= ^tf_data_out[4:0];
+		         end
+		         2'b01: begin
+		           bit_counter <= 3'b101;
+		           parity_xor  <= ^tf_data_out[5:0];
+		         end
+		         2'b10: begin
+		           bit_counter <= 3'b110;
+		           parity_xor  <= ^tf_data_out[6:0];
+		         end
+		         default: begin
+		           bit_counter <= 3'b111;
+		           parity_xor  <= ^tf_data_out[7:0];
+		         end
+		         endcase
+		         {shift_out[6:0], bit_out} <= tf_data_out;
+		         tf_data_bak <= tf_data_out;
+		         tstate      <= s_send_start;
+		         stx_o_tmp   <= 1'b0;
+		       end else begin
+		         tstate      <= s_idle;
+		         stx_o_tmp   <= 1'b1;
+		       end
 	      end
 	      else     counter <= counter - 1'b1;
-	      stx_o_tmp <= 1'b1;
+	      if (counter != 5'b00001)
+	        stx_o_tmp <= 1'b1;
 	  end
          s_send_guard1:begin 
 	      if (~|counter) begin
