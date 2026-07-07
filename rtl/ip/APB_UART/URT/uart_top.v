@@ -88,6 +88,7 @@ reg  [5:0] auto_index;
 reg  [31:0] auto_crc_hold;
 reg  [2:0] auto_state;
 reg  auto_crc_pending;
+reg  [15:0] auto_delay_count;
 
 localparam [2:0] AUTO_ARM   = 3'd0;
 localparam [2:0] AUTO_BOOT  = 3'd1;
@@ -95,6 +96,10 @@ localparam [2:0] AUTO_WAIT  = 3'd2;
 localparam [2:0] AUTO_HEX   = 3'd3;
 localparam [2:0] AUTO_DONE  = 3'd4;
 localparam [2:0] AUTO_IDLE  = 3'd5;
+localparam [2:0] AUTO_PREFIX= 3'd6;
+localparam [2:0] AUTO_CRC_WAIT = 3'd7;
+
+localparam [15:0] AUTO_CRC_PREFIX_DELAY = 16'd37500; // 0.75 ms @ 50 MHz
 
 function [7:0] auto_boot_char;
     input [5:0] index;
@@ -113,20 +118,29 @@ function [7:0] auto_boot_char;
             6'd10: auto_boot_char = "R";
             6'd11: auto_boot_char = "T";
             6'd12: auto_boot_char = "\n";
-            6'd13: auto_boot_char = "M";
-            6'd14: auto_boot_char = "A";
-            6'd15: auto_boot_char = "T";
-            6'd16: auto_boot_char = "M";
-            6'd17: auto_boot_char = "U";
-            6'd18: auto_boot_char = "L";
-            6'd19: auto_boot_char = "_";
-            6'd20: auto_boot_char = "C";
-            6'd21: auto_boot_char = "R";
-            6'd22: auto_boot_char = "C";
-            6'd23: auto_boot_char = "3";
-            6'd24: auto_boot_char = "2";
-            6'd25: auto_boot_char = "=";
             default: auto_boot_char = 8'h00;
+        endcase
+    end
+endfunction
+
+function [7:0] auto_prefix_char;
+    input [5:0] index;
+    begin
+        case (index)
+            6'd0:  auto_prefix_char = "M";
+            6'd1:  auto_prefix_char = "A";
+            6'd2:  auto_prefix_char = "T";
+            6'd3:  auto_prefix_char = "M";
+            6'd4:  auto_prefix_char = "U";
+            6'd5:  auto_prefix_char = "L";
+            6'd6:  auto_prefix_char = "_";
+            6'd7:  auto_prefix_char = "C";
+            6'd8:  auto_prefix_char = "R";
+            6'd9:  auto_prefix_char = "C";
+            6'd10: auto_prefix_char = "3";
+            6'd11: auto_prefix_char = "2";
+            6'd12: auto_prefix_char = "=";
+            default: auto_prefix_char = 8'h00;
         endcase
     end
 endfunction
@@ -188,6 +202,7 @@ always @(posedge PCLK or negedge PRST_) begin
         auto_crc_hold   <= 32'd0;
         auto_state      <= AUTO_ARM;
         auto_crc_pending<= 1'b0;
+        auto_delay_count<= 16'd0;
     end else begin
         auto_tx_valid <= 1'b0;
         if (auto_crc_valid) begin
@@ -205,19 +220,42 @@ always @(posedge PCLK or negedge PRST_) begin
                 if (tx_idle) begin
                     auto_tx_valid <= 1'b1;
                     auto_tx_data  <= auto_boot_char(auto_index);
-                    if (auto_index == 6'd25) begin
+                    if (auto_index == 6'd12) begin
                         auto_index <= 6'd0;
                         auto_state <= AUTO_WAIT;
+                        auto_delay_count <= AUTO_CRC_PREFIX_DELAY;
                     end else begin
                         auto_index <= auto_index + 6'd1;
                     end
                 end
             end
             AUTO_WAIT: begin
-                if (auto_crc_pending) begin
-                    auto_crc_pending <= 1'b0;
-                    auto_index <= 6'd0;
-                    auto_state <= AUTO_HEX;
+                if (tx_idle) begin
+                    if (auto_delay_count == 16'd0) begin
+                        auto_index <= 6'd0;
+                        auto_state <= AUTO_PREFIX;
+                    end else begin
+                        auto_delay_count <= auto_delay_count - 16'd1;
+                    end
+                end
+            end
+            AUTO_PREFIX: begin
+                if (tx_idle) begin
+                    auto_tx_valid <= 1'b1;
+                    auto_tx_data  <= auto_prefix_char(auto_index);
+                    if (auto_index == 6'd12) begin
+                        if (auto_crc_pending) begin
+                            auto_crc_pending <= 1'b0;
+                            auto_index <= 6'd0;
+                            auto_state <= AUTO_HEX;
+                        end else begin
+                            auto_index <= 6'd0;
+                            auto_state <= AUTO_CRC_WAIT;
+                            auto_delay_count <= 16'd0;
+                        end
+                    end else begin
+                        auto_index <= auto_index + 6'd1;
+                    end
                 end
             end
             AUTO_HEX: begin
@@ -246,14 +284,20 @@ always @(posedge PCLK or negedge PRST_) begin
                     end
                 end
             end
+            AUTO_CRC_WAIT: begin
+                if (auto_crc_pending) begin
+                    auto_crc_pending <= 1'b0;
+                    auto_index <= 6'd0;
+                    auto_state <= AUTO_HEX;
+                end
+            end
             default: begin
                 if (auto_crc_valid) begin
                     auto_crc_pending <= 1'b1;
                 end
                 if (tx_idle && auto_crc_pending) begin
-                    auto_crc_pending <= 1'b0;
                     auto_index <= 6'd0;
-                    auto_state <= AUTO_HEX;
+                    auto_state <= AUTO_PREFIX;
                 end
             end
         endcase
