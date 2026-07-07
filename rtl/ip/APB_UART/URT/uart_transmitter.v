@@ -240,7 +240,10 @@ begin
   		       counter <= tx_error ? 5'b11101 : 5'b01101;     
 		  else
                   casex ({lcr[`UART_LC_SB],lcr[`UART_LC_BITS]})
-  		  3'b0xx:	  counter <= 5'b01101;     
+		  // The receiver samples the stop bit near its centre.  Thirteen
+		  // 16x ticks retain ample stop-bit margin while removing one idle
+		  // tick before a directly chained next character.
+		  3'b0xx:	  counter <= 5'b01100;
   		  3'b100:	  counter <= 5'b10101;     
   		  default:	  counter <= 5'b11101;     
 		  endcase

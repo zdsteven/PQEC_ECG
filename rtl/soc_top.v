@@ -409,8 +409,11 @@ wire [31:0] dma_perf_read_cycles;
 wire [31:0] dma_perf_calc_cycles;
 wire [31:0] dma_perf_done_cycles;
 wire        dma_matmul_active;
-wire [3:0]  dma_matmul_start;
-wire [1023:0] dma_matmul_words;
+wire        dma_matmul_stream_valid;
+wire [3:0]  dma_matmul_stream_start;
+wire [3:0]  dma_matmul_stream_core;
+wire [4:0]  dma_matmul_stream_index;
+wire [31:0] dma_matmul_stream_data;
 wire [3:0]  dma_matmul_ready;
 wire [3:0]  dma_matmul_done;
 wire [3:0]  dma_matmul_result_index;
@@ -717,8 +720,11 @@ matmul_dma #(
     .m_axi_rvalid   (dma_m_rvalid),
     .m_axi_rready   (dma_m_rready),
     .matmul_active  (dma_matmul_active),
-    .matmul_start   (dma_matmul_start),
-    .matmul_matrix_words (dma_matmul_words),
+    .matmul_stream_valid(dma_matmul_stream_valid),
+    .matmul_stream_start(dma_matmul_stream_start),
+    .matmul_stream_core (dma_matmul_stream_core),
+    .matmul_stream_index(dma_matmul_stream_index),
+    .matmul_stream_data (dma_matmul_stream_data),
     .matmul_ready   (dma_matmul_ready),
     .matmul_done    (dma_matmul_done),
     .matmul_result_index (dma_matmul_result_index),
@@ -781,8 +787,11 @@ matmul_axi_slave u_matmul (
     .s_axi_rready   ( axiOut_7_rready   ),
 
     .dma_active     ( dma_matmul_active ),
-    .dma_start      ( dma_matmul_start  ),
-    .dma_matrix_words ( dma_matmul_words ),
+    .dma_stream_valid(dma_matmul_stream_valid),
+    .dma_stream_start(dma_matmul_stream_start),
+    .dma_stream_core (dma_matmul_stream_core),
+    .dma_stream_index(dma_matmul_stream_index),
+    .dma_stream_data (dma_matmul_stream_data),
     .dma_ready      ( dma_matmul_ready  ),
     .dma_done       ( dma_matmul_done   ),
     .dma_result_index ( dma_matmul_result_index ),

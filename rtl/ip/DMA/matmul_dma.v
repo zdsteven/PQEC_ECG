@@ -93,8 +93,11 @@ module matmul_dma #(
 
     // Direct request/result link to the independently attached Matmul IP.
     output            matmul_active,
-    output reg [3:0]  matmul_start,
-    output     [1023:0] matmul_matrix_words,
+    output            matmul_stream_valid,
+    output     [3:0]  matmul_stream_start,
+    output     [3:0]  matmul_stream_core,
+    output     [4:0]  matmul_stream_index,
+    output     [31:0] matmul_stream_data,
     input      [3:0]  matmul_ready,
     input      [3:0]  matmul_done,
     output reg [3:0]  matmul_result_index,
@@ -152,34 +155,22 @@ reg        busy;
 reg        done;
 reg        error;
 reg [12:0] read_group_count;
-reg [12:0] launch_group_count;
 reg [12:0] calc_group_count;
 reg [12:0] write_group_count;
 
-// Two 128-byte input banks.  These are registers by design: they need many
-// parallel read ports when a bank is latched into the compute core.
-reg [31:0] input_buffer [0:127];
-reg [3:0]  bank_valid;
-reg [1:0]  read_bank;
-reg [1:0]  active_read_bank;
-reg [1:0]  compute_bank;
-// Eight matrices are fetched by one maximum-length 256-beat AXI burst.  The
-// low five bits select a word and bits [6:5] rotate through the four banks.
-// A bank is released when its matrix is dispatched, before it is reused by
-// the second half of the burst.
+// Eight matrices are fetched by one maximum-length 256-beat AXI burst.
 reg [7:0]  read_beat;
 reg        read_state;
 
 reg  [3:0]    store_element;
 reg           compute_complete;
 reg           store_active;
-reg  [1:0]    store_core;
-reg  [1:0]    next_core;
-reg  [3:0]    core_result_pending;
-reg  [12:0]   core_group [0:3];
-reg  [12:0]   core_result_group [0:3];
-reg  [1023:0] matmul_matrix_hold;
-wire [1023:0] launch_matrix_words;
+reg           store_core;
+reg           next_core;
+reg           stream_core;
+reg  [1:0]    core_result_pending;
+reg  [12:0]   core_group [0:1];
+reg  [12:0]   core_result_group [0:1];
 
 // 66 bits is the natural result width.  Keeping this width instead of the
 // external 96-bit padded format saves roughly 2.4 Mbit of block RAM.
@@ -212,31 +203,11 @@ wire w_handshake  = s_axi_wvalid && s_axi_wready;
 wire write_fire   = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 wire result_write_enable = busy && store_active;
 wire [12:0] result_write_group = core_result_group[store_core];
-wire [65:0] result_write_data = (store_core == 2'd0) ? matmul_result_data0 :
-                                (store_core == 2'd1) ? matmul_result_data1 :
-                                (store_core == 2'd2) ? matmul_result_data2 :
-                                                        matmul_result_data3;
-// Each core snapshots all sixteen results on done, so serial result storage no
-// longer prevents that core from accepting its next matrix.
-wire [3:0] core_sched_ready = matmul_ready & ~matmul_start;
+wire [65:0] result_write_data = store_core ? matmul_result_data1 :
+                                            matmul_result_data0;
+wire [1:0] core_sched_ready = matmul_ready[1:0];
 wire any_core_sched_ready = |core_sched_ready;
-wire [3:0] core_sched_scan = {
-    core_sched_ready[next_core + 2'd3],
-    core_sched_ready[next_core + 2'd2],
-    core_sched_ready[next_core + 2'd1],
-    core_sched_ready[next_core]
-};
-wire [1:0] selected_launch_core =
-    core_sched_scan[0] ? next_core :
-    core_sched_scan[1] ? (next_core + 2'd1) :
-    core_sched_scan[2] ? (next_core + 2'd2) :
-                         (next_core + 2'd3);
-wire read_bank_complete_now = (read_state == RD_DATA) && m_axi_rvalid && m_axi_rready &&
-                              (read_beat[4:0] == 5'd31);
-wire launch_filled_bank_now = read_bank_complete_now &&
-                              (active_read_bank == compute_bank) &&
-                              any_core_sched_ready;
-wire bank_ready_for_launch = bank_valid[compute_bank] || launch_filled_bank_now;
+wire selected_launch_core = core_sched_ready[next_core] ? next_core : ~next_core;
 wire result_read_first = busy && (write_state == WB_PREFETCH) && write_need_prefetch;
 wire result_read_next_same_group = m_axi_wvalid && m_axi_wready &&
                                    (write_part == 2'd0) && (write_element != 4'd15);
@@ -345,7 +316,14 @@ assign s_axi_rlast   = 1'b1;
 
 assign finish = done;
 assign matmul_active = busy;
-assign matmul_matrix_words = matmul_matrix_hold;
+assign matmul_stream_valid = (read_state == RD_DATA) && m_axi_rvalid && m_axi_rready;
+assign matmul_stream_core = (read_beat[4:0] == 5'd0) ?
+                            (selected_launch_core ? 4'b0010 : 4'b0001) :
+                            (stream_core ? 4'b0010 : 4'b0001);
+assign matmul_stream_index = read_beat[4:0];
+assign matmul_stream_data = m_axi_rdata;
+assign matmul_stream_start = (matmul_stream_valid && (read_beat[4:0] == 5'd0)) ?
+                             matmul_stream_core : 4'b0000;
 
 // Read master: eight complete A/B groups per maximum 256-word burst.  Each
 // burst is 1024-byte aligned and therefore remains inside a 4 KiB page.
@@ -363,9 +341,9 @@ assign m_axi_arcache = 4'b0000;
 assign m_axi_arprot  = 3'b000;
 assign m_axi_arvalid = busy && !compute_complete &&
                        ((read_state == RD_IDLE) || read_chain_offer) &&
-                       (read_ar_group < group_num[12:0]) &&
-                       (bank_valid == 4'b0000);
-assign m_axi_rready  = busy && (read_state == RD_DATA);
+                       (read_ar_group < group_num[12:0]);
+assign m_axi_rready  = busy && (read_state == RD_DATA) &&
+                       ((read_beat[4:0] != 5'd0) || any_core_sched_ready);
 
 // Write master: normally one 48-word burst per result matrix.  A matrix that
 // straddles a 4 KiB boundary is split into the minimum two legal AXI4 bursts.
@@ -385,16 +363,6 @@ assign m_axi_bready  = RESULT_WRITEBACK && busy && (write_state == WB_RESP);
 assign m_axi_wdata   = (write_part == 2'd0) ? write_current_data[31:0] :
                        (write_part == 2'd1) ? write_current_data[63:32] :
                                               {30'd0, write_current_data[65:64]};
-
-genvar word_index;
-generate
-    for (word_index = 0; word_index < 32; word_index = word_index + 1) begin: CORE_WORD_MUX
-        assign launch_matrix_words[word_index*32 +: 32] =
-            (launch_filled_bank_now && (word_index == read_beat[4:0])) ?
-            m_axi_rdata :
-            input_buffer[{compute_bank, 5'b0} + word_index];
-    end
-endgenerate
 
 // One synchronous read port and one synchronous write port.  Keeping all RAM
 // accesses in this template is important: it makes Vivado infer RAMB36 blocks
@@ -496,24 +464,18 @@ always @(posedge clk) begin
         done                <= 1'b0;
         error               <= 1'b0;
         read_group_count    <= 13'd0;
-        launch_group_count  <= 13'd0;
         calc_group_count    <= 13'd0;
         write_group_count   <= 13'd0;
-        bank_valid          <= 4'b0000;
-        read_bank           <= 2'd0;
-        active_read_bank    <= 2'd0;
-        compute_bank        <= 2'd0;
         read_beat           <= 8'd0;
         read_state          <= RD_IDLE;
-        matmul_start        <= 4'b0000;
         matmul_result_index <= 4'd0;
         store_element       <= 4'd0;
         compute_complete    <= 1'b0;
         store_active        <= 1'b0;
-        store_core          <= 2'd0;
-        next_core           <= 2'd0;
-        core_result_pending <= 4'b0000;
-        matmul_matrix_hold  <= 1024'd0;
+        store_core          <= 1'b0;
+        next_core           <= 1'b0;
+        stream_core         <= 1'b0;
+        core_result_pending <= 2'b00;
         write_state         <= WB_IDLE;
         write_address       <= 32'd0;
         write_element       <= 4'd0;
@@ -538,15 +500,11 @@ always @(posedge clk) begin
         perf_calc_cycles     <= 32'd0;
         perf_done_cycles     <= 32'd0;
         auto_start_armed     <= 1'b1;
-        // input_buffer is intentionally not reset.  bank_valid starts empty
-        // and every bank is completely overwritten by 32 R beats before use;
-        // clearing 4096 data bits created a very high-fanout reset path.
-        for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
+        for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
             core_group[core_reset_index] = 13'd0;
             core_result_group[core_reset_index] = 13'd0;
         end
     end else begin
-        matmul_start <= 4'b0000;
         start_banner_valid <= 1'b0;
         crc32_valid  <= 1'b0;
 
@@ -569,21 +527,17 @@ always @(posedge clk) begin
                 busy                <= 1'b1;
                 error               <= 1'b0;
                 read_group_count    <= 13'd0;
-                launch_group_count  <= 13'd0;
                 calc_group_count    <= 13'd0;
                 write_group_count   <= 13'd0;
-                bank_valid          <= 4'b0000;
-                read_bank           <= 2'd0;
-                active_read_bank    <= 2'd0;
-                compute_bank        <= 2'd0;
                 read_beat           <= 8'd0;
                 read_state          <= RD_IDLE;
                 store_element       <= 4'd0;
                 compute_complete    <= 1'b0;
                 store_active        <= 1'b0;
-                store_core          <= 2'd0;
-                next_core           <= 2'd0;
-                core_result_pending <= 4'b0000;
+                store_core          <= 1'b0;
+                next_core           <= 1'b0;
+                stream_core         <= 1'b0;
+                core_result_pending <= 2'b00;
                 write_state         <= WB_IDLE;
                 write_address       <= dst_base;
                 write_element       <= 4'd0;
@@ -603,7 +557,7 @@ always @(posedge clk) begin
                 perf_read_cycles     <= 32'd0;
                 perf_calc_cycles     <= 32'd0;
                 perf_done_cycles     <= 32'd0;
-                for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
+                for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
                 end
@@ -612,23 +566,25 @@ always @(posedge clk) begin
             perf_cycle_count <= perf_cycle_count + 32'd1;
             // Input DMA state machine.
             if ((read_state == RD_IDLE) && m_axi_arvalid && m_axi_arready) begin
-                active_read_bank <= read_bank;
                 read_beat        <= 8'd0;
                 read_state       <= RD_DATA;
             end else if ((read_state == RD_DATA) && m_axi_rvalid && m_axi_rready) begin
-                input_buffer[{active_read_bank, 5'b0} + read_beat[4:0]] <= m_axi_rdata;
+                // Start a core on word A00 and route all remaining words of
+                // this matrix to the same core.  A00 participates through the
+                // core's input bypass on this very handshake.
+                if (read_beat[4:0] == 5'd0) begin
+                    stream_core <= selected_launch_core;
+                    core_group[selected_launch_core] <= read_group_count;
+                    next_core <= ~selected_launch_core;
+                end
 
                 if (m_axi_rresp != 2'b00)
                     error <= 1'b1;
 
                 if (read_beat[4:0] == 5'd31) begin
-                    if (!launch_filled_bank_now)
-                        bank_valid[active_read_bank] <= 1'b1;
                     read_group_count <= read_group_count + 13'd1;
                     if ((read_group_count + 13'd1) == group_num[12:0])
                         perf_read_cycles <= perf_cycle_count;
-                    read_bank        <= read_bank + 2'd1;
-                    active_read_bank <= active_read_bank + 2'd1;
                     if (m_axi_rlast) begin
                         read_beat  <= 8'd0;
                         // If the bridge accepts the next AR alongside RLAST,
@@ -647,22 +603,7 @@ always @(posedge clk) begin
                 end
             end
 
-            // Dispatch complete input banks to either compute core.  The
-            // 1024-bit holding register lets a bank be released immediately;
-            // each core latches the common bus with its own start pulse.
-            if ((launch_group_count < group_num[12:0]) && bank_ready_for_launch &&
-                any_core_sched_ready) begin
-                matmul_matrix_hold <= launch_matrix_words;
-                if (bank_valid[compute_bank])
-                    bank_valid[compute_bank] <= 1'b0;
-                compute_bank <= compute_bank + 2'd1;
-                launch_group_count <= launch_group_count + 13'd1;
-                next_core <= selected_launch_core + 2'd1;
-                matmul_start[selected_launch_core] <= 1'b1;
-                core_group[selected_launch_core] <= launch_group_count;
-            end
-
-            for (core_reset_index = 0; core_reset_index < 4; core_reset_index = core_reset_index + 1) begin
+            for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
                 if (matmul_done[core_reset_index])
                     core_result_group[core_reset_index] <= core_group[core_reset_index];
             end
@@ -670,13 +611,13 @@ always @(posedge clk) begin
             // Done pulses are retained until the single BRAM write port has
             // copied all sixteen snapshotted results.  The originating core
             // may already be computing its next group.
-            core_result_pending <= core_result_pending | matmul_done;
+            core_result_pending <= core_result_pending | matmul_done[1:0];
             if (!store_active) begin
                 if ((core_result_pending[0] &&
                      (core_result_group[0] == calc_group_count)) ||
                     (matmul_done[0] && (core_group[0] == calc_group_count))) begin
                     store_active <= 1'b1;
-                    store_core <= 2'd0;
+                    store_core <= 1'b0;
                     store_element <= 4'd0;
                     matmul_result_index <= 4'd0;
                     core_result_pending[0] <= 1'b0;
@@ -684,26 +625,10 @@ always @(posedge clk) begin
                               (core_result_group[1] == calc_group_count)) ||
                              (matmul_done[1] && (core_group[1] == calc_group_count))) begin
                     store_active <= 1'b1;
-                    store_core <= 2'd1;
+                    store_core <= 1'b1;
                     store_element <= 4'd0;
                     matmul_result_index <= 4'd0;
                     core_result_pending[1] <= 1'b0;
-                end else if ((core_result_pending[2] &&
-                              (core_result_group[2] == calc_group_count)) ||
-                             (matmul_done[2] && (core_group[2] == calc_group_count))) begin
-                    store_active <= 1'b1;
-                    store_core <= 2'd2;
-                    store_element <= 4'd0;
-                    matmul_result_index <= 4'd0;
-                    core_result_pending[2] <= 1'b0;
-                end else if ((core_result_pending[3] &&
-                              (core_result_group[3] == calc_group_count)) ||
-                             (matmul_done[3] && (core_group[3] == calc_group_count))) begin
-                    store_active <= 1'b1;
-                    store_core <= 2'd3;
-                    store_element <= 4'd0;
-                    matmul_result_index <= 4'd0;
-                    core_result_pending[3] <= 1'b0;
                 end
             end else if (store_element == 4'd15) begin
                 store_active <= 1'b0;
