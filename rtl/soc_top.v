@@ -405,9 +405,6 @@ wire        dma_finish   ;
 wire        dma_start_banner_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
-wire [31:0] dma_perf_read_cycles;
-wire [31:0] dma_perf_calc_cycles;
-wire [31:0] dma_perf_done_cycles;
 wire        dma_matmul_active;
 wire        dma_matmul_stream_valid;
 wire [3:0]  dma_matmul_stream_start;
@@ -642,8 +639,7 @@ wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
 
 matmul_dma #(
-    .MAX_GROUPS      (5000),
-    .RESULT_WRITEBACK(0)
+    .MAX_GROUPS      (5000)
 ) u_matmul_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),
@@ -730,15 +726,10 @@ matmul_dma #(
     .matmul_result_index (dma_matmul_result_index),
     .matmul_result_data0 (dma_matmul_result_data0),
     .matmul_result_data1 (dma_matmul_result_data1),
-    .matmul_result_data2 (dma_matmul_result_data2),
-    .matmul_result_data3 (dma_matmul_result_data3),
     .finish         (dma_finish),
     .start_banner_valid(dma_start_banner_valid),
     .crc32_valid    (dma_crc32_valid),
-    .crc32_final    (dma_crc32_final),
-    .perf_read_cycles(dma_perf_read_cycles),
-    .perf_calc_cycles(dma_perf_calc_cycles),
-    .perf_done_cycles(dma_perf_done_cycles)
+    .crc32_final    (dma_crc32_final)
 );
 
 matmul_axi_slave u_matmul (
