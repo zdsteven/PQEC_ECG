@@ -89,7 +89,7 @@ module confreg #(
     output      [7:0] dpy1,
     input      [31:0] switch,
     input      [3 :0] touch_btn,
-    input             dma_finish,
+    input             matmul_dma_finish,
     input             fft_finish,
     output            confreg_int
 );

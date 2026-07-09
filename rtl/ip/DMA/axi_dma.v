@@ -1,1187 +1,409 @@
-module axi_dma (
-    input            s_awvalid,
-    output           s_awready,
-    input   [31:0]   s_awaddr,
-    input   [4:0]    s_awid,
-    input   [7:0]    s_awlen,
-    input   [2:0]    s_awsize,
-    input   [1:0]    s_awburst,
-    input            s_awlock,
-    input   [3:0]    s_awcache,
-    input   [2:0]    s_awprot,
-    input            s_wvalid,
-    output           s_wready,
-    input   [31:0]   s_wdata,
-    input   [3:0]    s_wstrb,
-    input            s_wlast,
-    output           s_bvalid,
-    input            s_bready,
-    output  [4:0]    s_bid,
-    output  [1:0]    s_bresp,
-    input            s_arvalid,
-    output           s_arready,
-    input   [31:0]   s_araddr,
-    input   [4:0]    s_arid,
-    input   [7:0]    s_arlen,
-    input   [2:0]    s_arsize,
-    input   [1:0]    s_arburst,
-    input            s_arlock,
-    input   [3:0]    s_arcache,
-    input   [2:0]    s_arprot,
-    output           s_rvalid,
-    input            s_rready,
-    output  [31:0]   s_rdata,
-    output  [4:0]    s_rid,
-    output  [1:0]    s_rresp,
-    output           s_rlast,
+// Generic AXI memory-to-memory DMA.
+//
+// This block is intentionally independent from the matrix-specific
+// matmul_dma.v.  It exposes a small AXI register slave for software or another
+// controller to configure a copy transaction, and an AXI master that performs
+// aligned 32-bit INCR bursts.  The implementation is store-and-forward per
+// burst: read one burst into an internal buffer, then write that burst to the
+// destination.  This keeps the control path simple and AXI4 compliant while
+// still giving other peripherals a reusable DMA building block.
+module axi_dma #(
+    parameter MAX_BURST_WORDS = 16
+) (
+    input             clk,
+    input             resetn,
 
-    output  [3:0]    m_arid,
-    output  [31:0]   m_araddr,
-    output  [7:0]    m_arlen,
-    output  [2:0]    m_arsize,
-    output  [1:0]    m_arburst,
-    output           m_arlock,
-    output  [3:0]    m_arcache,
-    output  [2:0]    m_arprot,
-    output           m_arvalid,
-    input            m_arready,
-    input   [3:0]    m_rid,
-    input   [31:0]   m_rdata,
-    input   [1:0]    m_rresp,
-    input            m_rlast,
-    input            m_rvalid,
-    output           m_rready,
-    output  [3:0]    m_awid,
-    output  [31:0]   m_awaddr,
-    output  [7:0]    m_awlen,
-    output  [2:0]    m_awsize,
-    output  [1:0]    m_awburst,
-    output           m_awlock,
-    output  [3:0]    m_awcache,
-    output  [2:0]    m_awprot,
-    output           m_awvalid,
-    input            m_awready,
-    output  [31:0]   m_wdata,
-    output  [3:0]    m_wstrb,
-    output           m_wlast,
-    output           m_wvalid,
-    input            m_wready,
-    input   [3:0]    m_bid,
-    input   [1:0]    m_bresp,
-    input            m_bvalid,
-    output           m_bready,
+    // AXI slave register interface.
+    input      [4:0]  s_axi_awid,
+    input      [31:0] s_axi_awaddr,
+    input      [7:0]  s_axi_awlen,
+    input      [2:0]  s_axi_awsize,
+    input      [1:0]  s_axi_awburst,
+    input             s_axi_awlock,
+    input      [3:0]  s_axi_awcache,
+    input      [2:0]  s_axi_awprot,
+    input             s_axi_awvalid,
+    output            s_axi_awready,
+    input      [31:0] s_axi_wdata,
+    input      [3:0]  s_axi_wstrb,
+    input             s_axi_wlast,
+    input             s_axi_wvalid,
+    output            s_axi_wready,
+    output reg [4:0]  s_axi_bid,
+    output     [1:0]  s_axi_bresp,
+    output reg        s_axi_bvalid,
+    input             s_axi_bready,
+    input      [4:0]  s_axi_arid,
+    input      [31:0] s_axi_araddr,
+    input      [7:0]  s_axi_arlen,
+    input      [2:0]  s_axi_arsize,
+    input      [1:0]  s_axi_arburst,
+    input             s_axi_arlock,
+    input      [3:0]  s_axi_arcache,
+    input      [2:0]  s_axi_arprot,
+    input             s_axi_arvalid,
+    output            s_axi_arready,
+    output reg [4:0]  s_axi_rid,
+    output reg [31:0] s_axi_rdata,
+    output     [1:0]  s_axi_rresp,
+    output            s_axi_rlast,
+    output reg        s_axi_rvalid,
+    input             s_axi_rready,
 
-    output reg       dma_finish,
-    input            aclk,
-    input            aresetn
+    // AXI master memory interface.
+    output     [3:0]  m_axi_awid,
+    output     [31:0] m_axi_awaddr,
+    output     [7:0]  m_axi_awlen,
+    output     [2:0]  m_axi_awsize,
+    output     [1:0]  m_axi_awburst,
+    output            m_axi_awlock,
+    output     [3:0]  m_axi_awcache,
+    output     [2:0]  m_axi_awprot,
+    output            m_axi_awvalid,
+    input             m_axi_awready,
+    output     [31:0] m_axi_wdata,
+    output     [3:0]  m_axi_wstrb,
+    output            m_axi_wlast,
+    output            m_axi_wvalid,
+    input             m_axi_wready,
+    input      [3:0]  m_axi_bid,
+    input      [1:0]  m_axi_bresp,
+    input             m_axi_bvalid,
+    output            m_axi_bready,
+    output     [3:0]  m_axi_arid,
+    output     [31:0] m_axi_araddr,
+    output     [7:0]  m_axi_arlen,
+    output     [2:0]  m_axi_arsize,
+    output     [1:0]  m_axi_arburst,
+    output            m_axi_arlock,
+    output     [3:0]  m_axi_arcache,
+    output     [2:0]  m_axi_arprot,
+    output            m_axi_arvalid,
+    input             m_axi_arready,
+    input      [3:0]  m_axi_rid,
+    input      [31:0] m_axi_rdata,
+    input      [1:0]  m_axi_rresp,
+    input             m_axi_rlast,
+    input             m_axi_rvalid,
+    output            m_axi_rready,
+
+    output            irq
 );
 
-    // Register map used by the CPU-side AXI slave port.
-    // CTRL bit0 starts normal DMA, bit1 clears DONE, bit2 selects matmul batch mode.
-    // In normal DMA LEN is a byte count. In matmul batch mode LEN is the group count.
-    localparam CTRL_ADDR      = 16'h0000;
-    localparam STATUS_ADDR    = 16'h0004;
-    localparam SRC_ADDR       = 16'h0008;
-    localparam DST_ADDR       = 16'h000c;
-    localparam LEN_ADDR       = 16'h0010;
-    localparam CUR_SRC_ADDR   = 16'h0014;
-    localparam CUR_DST_ADDR   = 16'h0018;
-    localparam REMAIN_ADDR    = 16'h001c;
-    localparam VERSION_ADDR   = 16'h0020;
-    localparam MATMUL_CRC_ADDR = 16'h0024;
+localparam [11:0] ADDR_CTRL       = 12'h000;
+localparam [11:0] ADDR_STATUS     = 12'h004;
+localparam [11:0] ADDR_SRC        = 12'h008;
+localparam [11:0] ADDR_DST        = 12'h00c;
+localparam [11:0] ADDR_LEN_BYTES  = 12'h010;
+localparam [11:0] ADDR_BURST_WORDS= 12'h014;
+localparam [11:0] ADDR_DONE_BYTES = 12'h018;
+localparam [11:0] ADDR_IRQ_ENABLE = 12'h01c;
 
-    localparam DEFAULT_BURST_MAX_WORDS = 8'd64;
-    localparam KYBER_BURST_MAX_WORDS   = 8'd128;
+localparam [2:0] ST_IDLE = 3'd0;
+localparam [2:0] ST_AR   = 3'd1;
+localparam [2:0] ST_R    = 3'd2;
+localparam [2:0] ST_AW   = 3'd3;
+localparam [2:0] ST_W    = 3'd4;
+localparam [2:0] ST_B    = 3'd5;
+localparam [8:0] MAX_BURST_LIMIT =
+    (MAX_BURST_WORDS > 256) ? 9'd256 : MAX_BURST_WORDS;
 
-    // One master FSM is shared by legacy memcpy/stream DMA and the matmul batch path.
-    // Matmul has its own internal read/compute/write pipeline under M_MM_PIPE.
-    localparam M_IDLE      = 5'd0;
-    localparam M_AR        = 5'd1;
-    localparam M_R         = 5'd2;
-    localparam M_AW        = 5'd3;
-    localparam M_W         = 5'd4;
-    localparam M_B         = 5'd5;
-    localparam M_STREAM    = 5'd6;
-    localparam M_MM_PIPE   = 5'd7;
+reg [31:0] src_base;
+reg [31:0] dst_base;
+reg [31:0] len_bytes;
+reg [7:0]  cfg_burst_words;
+reg        irq_enable;
 
-    localparam RD_IDLE = 2'd0;
-    localparam RD_AR   = 2'd1;
-    localparam RD_R    = 2'd2;
-    localparam WR_IDLE = 2'd0;
-    localparam WR_AW   = 2'd1;
-    localparam WR_W    = 2'd2;
-    localparam WR_B    = 2'd3;
+reg [31:0] awaddr_hold;
+reg [4:0]  awid_hold;
+reg [7:0]  awlen_count;
+reg        aw_hold_valid;
+reg [31:0] wdata_hold;
+reg [3:0]  wstrb_hold;
+reg        w_hold_valid;
+reg        start_pulse;
+reg        clear_status_pulse;
 
-    localparam MM_CALC_IDLE  = 2'd0;
-    localparam MM_CALC_RUN   = 2'd1;
-    localparam MM_CALC_STORE = 2'd2;
+reg        busy;
+reg        done;
+reg        error;
+reg [2:0]  state;
+reg [31:0] src_addr;
+reg [31:0] dst_addr;
+reg [31:0] words_remaining;
+reg [31:0] done_bytes;
+reg [7:0]  burst_last;
+reg [7:0]  read_beat;
+reg [7:0]  write_beat;
 
-    reg axi_busy, axi_write, axi_r_or_w;
-    reg s_wready_r;
-    reg [4:0] buf_id;
-    reg [31:0] buf_addr;
-    reg [7:0] buf_len;
-    reg [2:0] buf_size;
-    reg [1:0] buf_burst;
-    reg buf_lock;
-    reg [3:0] buf_cache;
-    reg [2:0] buf_prot;
-    reg [31:0] s_rdata_r;
-    reg s_rvalid_r;
-    reg s_rlast_r;
-    reg s_bvalid_r;
+reg [31:0] burst_buffer [0:MAX_BURST_WORDS-1];
 
-    reg [31:0] dma_src_addr;
-    reg [31:0] dma_dst_addr;
-    reg [31:0] dma_len_cfg;
-    reg [31:0] dma_cur_src;
-    reg [31:0] dma_cur_dst;
-    reg [31:0] dma_remain;
-    reg dma_busy;
-    reg dma_done;
-    reg dma_error;
-    reg [4:0] dma_state;
+wire [11:0] write_offset = awaddr_hold[11:0];
+wire [11:0] read_offset = s_axi_araddr[11:0];
+wire aw_handshake = s_axi_awvalid && s_axi_awready;
+wire w_handshake = s_axi_wvalid && s_axi_wready;
+wire write_fire = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
+wire [31:0] src_page_bytes = 32'h00001000 - {20'd0, src_addr[11:0]};
+wire [31:0] dst_page_bytes = 32'h00001000 - {20'd0, dst_addr[11:0]};
+wire [8:0] cfg_burst_limit = (cfg_burst_words == 8'd0) ? 9'd1 :
+                             ({1'b0, cfg_burst_words} > MAX_BURST_LIMIT) ?
+                             MAX_BURST_LIMIT :
+                             {1'b0, cfg_burst_words};
+wire [8:0] words_limit = (words_remaining > {23'd0, cfg_burst_limit}) ?
+                         cfg_burst_limit : words_remaining[8:0];
+wire [10:0] src_page_words = src_page_bytes[12:2];
+wire [10:0] dst_page_words = dst_page_bytes[12:2];
+wire [10:0] page_limit_a = (src_page_words < dst_page_words) ?
+                           src_page_words : dst_page_words;
+wire [8:0] page_limited_words = (page_limit_a < {2'b00, words_limit}) ?
+                                page_limit_a[8:0] : words_limit;
+wire [8:0] next_burst_words = page_limited_words;
+wire [31:0] cfg_burst_words_next =
+    apply_wstrb({24'd0, cfg_burst_words}, wdata_hold, wstrb_hold);
+wire [31:0] irq_enable_next =
+    apply_wstrb({31'd0, irq_enable}, wdata_hold, wstrb_hold);
+wire invalid_start = (len_bytes == 32'd0) || (len_bytes[1:0] != 2'b00) ||
+                     (src_base[1:0] != 2'b00) || (dst_base[1:0] != 2'b00) ||
+                     (MAX_BURST_WORDS < 1);
+wire unused_slave_inputs = s_axi_awsize[0] | s_axi_awsize[1] | s_axi_awsize[2] |
+                           s_axi_awburst[0] | s_axi_awburst[1] |
+                           s_axi_awlock | (|s_axi_awcache) | (|s_axi_awprot) |
+                           s_axi_wlast |
+                           s_axi_arsize[0] | s_axi_arsize[1] | s_axi_arsize[2] |
+                           s_axi_arburst[0] | s_axi_arburst[1] |
+                           s_axi_arlock | (|s_axi_arcache) | (|s_axi_arprot) |
+                           (|m_axi_bid) | (|m_axi_rid);
 
-    reg m_arvalid_r;
-    reg [31:0] m_araddr_r;
-    reg [7:0] m_arlen_r;
-    reg m_rready_r;
-    reg m_awvalid_r;
-    reg [31:0] m_awaddr_r;
-    reg [7:0] m_awlen_r;
-    reg m_wvalid_r;
-    reg [31:0] m_wdata_r;
-    reg m_wlast_r;
-    reg m_bready_r;
-    reg [7:0] dma_burst_words;
-    reg [7:0] dma_rd_cnt;
-    reg [7:0] dma_wr_cnt;
-    reg dma_src_burst_en;
-    reg dma_dst_burst_en;
-    reg [31:0] dma_buf [0:127];
-    reg [1:0] stream_rd_state;
-    reg [1:0] stream_wr_state;
-    reg [7:0] stream_rd_beats;
-    reg [7:0] stream_wr_beats;
-    reg [6:0] stream_fifo_wr_ptr;
-    reg [6:0] stream_fifo_rd_ptr;
-    reg [7:0] stream_fifo_count;
-    reg [31:0] stream_rd_addr;
-    reg [31:0] stream_wr_addr;
-    reg [31:0] stream_rd_remain;
-    reg [31:0] stream_wr_remain;
+function [31:0] apply_wstrb;
+    input [31:0] old_value;
+    input [31:0] new_value;
+    input [3:0]  strobe;
+    begin
+        apply_wstrb = old_value;
+        if (strobe[0]) apply_wstrb[7:0]   = new_value[7:0];
+        if (strobe[1]) apply_wstrb[15:8]  = new_value[15:8];
+        if (strobe[2]) apply_wstrb[23:16] = new_value[23:16];
+        if (strobe[3]) apply_wstrb[31:24] = new_value[31:24];
+    end
+endfunction
 
-    // Matmul batch registers. The batch engine reads A/B from ExtRAM, computes C,
-    // writes the 48-word packed result, and folds those same words into CRC32.
-    reg [31:0] matmul_crc;
-    reg [31:0] mm_crc_state;
-    reg [31:0] mm_groups_left;
-    reg [31:0] mm_read_left;
-    reg [5:0] mm_rd_cnt;
-    reg [1:0] mm_rd_state;
-    reg [1:0] mm_wr_state;
-    reg [1:0] mm_calc_state;
-    reg mm_rd_slot;
-    reg mm_calc_in_slot;
-    reg mm_calc_out_slot;
-    reg mm_wr_slot;
-    reg mm_in0_valid;
-    reg mm_in1_valid;
-    reg mm_out0_valid;
-    reg mm_out1_valid;
-    reg [5:0] mm_wr_cnt;
-    reg [31:0] mm_in0 [0:31];
-    reg [31:0] mm_in1 [0:31];
-    reg [31:0] mm_out0 [0:47];
-    reg [31:0] mm_out1 [0:47];
-    reg [1023:0] mm_core_ab_data;
-    reg mm_core_start;
-    wire mm_core_busy;
-    wire mm_core_done;
-    wire [1055:0] mm_core_c_data;
-    integer i;
+assign s_axi_awready = !aw_hold_valid && !s_axi_bvalid;
+assign s_axi_wready  = aw_hold_valid && !w_hold_valid && !s_axi_bvalid;
+assign s_axi_bresp   = 2'b00;
+assign s_axi_arready = !s_axi_rvalid;
+assign s_axi_rresp   = 2'b00;
+assign s_axi_rlast   = 1'b1;
 
-    wire ar_enter = s_arvalid & s_arready;
-    wire r_retire = s_rvalid_r & s_rready & s_rlast_r;
-    wire aw_enter = s_awvalid & s_awready;
-    wire w_enter  = s_wvalid & s_wready_r & s_wlast;
-    wire b_retire = s_bvalid_r & s_bready;
+assign m_axi_arid    = 4'h3;
+assign m_axi_araddr  = src_addr;
+assign m_axi_arlen   = burst_last;
+assign m_axi_arsize  = 3'd2;
+assign m_axi_arburst = 2'b01;
+assign m_axi_arlock  = 1'b0;
+assign m_axi_arcache = 4'b0000;
+assign m_axi_arprot  = 3'b000;
+assign m_axi_arvalid = busy && (state == ST_AR);
+assign m_axi_rready  = busy && (state == ST_R);
 
-    wire write_ctrl    = w_enter & (buf_addr[15:0] == CTRL_ADDR);
-    wire write_src     = w_enter & (buf_addr[15:0] == SRC_ADDR);
-    wire write_dst     = w_enter & (buf_addr[15:0] == DST_ADDR);
-    wire write_len     = w_enter & (buf_addr[15:0] == LEN_ADDR);
-    wire ctrl_start    = write_ctrl & s_wdata[0];
-    wire ctrl_clr_done = write_ctrl & s_wdata[1];
-    wire ctrl_matmul   = write_ctrl & s_wdata[2];
-    wire m_ar_fire = m_arvalid_r & m_arready;
-    wire m_r_fire  = m_rready_r & m_rvalid;
-    wire m_aw_fire = m_awvalid_r & m_awready;
-    wire m_w_fire  = m_wvalid_r & m_wready;
-    wire m_b_fire  = m_bready_r & m_bvalid;
-    wire stream_push = m_r_fire & (m_rresp == 2'b00);
-    wire stream_pop = m_w_fire;
+assign m_axi_awid    = 4'h3;
+assign m_axi_awaddr  = dst_addr;
+assign m_axi_awlen   = burst_last;
+assign m_axi_awsize  = 3'd2;
+assign m_axi_awburst = 2'b01;
+assign m_axi_awlock  = 1'b0;
+assign m_axi_awcache = 4'b0000;
+assign m_axi_awprot  = 3'b000;
+assign m_axi_awvalid = busy && (state == ST_AW);
+assign m_axi_wdata   = burst_buffer[write_beat];
+assign m_axi_wstrb   = 4'b1111;
+assign m_axi_wlast   = (write_beat == burst_last);
+assign m_axi_wvalid  = busy && (state == ST_W);
+assign m_axi_bready  = busy && (state == ST_B);
 
-    wire cfg_invalid = (dma_len_cfg == 32'd0) |
-                       (dma_src_addr[1:0] != 2'b00) |
-                       (dma_dst_addr[1:0] != 2'b00) |
-                       (dma_len_cfg[1:0] != 2'b00);
-    wire matmul_cfg_invalid = (dma_len_cfg == 32'd0) |
-                              (dma_src_addr[1:0] != 2'b00) |
-                              (dma_dst_addr[1:0] != 2'b00);
-    wire kyber_src_cfg = (dma_src_addr[31:20] == 12'h1f6);
-    wire kyber_dst_cfg = (dma_dst_addr[31:20] == 12'h1f6);
-    wire matmul_src_cfg = (dma_src_addr[31:20] == 12'h1f5);
-    wire matmul_dst_cfg = (dma_dst_addr[31:20] == 12'h1f5);
-    wire src_burst_allow_cfg = (dma_src_addr[28:24] != 5'h1f) | kyber_src_cfg | matmul_src_cfg;
-    wire dst_burst_allow_cfg = (dma_dst_addr[28:24] != 5'h1f) | kyber_dst_cfg | matmul_dst_cfg;
-    wire chunk_allow_cfg = src_burst_allow_cfg | dst_burst_allow_cfg;
-    wire stream_cfg = kyber_src_cfg ^ kyber_dst_cfg;
-    wire [7:0] burst_max_words = (kyber_src_cfg | kyber_dst_cfg) ? KYBER_BURST_MAX_WORDS : DEFAULT_BURST_MAX_WORDS;
-    wire [31:0] burst_max_bytes = ({24'd0, burst_max_words} << 2);
-    wire [7:0] stream_fifo_space = 8'd128 - stream_fifo_count;
-    wire [7:0] stream_fifo_space_next = stream_fifo_space + (stream_pop ? 8'd1 : 8'd0) - (stream_push ? 8'd1 : 8'd0);
-    wire [31:0] stream_rd_remain_next = stream_rd_remain - 32'd1;
-    wire [7:0] stream_rd_words_cap = (stream_rd_remain > {24'd0, burst_max_words}) ? burst_max_words : stream_rd_remain[7:0];
-    wire [7:0] stream_rd_words_space = (stream_fifo_space < stream_rd_words_cap) ? stream_fifo_space : stream_rd_words_cap;
-    wire [7:0] stream_rd_words_calc = src_burst_allow_cfg ? stream_rd_words_space : 8'd1;
-    wire [7:0] stream_rd_words_cap_next = (stream_rd_remain_next > {24'd0, burst_max_words}) ? burst_max_words : stream_rd_remain_next[7:0];
-    wire [7:0] stream_rd_words_space_next = (stream_fifo_space_next < stream_rd_words_cap_next) ? stream_fifo_space_next : stream_rd_words_cap_next;
-    wire [7:0] stream_rd_words_calc_next = src_burst_allow_cfg ? stream_rd_words_space_next : 8'd1;
-    wire [7:0] stream_wr_words_cap = (stream_wr_remain > {24'd0, burst_max_words}) ? burst_max_words : stream_wr_remain[7:0];
-    wire [7:0] stream_wr_words_fifo = (stream_fifo_count < stream_wr_words_cap) ? stream_fifo_count : stream_wr_words_cap;
-    wire [7:0] stream_wr_words_calc = dst_burst_allow_cfg ? stream_wr_words_fifo : 8'd1;
-    wire [7:0] dma_words_from_len = chunk_allow_cfg ? ((dma_len_cfg > burst_max_bytes) ? burst_max_words : dma_len_cfg[9:2]) : 8'd1;
-    wire [31:0] dma_burst_bytes = ({24'd0, dma_burst_words} << 2);
-    wire [31:0] dma_remain_next = dma_remain - dma_burst_bytes;
-    wire [31:0] dma_next_src = dma_cur_src + dma_burst_bytes;
-    wire [31:0] dma_next_dst = dma_cur_dst + dma_burst_bytes;
-    wire src_burst_allow_next = (dma_next_src[28:24] != 5'h1f);
-    wire dst_burst_allow_next = (dma_next_dst[28:24] != 5'h1f);
-    wire chunk_allow_next = src_burst_allow_next | dst_burst_allow_next;
-    wire [7:0] dma_words_from_next = chunk_allow_next ? ((dma_remain_next > burst_max_bytes) ? burst_max_words : dma_remain_next[9:2]) : 8'd1;
-    wire [5:0] mm_wr_word_next = mm_wr_cnt + 6'd1;
-    wire mm_read_slot0_free = !mm_in0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b0));
-    wire mm_read_slot1_free = !mm_in1_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_in_slot == 1'b1));
-    wire mm_output_slot0_free = !mm_out0_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_out_slot == 1'b0));
-    wire mm_output_slot1_free = !mm_out1_valid && !((mm_calc_state != MM_CALC_IDLE) && (mm_calc_out_slot == 1'b1));
+assign irq = done && irq_enable;
 
-    wire [31:0] status_data = {29'd0, dma_error, dma_done, dma_busy};
-    wire [31:0] rdata_d =   buf_addr[15:0] == CTRL_ADDR    ? 32'd0        :
-                            buf_addr[15:0] == STATUS_ADDR  ? status_data   :
-                            buf_addr[15:0] == SRC_ADDR     ? dma_src_addr  :
-                            buf_addr[15:0] == DST_ADDR     ? dma_dst_addr  :
-                            buf_addr[15:0] == LEN_ADDR     ? dma_len_cfg   :
-                            buf_addr[15:0] == CUR_SRC_ADDR ? dma_cur_src   :
-                            buf_addr[15:0] == CUR_DST_ADDR ? dma_cur_dst   :
-                            buf_addr[15:0] == REMAIN_ADDR  ? dma_remain    :
-                            buf_addr[15:0] == VERSION_ADDR ? 32'h444d_4132 :
-                            buf_addr[15:0] == MATMUL_CRC_ADDR ? matmul_crc  :
-                            32'd0;
+always @(posedge clk) begin
+    if (!resetn) begin
+        src_base           <= 32'd0;
+        dst_base           <= 32'd0;
+        len_bytes          <= 32'd0;
+        cfg_burst_words    <= MAX_BURST_LIMIT[7:0];
+        irq_enable         <= 1'b0;
+        awaddr_hold        <= 32'd0;
+        awid_hold          <= 5'd0;
+        awlen_count        <= 8'd0;
+        aw_hold_valid      <= 1'b0;
+        wdata_hold         <= 32'd0;
+        wstrb_hold         <= 4'd0;
+        w_hold_valid       <= 1'b0;
+        s_axi_bid          <= 5'd0;
+        s_axi_bvalid       <= 1'b0;
+        s_axi_rid          <= 5'd0;
+        s_axi_rdata        <= 32'd0;
+        s_axi_rvalid       <= 1'b0;
+        start_pulse        <= 1'b0;
+        clear_status_pulse <= 1'b0;
+    end else begin
+        start_pulse        <= 1'b0;
+        clear_status_pulse <= 1'b0;
 
-    assign s_arready = ~axi_busy & (!axi_r_or_w | !s_awvalid);
-    assign s_awready = ~axi_busy & ( axi_r_or_w | !s_arvalid);
-
-    matmul_core u_matmul_core (
-        .clk     (aclk),
-        .resetn  (aresetn),
-        .start   (mm_core_start),
-        .ab_data (mm_core_ab_data),
-        .busy    (mm_core_busy),
-        .done    (mm_core_done),
-        .c_data  (mm_core_c_data)
-    );
-
-    // IEEE CRC-32 update for one little-endian 32-bit word. This is equivalent
-    // to processing bytes [7:0], [15:8], [23:16], [31:24] with polynomial
-    // 0xedb88320, but allows the write channel to run one result word per cycle.
-    function [31:0] crc32_next_word;
-        input [31:0] crc_in;
-        input [31:0] data_in;
-        begin
-            crc32_next_word[0] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[16] ^ crc_in[20] ^ crc_in[22] ^ crc_in[23] ^ crc_in[26] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[16] ^ data_in[20] ^ data_in[22] ^ data_in[23] ^ data_in[26];
-            crc32_next_word[1] = crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[17] ^ crc_in[21] ^ crc_in[23] ^ crc_in[24] ^ crc_in[27] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[17] ^ data_in[21] ^ data_in[23] ^ data_in[24] ^ data_in[27];
-            crc32_next_word[2] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[8] ^ crc_in[9] ^ crc_in[10] ^ crc_in[18] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[28] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[8] ^ data_in[9] ^ data_in[10] ^ data_in[18] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[28];
-            crc32_next_word[3] = crc_in[1] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[9] ^ crc_in[10] ^ crc_in[11] ^ crc_in[19] ^ crc_in[23] ^ crc_in[25] ^ crc_in[26] ^ crc_in[29] ^ data_in[1] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[9] ^ data_in[10] ^ data_in[11] ^ data_in[19] ^ data_in[23] ^ data_in[25] ^ data_in[26] ^ data_in[29];
-            crc32_next_word[4] = crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[10] ^ crc_in[11] ^ crc_in[12] ^ crc_in[20] ^ crc_in[24] ^ crc_in[26] ^ crc_in[27] ^ crc_in[30] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[10] ^ data_in[11] ^ data_in[12] ^ data_in[20] ^ data_in[24] ^ data_in[26] ^ data_in[27] ^ data_in[30];
-            crc32_next_word[5] = crc_in[0] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[11] ^ crc_in[12] ^ crc_in[13] ^ crc_in[21] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[11] ^ data_in[12] ^ data_in[13] ^ data_in[21] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[31];
-            crc32_next_word[6] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[9] ^ crc_in[10] ^ crc_in[12] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[20] ^ crc_in[23] ^ crc_in[28] ^ crc_in[29] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[9] ^ data_in[10] ^ data_in[12] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[20] ^ data_in[23] ^ data_in[28] ^ data_in[29];
-            crc32_next_word[7] = crc_in[1] ^ crc_in[3] ^ crc_in[4] ^ crc_in[10] ^ crc_in[11] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[21] ^ crc_in[24] ^ crc_in[29] ^ crc_in[30] ^ data_in[1] ^ data_in[3] ^ data_in[4] ^ data_in[10] ^ data_in[11] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[21] ^ data_in[24] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[8] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[11] ^ crc_in[12] ^ crc_in[14] ^ crc_in[15] ^ crc_in[16] ^ crc_in[18] ^ crc_in[22] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[11] ^ data_in[12] ^ data_in[14] ^ data_in[15] ^ data_in[16] ^ data_in[18] ^ data_in[22] ^ data_in[25] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[9] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[12] ^ crc_in[13] ^ crc_in[15] ^ crc_in[17] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[12] ^ data_in[13] ^ data_in[15] ^ data_in[17] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[31];
-            crc32_next_word[10] = crc_in[0] ^ crc_in[2] ^ crc_in[4] ^ crc_in[5] ^ crc_in[7] ^ crc_in[9] ^ crc_in[13] ^ crc_in[14] ^ crc_in[18] ^ crc_in[21] ^ crc_in[22] ^ crc_in[26] ^ data_in[0] ^ data_in[2] ^ data_in[4] ^ data_in[5] ^ data_in[7] ^ data_in[9] ^ data_in[13] ^ data_in[14] ^ data_in[18] ^ data_in[21] ^ data_in[22] ^ data_in[26];
-            crc32_next_word[11] = crc_in[1] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[8] ^ crc_in[10] ^ crc_in[14] ^ crc_in[15] ^ crc_in[19] ^ crc_in[22] ^ crc_in[23] ^ crc_in[27] ^ data_in[1] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[8] ^ data_in[10] ^ data_in[14] ^ data_in[15] ^ data_in[19] ^ data_in[22] ^ data_in[23] ^ data_in[27];
-            crc32_next_word[12] = crc_in[2] ^ crc_in[4] ^ crc_in[6] ^ crc_in[7] ^ crc_in[9] ^ crc_in[11] ^ crc_in[15] ^ crc_in[16] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[28] ^ data_in[2] ^ data_in[4] ^ data_in[6] ^ data_in[7] ^ data_in[9] ^ data_in[11] ^ data_in[15] ^ data_in[16] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[28];
-            crc32_next_word[13] = crc_in[0] ^ crc_in[3] ^ crc_in[5] ^ crc_in[7] ^ crc_in[8] ^ crc_in[10] ^ crc_in[12] ^ crc_in[16] ^ crc_in[17] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ data_in[0] ^ data_in[3] ^ data_in[5] ^ data_in[7] ^ data_in[8] ^ data_in[10] ^ data_in[12] ^ data_in[16] ^ data_in[17] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[29];
-            crc32_next_word[14] = crc_in[0] ^ crc_in[1] ^ crc_in[4] ^ crc_in[6] ^ crc_in[8] ^ crc_in[9] ^ crc_in[11] ^ crc_in[13] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[25] ^ crc_in[26] ^ crc_in[30] ^ data_in[0] ^ data_in[1] ^ data_in[4] ^ data_in[6] ^ data_in[8] ^ data_in[9] ^ data_in[11] ^ data_in[13] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[25] ^ data_in[26] ^ data_in[30];
-            crc32_next_word[15] = crc_in[1] ^ crc_in[2] ^ crc_in[5] ^ crc_in[7] ^ crc_in[9] ^ crc_in[10] ^ crc_in[12] ^ crc_in[14] ^ crc_in[18] ^ crc_in[19] ^ crc_in[23] ^ crc_in[26] ^ crc_in[27] ^ crc_in[31] ^ data_in[1] ^ data_in[2] ^ data_in[5] ^ data_in[7] ^ data_in[9] ^ data_in[10] ^ data_in[12] ^ data_in[14] ^ data_in[18] ^ data_in[19] ^ data_in[23] ^ data_in[26] ^ data_in[27] ^ data_in[31];
-            crc32_next_word[16] = crc_in[1] ^ crc_in[4] ^ crc_in[7] ^ crc_in[10] ^ crc_in[11] ^ crc_in[13] ^ crc_in[15] ^ crc_in[16] ^ crc_in[19] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[26] ^ crc_in[27] ^ crc_in[28] ^ data_in[1] ^ data_in[4] ^ data_in[7] ^ data_in[10] ^ data_in[11] ^ data_in[13] ^ data_in[15] ^ data_in[16] ^ data_in[19] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[26] ^ data_in[27] ^ data_in[28];
-            crc32_next_word[17] = crc_in[2] ^ crc_in[5] ^ crc_in[8] ^ crc_in[11] ^ crc_in[12] ^ crc_in[14] ^ crc_in[16] ^ crc_in[17] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[29] ^ data_in[2] ^ data_in[5] ^ data_in[8] ^ data_in[11] ^ data_in[12] ^ data_in[14] ^ data_in[16] ^ data_in[17] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[29];
-            crc32_next_word[18] = crc_in[0] ^ crc_in[3] ^ crc_in[6] ^ crc_in[9] ^ crc_in[12] ^ crc_in[13] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[30] ^ data_in[0] ^ data_in[3] ^ data_in[6] ^ data_in[9] ^ data_in[12] ^ data_in[13] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[19] = crc_in[0] ^ crc_in[1] ^ crc_in[4] ^ crc_in[7] ^ crc_in[10] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[18] ^ crc_in[19] ^ crc_in[22] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[4] ^ data_in[7] ^ data_in[10] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[18] ^ data_in[19] ^ data_in[22] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[20] = crc_in[0] ^ crc_in[3] ^ crc_in[4] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[11] ^ crc_in[14] ^ crc_in[15] ^ crc_in[16] ^ crc_in[17] ^ crc_in[19] ^ crc_in[22] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[4] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[11] ^ data_in[14] ^ data_in[15] ^ data_in[16] ^ data_in[17] ^ data_in[19] ^ data_in[22] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[21] = crc_in[0] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[12] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[0] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[12] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[31];
-            crc32_next_word[22] = crc_in[2] ^ crc_in[7] ^ crc_in[8] ^ crc_in[13] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ data_in[2] ^ data_in[7] ^ data_in[8] ^ data_in[13] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[23] = crc_in[0] ^ crc_in[3] ^ crc_in[8] ^ crc_in[9] ^ crc_in[14] ^ crc_in[19] ^ crc_in[20] ^ crc_in[21] ^ crc_in[23] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[3] ^ data_in[8] ^ data_in[9] ^ data_in[14] ^ data_in[19] ^ data_in[20] ^ data_in[21] ^ data_in[23] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[24] = crc_in[2] ^ crc_in[3] ^ crc_in[6] ^ crc_in[7] ^ crc_in[8] ^ crc_in[9] ^ crc_in[10] ^ crc_in[15] ^ crc_in[16] ^ crc_in[21] ^ crc_in[23] ^ crc_in[24] ^ crc_in[26] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[2] ^ data_in[3] ^ data_in[6] ^ data_in[7] ^ data_in[8] ^ data_in[9] ^ data_in[10] ^ data_in[15] ^ data_in[16] ^ data_in[21] ^ data_in[23] ^ data_in[24] ^ data_in[26] ^ data_in[28] ^ data_in[29] ^ data_in[31];
-            crc32_next_word[25] = crc_in[1] ^ crc_in[2] ^ crc_in[6] ^ crc_in[9] ^ crc_in[10] ^ crc_in[11] ^ crc_in[17] ^ crc_in[20] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[29] ^ crc_in[30] ^ data_in[1] ^ data_in[2] ^ data_in[6] ^ data_in[9] ^ data_in[10] ^ data_in[11] ^ data_in[17] ^ data_in[20] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[26] = crc_in[2] ^ crc_in[3] ^ crc_in[7] ^ crc_in[10] ^ crc_in[11] ^ crc_in[12] ^ crc_in[18] ^ crc_in[21] ^ crc_in[24] ^ crc_in[25] ^ crc_in[26] ^ crc_in[27] ^ crc_in[28] ^ crc_in[30] ^ crc_in[31] ^ data_in[2] ^ data_in[3] ^ data_in[7] ^ data_in[10] ^ data_in[11] ^ data_in[12] ^ data_in[18] ^ data_in[21] ^ data_in[24] ^ data_in[25] ^ data_in[26] ^ data_in[27] ^ data_in[28] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[27] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[6] ^ crc_in[7] ^ crc_in[11] ^ crc_in[12] ^ crc_in[13] ^ crc_in[16] ^ crc_in[19] ^ crc_in[20] ^ crc_in[23] ^ crc_in[25] ^ crc_in[27] ^ crc_in[28] ^ crc_in[29] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[6] ^ data_in[7] ^ data_in[11] ^ data_in[12] ^ data_in[13] ^ data_in[16] ^ data_in[19] ^ data_in[20] ^ data_in[23] ^ data_in[25] ^ data_in[27] ^ data_in[28] ^ data_in[29] ^ data_in[31];
-            crc32_next_word[28] = crc_in[0] ^ crc_in[4] ^ crc_in[6] ^ crc_in[12] ^ crc_in[13] ^ crc_in[14] ^ crc_in[16] ^ crc_in[17] ^ crc_in[21] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[28] ^ crc_in[29] ^ crc_in[30] ^ data_in[0] ^ data_in[4] ^ data_in[6] ^ data_in[12] ^ data_in[13] ^ data_in[14] ^ data_in[16] ^ data_in[17] ^ data_in[21] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[28] ^ data_in[29] ^ data_in[30];
-            crc32_next_word[29] = crc_in[0] ^ crc_in[1] ^ crc_in[5] ^ crc_in[7] ^ crc_in[13] ^ crc_in[14] ^ crc_in[15] ^ crc_in[17] ^ crc_in[18] ^ crc_in[22] ^ crc_in[23] ^ crc_in[24] ^ crc_in[25] ^ crc_in[29] ^ crc_in[30] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[5] ^ data_in[7] ^ data_in[13] ^ data_in[14] ^ data_in[15] ^ data_in[17] ^ data_in[18] ^ data_in[22] ^ data_in[23] ^ data_in[24] ^ data_in[25] ^ data_in[29] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[30] = crc_in[3] ^ crc_in[4] ^ crc_in[7] ^ crc_in[14] ^ crc_in[15] ^ crc_in[18] ^ crc_in[19] ^ crc_in[20] ^ crc_in[22] ^ crc_in[24] ^ crc_in[25] ^ crc_in[30] ^ crc_in[31] ^ data_in[3] ^ data_in[4] ^ data_in[7] ^ data_in[14] ^ data_in[15] ^ data_in[18] ^ data_in[19] ^ data_in[20] ^ data_in[22] ^ data_in[24] ^ data_in[25] ^ data_in[30] ^ data_in[31];
-            crc32_next_word[31] = crc_in[0] ^ crc_in[1] ^ crc_in[2] ^ crc_in[3] ^ crc_in[5] ^ crc_in[6] ^ crc_in[7] ^ crc_in[15] ^ crc_in[19] ^ crc_in[21] ^ crc_in[22] ^ crc_in[25] ^ crc_in[31] ^ data_in[0] ^ data_in[1] ^ data_in[2] ^ data_in[3] ^ data_in[5] ^ data_in[6] ^ data_in[7] ^ data_in[15] ^ data_in[19] ^ data_in[21] ^ data_in[22] ^ data_in[25] ^ data_in[31];
+        if (aw_handshake) begin
+            awaddr_hold   <= s_axi_awaddr;
+            awid_hold     <= s_axi_awid;
+            awlen_count   <= s_axi_awlen;
+            aw_hold_valid <= 1'b1;
         end
-    endfunction
+        if (w_handshake) begin
+            wdata_hold   <= s_axi_wdata;
+            wstrb_hold   <= s_axi_wstrb;
+            w_hold_valid <= 1'b1;
+        end
+        if (s_axi_bvalid && s_axi_bready)
+            s_axi_bvalid <= 1'b0;
 
-    // Convert the internal 66-bit C matrix into the contest result format:
-    // low 32 bits, high 32 bits, then the top 2 bits zero-extended to 32 bits.
-    function [31:0] mm_result_word;
-        input [5:0] word_index;
-        reg [3:0] element_index;
-        reg [65:0] element_data;
-        begin
-            if (word_index < 6'd48) begin
-                element_index = word_index / 6'd3;
-                element_data = mm_core_c_data[element_index * 66 +: 66];
-                case (word_index - element_index * 6'd3)
-                    6'd0: mm_result_word = element_data[31:0];
-                    6'd1: mm_result_word = element_data[63:32];
-                    default: mm_result_word = {30'b0, element_data[65:64]};
-                endcase
+        if (write_fire) begin
+            s_axi_bid    <= awid_hold;
+            w_hold_valid <= 1'b0;
+            if (awlen_count == 8'd0) begin
+                s_axi_bvalid  <= 1'b1;
+                aw_hold_valid <= 1'b0;
+            end else begin
+                awlen_count <= awlen_count - 8'd1;
+                awaddr_hold <= awaddr_hold + 32'd4;
             end
-            else begin
-                mm_result_word = 32'd0;
-            end
-        end
-    endfunction
 
-    function [31:0] mm_out_word;
-        input slot;
-        input [5:0] word_index;
-        begin
-            if (slot == 1'b0) begin
-                mm_out_word = mm_out0[word_index];
-            end
-            else begin
-                mm_out_word = mm_out1[word_index];
-            end
+            if (!busy && (write_offset == ADDR_SRC))
+                src_base <= apply_wstrb(src_base, wdata_hold, wstrb_hold);
+            else if (!busy && (write_offset == ADDR_DST))
+                dst_base <= apply_wstrb(dst_base, wdata_hold, wstrb_hold);
+            else if (!busy && (write_offset == ADDR_LEN_BYTES))
+                len_bytes <= apply_wstrb(len_bytes, wdata_hold, wstrb_hold);
+            else if (!busy && (write_offset == ADDR_BURST_WORDS))
+                cfg_burst_words <= cfg_burst_words_next[7:0];
+            else if (write_offset == ADDR_IRQ_ENABLE)
+                irq_enable <= irq_enable_next[0];
+            else if ((write_offset == ADDR_CTRL) && wdata_hold[0] && !busy)
+                start_pulse <= 1'b1;
+            else if ((write_offset == ADDR_STATUS) && (wdata_hold[2:1] != 2'b00))
+                clear_status_pulse <= 1'b1;
         end
-    endfunction
 
-    always @(posedge aclk) begin
-        if (~aresetn) begin
-            axi_busy <= 1'b0;
-        end
-        else if (ar_enter | aw_enter) begin
-            axi_busy <= 1'b1;
-        end
-        else if (r_retire | b_retire) begin
-            axi_busy <= 1'b0;
+        if (s_axi_arvalid && s_axi_arready) begin
+            s_axi_rid    <= s_axi_arid;
+            s_axi_rvalid <= 1'b1;
+            case (read_offset)
+                ADDR_CTRL:        s_axi_rdata <= 32'd0;
+                ADDR_STATUS:      s_axi_rdata <= {29'd0, error, done, busy};
+                ADDR_SRC:         s_axi_rdata <= src_base;
+                ADDR_DST:         s_axi_rdata <= dst_base;
+                ADDR_LEN_BYTES:   s_axi_rdata <= len_bytes;
+                ADDR_BURST_WORDS: s_axi_rdata <= {24'd0, cfg_burst_words};
+                ADDR_DONE_BYTES:  s_axi_rdata <= done_bytes;
+                ADDR_IRQ_ENABLE:  s_axi_rdata <= {31'd0, irq_enable};
+                default:          s_axi_rdata <= {31'd0, unused_slave_inputs};
+            endcase
+        end else if (s_axi_rvalid && s_axi_rready) begin
+            s_axi_rvalid <= 1'b0;
         end
     end
+end
 
-    always @(posedge aclk) begin
-        if (~aresetn) begin
-            axi_r_or_w <= 1'b0;
-            buf_id <= 5'b0;
-            buf_addr <= 32'b0;
-            buf_len <= 8'b0;
-            buf_size <= 3'b0;
-            buf_burst <= 2'b0;
-            buf_lock <= 1'b0;
-            buf_cache <= 4'b0;
-            buf_prot <= 3'b0;
+always @(posedge clk) begin
+    if (!resetn) begin
+        busy            <= 1'b0;
+        done            <= 1'b0;
+        error           <= 1'b0;
+        state           <= ST_IDLE;
+        src_addr        <= 32'd0;
+        dst_addr        <= 32'd0;
+        words_remaining <= 32'd0;
+        done_bytes      <= 32'd0;
+        burst_last      <= 8'd0;
+        read_beat       <= 8'd0;
+        write_beat      <= 8'd0;
+    end else begin
+        if (clear_status_pulse) begin
+            done  <= 1'b0;
+            error <= 1'b0;
         end
-        else if (ar_enter | aw_enter) begin
-            axi_r_or_w <= ar_enter;
-            buf_id <= ar_enter ? s_arid : s_awid;
-            buf_addr <= ar_enter ? s_araddr : s_awaddr;
-            buf_len <= ar_enter ? s_arlen : s_awlen;
-            buf_size <= ar_enter ? s_arsize : s_awsize;
-            buf_burst <= ar_enter ? s_arburst : s_awburst;
-            buf_lock <= ar_enter ? s_arlock : s_awlock;
-            buf_cache <= ar_enter ? s_arcache : s_awcache;
-            buf_prot <= ar_enter ? s_arprot : s_awprot;
-        end
-    end
 
-    always @(posedge aclk) begin
-        if (~aresetn) begin
-            axi_write <= 1'b0;
-        end
-        else if (aw_enter) begin
-            axi_write <= 1'b1;
-        end
-        else if (ar_enter) begin
-            axi_write <= 1'b0;
-        end
-    end
-
-    always @(posedge aclk) begin
-        if (~aresetn) begin
-            s_wready_r <= 1'b0;
-        end
-        else if (aw_enter) begin
-            s_wready_r <= 1'b1;
-        end
-        else if (w_enter) begin
-            s_wready_r <= 1'b0;
-        end
-    end
-
-    always @(posedge aclk) begin
-        if (~aresetn) begin
-            s_rdata_r <= 32'b0;
-            s_rvalid_r <= 1'b0;
-            s_rlast_r <= 1'b0;
-        end
-        else if (axi_busy & !axi_write & !r_retire) begin
-            s_rdata_r <= rdata_d;
-            s_rvalid_r <= 1'b1;
-            s_rlast_r <= 1'b1;
-        end
-        else if (r_retire) begin
-            s_rvalid_r <= 1'b0;
-        end
-    end
-
-    always @(posedge aclk) begin
-        if (~aresetn) begin
-            s_bvalid_r <= 1'b0;
-        end
-        else if (w_enter) begin
-            s_bvalid_r <= 1'b1;
-        end
-        else if (b_retire) begin
-            s_bvalid_r <= 1'b0;
-        end
-    end
-
-    always @(posedge aclk) begin
-        if (!aresetn) begin
-            dma_src_addr <= 32'd0;
-            dma_dst_addr <= 32'd0;
-            dma_len_cfg <= 32'd0;
-            dma_cur_src <= 32'd0;
-            dma_cur_dst <= 32'd0;
-            dma_remain <= 32'd0;
-            dma_busy <= 1'b0;
-            dma_done <= 1'b0;
-            dma_error <= 1'b0;
-            dma_state <= M_IDLE;
-            dma_finish <= 1'b0;
-            m_arvalid_r <= 1'b0;
-            m_araddr_r <= 32'd0;
-            m_arlen_r <= 8'd0;
-            m_rready_r <= 1'b0;
-            m_awvalid_r <= 1'b0;
-            m_awaddr_r <= 32'd0;
-            m_awlen_r <= 8'd0;
-            m_wvalid_r <= 1'b0;
-            m_wdata_r <= 32'd0;
-            m_wlast_r <= 1'b0;
-            m_bready_r <= 1'b0;
-            dma_burst_words <= 8'd0;
-            dma_rd_cnt <= 8'd0;
-            dma_wr_cnt <= 8'd0;
-            dma_src_burst_en <= 1'b0;
-            dma_dst_burst_en <= 1'b0;
-            stream_rd_state <= RD_IDLE;
-            stream_wr_state <= WR_IDLE;
-            stream_rd_beats <= 8'd0;
-            stream_wr_beats <= 8'd0;
-            stream_fifo_wr_ptr <= 7'd0;
-            stream_fifo_rd_ptr <= 7'd0;
-            stream_fifo_count <= 8'd0;
-            stream_rd_addr <= 32'd0;
-            stream_wr_addr <= 32'd0;
-            stream_rd_remain <= 32'd0;
-            stream_wr_remain <= 32'd0;
-            matmul_crc <= 32'd0;
-            mm_crc_state <= 32'hffff_ffff;
-            mm_groups_left <= 32'd0;
-            mm_read_left <= 32'd0;
-            mm_rd_cnt <= 6'd0;
-            mm_rd_state <= RD_IDLE;
-            mm_wr_state <= WR_IDLE;
-            mm_calc_state <= MM_CALC_IDLE;
-            mm_rd_slot <= 1'b0;
-            mm_calc_in_slot <= 1'b0;
-            mm_calc_out_slot <= 1'b0;
-            mm_wr_slot <= 1'b0;
-            mm_in0_valid <= 1'b0;
-            mm_in1_valid <= 1'b0;
-            mm_out0_valid <= 1'b0;
-            mm_out1_valid <= 1'b0;
-            mm_wr_cnt <= 6'd0;
-            mm_core_ab_data <= 1024'd0;
-            mm_core_start <= 1'b0;
-        end
-        else begin
-            dma_finish <= 1'b0;
-            mm_core_start <= 1'b0;
-
-            if (write_src) begin
-                dma_src_addr <= s_wdata;
-            end
-            if (write_dst) begin
-                dma_dst_addr <= s_wdata;
-            end
-            if (write_len) begin
-                dma_len_cfg <= s_wdata;
-            end
-            if (ctrl_clr_done) begin
-                dma_done <= 1'b0;
-            end
-
-            case (dma_state)
-                M_IDLE: begin
-                    if (ctrl_start & ~dma_busy) begin
-                        m_arvalid_r <= 1'b0;
-                        m_rready_r <= 1'b0;
-                        m_awvalid_r <= 1'b0;
-                        m_wvalid_r <= 1'b0;
-                        m_bready_r <= 1'b0;
-                        m_wlast_r <= 1'b0;
-                        dma_rd_cnt <= 8'd0;
-                        dma_wr_cnt <= 8'd0;
-
-                        if (ctrl_matmul) begin
-                            // Batch matmul mode: SRC points to A/B groups, DST points
-                            // to the packed C result area, LEN is number of groups.
-                            if (matmul_cfg_invalid) begin
-                                dma_busy <= 1'b0;
-                                dma_done <= 1'b1;
-                                dma_error <= 1'b1;
-                                dma_finish <= 1'b1;
-                            end
-                            else begin
-                                dma_busy <= 1'b1;
-                                dma_done <= 1'b0;
-                                dma_error <= 1'b0;
-                                dma_cur_src <= dma_src_addr;
-                                dma_cur_dst <= dma_dst_addr;
-                                dma_remain <= dma_len_cfg;
-                                matmul_crc <= 32'd0;
-                                mm_crc_state <= 32'hffff_ffff;
-                                mm_groups_left <= dma_len_cfg;
-                                mm_read_left <= dma_len_cfg;
-                                mm_rd_cnt <= 6'd0;
-                                mm_rd_state <= RD_IDLE;
-                                mm_wr_state <= WR_IDLE;
-                                mm_calc_state <= MM_CALC_IDLE;
-                                mm_rd_slot <= 1'b0;
-                                mm_calc_in_slot <= 1'b0;
-                                mm_calc_out_slot <= 1'b0;
-                                mm_wr_slot <= 1'b0;
-                                mm_in0_valid <= 1'b0;
-                                mm_in1_valid <= 1'b0;
-                                mm_out0_valid <= 1'b0;
-                                mm_out1_valid <= 1'b0;
-                                mm_wr_cnt <= 6'd0;
-                                m_araddr_r <= 32'd0;
-                                m_arlen_r <= 8'd0;
-                                m_arvalid_r <= 1'b0;
-                                m_rready_r <= 1'b0;
-                                dma_state <= M_MM_PIPE;
-                            end
-                        end
-                        else if (cfg_invalid) begin
-                            dma_busy <= 1'b0;
-                            dma_done <= 1'b1;
-                            dma_error <= 1'b1;
-                            dma_finish <= 1'b1;
-                        end
-                        else if (stream_cfg) begin
-                            dma_busy <= 1'b1;
-                            dma_done <= 1'b0;
-                            dma_error <= 1'b0;
-                            dma_cur_src <= dma_src_addr;
-                            dma_cur_dst <= dma_dst_addr;
-                            dma_remain <= dma_len_cfg;
-                            stream_rd_addr <= dma_src_addr;
-                            stream_wr_addr <= dma_dst_addr;
-                            stream_rd_remain <= (dma_len_cfg >> 2);
-                            stream_wr_remain <= (dma_len_cfg >> 2);
-                            stream_fifo_wr_ptr <= 7'd0;
-                            stream_fifo_rd_ptr <= 7'd0;
-                            stream_fifo_count <= 8'd0;
-                            stream_rd_state <= RD_IDLE;
-                            stream_wr_state <= WR_IDLE;
-                            stream_rd_beats <= 8'd0;
-                            stream_wr_beats <= 8'd0;
-                            dma_src_burst_en <= src_burst_allow_cfg;
-                            dma_dst_burst_en <= dst_burst_allow_cfg;
-                            dma_state <= M_STREAM;
-                        end
-                        else begin
-                            dma_busy <= 1'b1;
-                            dma_done <= 1'b0;
-                            dma_error <= 1'b0;
-                            dma_cur_src <= dma_src_addr;
-                            dma_cur_dst <= dma_dst_addr;
-                            dma_remain <= dma_len_cfg;
-                            m_araddr_r <= dma_src_addr;
-                            dma_burst_words <= dma_words_from_len;
-                            dma_src_burst_en <= src_burst_allow_cfg;
-                            dma_dst_burst_en <= dst_burst_allow_cfg;
-                            m_arlen_r <= src_burst_allow_cfg ? ({1'b0, dma_words_from_len} - 8'd1) : 8'd0;
-                            m_arvalid_r <= 1'b1;
-                            m_rready_r <= 1'b0;
-                            dma_state <= M_AR;
+        if (start_pulse) begin
+            done            <= 1'b0;
+            error           <= invalid_start;
+            busy            <= !invalid_start;
+            state           <= invalid_start ? ST_IDLE : ST_AR;
+            src_addr        <= src_base;
+            dst_addr        <= dst_base;
+            words_remaining <= {2'b00, len_bytes[31:2]};
+            done_bytes      <= 32'd0;
+            read_beat       <= 8'd0;
+            write_beat      <= 8'd0;
+            burst_last      <= (next_burst_words == 9'd0) ?
+                               8'd0 : next_burst_words[7:0] - 8'd1;
+            if (invalid_start)
+                done <= 1'b1;
+        end else if (busy) begin
+            case (state)
+                ST_AR: begin
+                    burst_last <= next_burst_words[7:0] - 8'd1;
+                    if (m_axi_arvalid && m_axi_arready) begin
+                        read_beat <= 8'd0;
+                        state <= ST_R;
+                    end
+                end
+                ST_R: begin
+                    if (m_axi_rvalid && m_axi_rready) begin
+                        burst_buffer[read_beat] <= m_axi_rdata;
+                        if (m_axi_rresp != 2'b00)
+                            error <= 1'b1;
+                        if (read_beat == burst_last) begin
+                            if (!m_axi_rlast)
+                                error <= 1'b1;
+                            state <= ST_AW;
+                            write_beat <= 8'd0;
+                        end else begin
+                            if (m_axi_rlast)
+                                error <= 1'b1;
+                            read_beat <= read_beat + 8'd1;
                         end
                     end
                 end
-
-                M_MM_PIPE: begin
-                    case (mm_rd_state)
-                        RD_IDLE: begin
-                            if ((mm_read_left != 32'd0) && (mm_read_slot0_free || mm_read_slot1_free)) begin
-                                mm_rd_slot <= mm_read_slot0_free ? 1'b0 : 1'b1;
-                                mm_rd_cnt <= 6'd0;
-                                m_araddr_r <= dma_cur_src;
-                                m_arlen_r <= 8'd31;
-                                m_arvalid_r <= 1'b1;
-                                mm_rd_state <= RD_AR;
-                            end
-                        end
-                        RD_AR: begin
-                            if (m_ar_fire) begin
-                                m_arvalid_r <= 1'b0;
-                                m_rready_r <= 1'b1;
-                                mm_rd_state <= RD_R;
-                            end
-                        end
-                        RD_R: begin
-                            if (m_r_fire) begin
-                                if (m_rresp != 2'b00) begin
-                                    m_rready_r <= 1'b0;
-                                    m_arvalid_r <= 1'b0;
-                                    m_awvalid_r <= 1'b0;
-                                    m_wvalid_r <= 1'b0;
-                                    m_bready_r <= 1'b0;
-                                    m_wlast_r <= 1'b0;
-                                    dma_busy <= 1'b0;
-                                    dma_done <= 1'b1;
-                                    dma_error <= 1'b1;
-                                    dma_finish <= 1'b1;
-                                    mm_rd_state <= RD_IDLE;
-                                    mm_wr_state <= WR_IDLE;
-                                    mm_calc_state <= MM_CALC_IDLE;
-                                    dma_state <= M_IDLE;
-                                end
-                                else begin
-                                    if (mm_rd_slot == 1'b0) begin
-                                        mm_in0[mm_rd_cnt] <= m_rdata;
-                                    end
-                                    else begin
-                                        mm_in1[mm_rd_cnt] <= m_rdata;
-                                    end
-                                    dma_cur_src <= dma_cur_src + 32'd4;
-                                    if (mm_rd_cnt == 6'd31) begin
-                                        m_rready_r <= 1'b0;
-                                        mm_rd_cnt <= 6'd0;
-                                        mm_read_left <= mm_read_left - 32'd1;
-                                        if (mm_rd_slot == 1'b0) begin
-                                            mm_in0_valid <= 1'b1;
-                                        end
-                                        else begin
-                                            mm_in1_valid <= 1'b1;
-                                        end
-                                        mm_rd_state <= RD_IDLE;
-                                    end
-                                    else begin
-                                        mm_rd_cnt <= mm_rd_cnt + 6'd1;
-                                    end
-                                end
-                            end
-                        end
-                        default: begin
-                            mm_rd_state <= RD_IDLE;
-                        end
-                    endcase
-
-                    case (mm_calc_state)
-                        MM_CALC_IDLE: begin
-                            if ((mm_in0_valid || mm_in1_valid) && (mm_output_slot0_free || mm_output_slot1_free) && !mm_core_busy) begin
-                                mm_calc_in_slot <= mm_in0_valid ? 1'b0 : 1'b1;
-                                mm_calc_out_slot <= mm_output_slot0_free ? 1'b0 : 1'b1;
-
-                                if (mm_in0_valid) begin
-                                    for (i = 0; i < 32; i = i + 1) begin
-                                        mm_core_ab_data[i * 32 +: 32] <= mm_in0[i];
-                                    end
-                                    mm_in0_valid <= 1'b0;
-                                end
-                                else begin
-                                    for (i = 0; i < 32; i = i + 1) begin
-                                        mm_core_ab_data[i * 32 +: 32] <= mm_in1[i];
-                                    end
-                                    mm_in1_valid <= 1'b0;
-                                end
-                                mm_calc_state <= MM_CALC_STORE;
-                            end
-                        end
-                        MM_CALC_STORE: begin
-                            if (!mm_core_busy) begin
-                                mm_core_start <= 1'b1;
-                                mm_calc_state <= MM_CALC_RUN;
-                            end
-                        end
-                        MM_CALC_RUN: begin
-                            if (mm_core_done) begin
-                                if (mm_calc_out_slot == 1'b0) begin
-                                    for (i = 0; i < 48; i = i + 1) begin
-                                        mm_out0[i] <= mm_result_word(i);
-                                    end
-                                    mm_out0_valid <= 1'b1;
-                                end
-                                else begin
-                                    for (i = 0; i < 48; i = i + 1) begin
-                                        mm_out1[i] <= mm_result_word(i);
-                                    end
-                                    mm_out1_valid <= 1'b1;
-                                end
-                                mm_calc_state <= MM_CALC_IDLE;
-                            end
-                        end
-                        default: begin
-                            mm_calc_state <= MM_CALC_IDLE;
-                        end
-                    endcase
-                    case (mm_wr_state)
-                        WR_IDLE: begin
-                            if (mm_out0_valid || mm_out1_valid) begin
-                                mm_wr_slot <= mm_out0_valid ? 1'b0 : 1'b1;
-                                mm_wr_cnt <= 6'd0;
-                                m_awaddr_r <= dma_cur_dst;
-                                m_awlen_r <= 8'd47;
-                                m_awvalid_r <= 1'b1;
-                                mm_wr_state <= WR_AW;
-                            end
-                        end
-                        WR_AW: begin
-                            if (m_aw_fire) begin
-                                m_awvalid_r <= 1'b0;
-                                m_wdata_r <= mm_out_word(mm_wr_slot, 6'd0);
-                                m_wlast_r <= 1'b0;
-                                m_wvalid_r <= 1'b1;
-                                mm_wr_state <= WR_W;
-                            end
-                        end
-                        WR_W: begin
-                            if (m_w_fire) begin
-                                mm_crc_state <= crc32_next_word(mm_crc_state, m_wdata_r);
-                                dma_cur_dst <= dma_cur_dst + 32'd4;
-                                if (mm_wr_cnt == 6'd47) begin
-                                    m_wvalid_r <= 1'b0;
-                                    m_wlast_r <= 1'b0;
-                                    m_bready_r <= 1'b1;
-                                    mm_wr_state <= WR_B;
-                                end
-                                else begin
-                                    mm_wr_cnt <= mm_wr_word_next;
-                                    m_wdata_r <= mm_out_word(mm_wr_slot, mm_wr_word_next);
-                                    m_wlast_r <= (mm_wr_word_next == 6'd47);
-                                end
-                            end
-                        end
-                        WR_B: begin
-                            if (m_b_fire) begin
-                                m_bready_r <= 1'b0;
-                                if (m_bresp != 2'b00) begin
-                                    m_rready_r <= 1'b0;
-                                    m_arvalid_r <= 1'b0;
-                                    m_awvalid_r <= 1'b0;
-                                    m_wvalid_r <= 1'b0;
-                                    m_wlast_r <= 1'b0;
-                                    dma_busy <= 1'b0;
-                                    dma_done <= 1'b1;
-                                    dma_error <= 1'b1;
-                                    dma_finish <= 1'b1;
-                                    mm_rd_state <= RD_IDLE;
-                                    mm_wr_state <= WR_IDLE;
-                                    mm_calc_state <= MM_CALC_IDLE;
-                                    dma_state <= M_IDLE;
-                                end
-                                else begin
-                                    if (mm_wr_slot == 1'b0) begin
-                                        mm_out0_valid <= 1'b0;
-                                    end
-                                    else begin
-                                        mm_out1_valid <= 1'b0;
-                                    end
-
-                                    if (mm_groups_left <= 32'd1) begin
-                                        mm_groups_left <= 32'd0;
-                                        dma_remain <= 32'd0;
-                                        matmul_crc <= ~mm_crc_state;
-                                        dma_busy <= 1'b0;
-                                        dma_done <= 1'b1;
-                                        dma_error <= 1'b0;
-                                        dma_finish <= 1'b1;
-                                        mm_rd_state <= RD_IDLE;
-                                        mm_wr_state <= WR_IDLE;
-                                        mm_calc_state <= MM_CALC_IDLE;
-                                        dma_state <= M_IDLE;
-                                    end
-                                    else begin
-                                        mm_groups_left <= mm_groups_left - 32'd1;
-                                        dma_remain <= mm_groups_left - 32'd1;
-                                        mm_wr_state <= WR_IDLE;
-                                    end
-                                end
-                            end
-                        end
-                        default: begin
-                            mm_wr_state <= WR_IDLE;
-                        end
-                    endcase
-                end
-
-                M_STREAM: begin
-                    if (stream_push) begin
-                        dma_buf[stream_fifo_wr_ptr] <= m_rdata;
-                        stream_fifo_wr_ptr <= stream_fifo_wr_ptr + 7'd1;
-                    end
-                    if (stream_pop) begin
-                        stream_fifo_rd_ptr <= stream_fifo_rd_ptr + 7'd1;
-                    end
-
-                    case ({stream_push, stream_pop})
-                        2'b10: stream_fifo_count <= stream_fifo_count + 8'd1;
-                        2'b01: stream_fifo_count <= stream_fifo_count - 8'd1;
-                        default: stream_fifo_count <= stream_fifo_count;
-                    endcase
-
-                    case (stream_rd_state)
-                        RD_IDLE: begin
-                            if ((stream_rd_remain != 32'd0) && (stream_fifo_space != 8'd0)) begin
-                                stream_rd_beats <= stream_rd_words_calc;
-                                m_araddr_r <= stream_rd_addr;
-                                m_arlen_r <= src_burst_allow_cfg ? (stream_rd_words_calc - 8'd1) : 8'd0;
-                                m_arvalid_r <= 1'b1;
-                                stream_rd_state <= RD_AR;
-                            end
-                        end
-                        RD_AR: begin
-                            if (m_ar_fire) begin
-                                m_arvalid_r <= 1'b0;
-                                m_rready_r <= 1'b1;
-                                stream_rd_state <= RD_R;
-                            end
-                        end
-                        RD_R: begin
-                            if (m_r_fire) begin
-                                if (m_rresp != 2'b00) begin
-                                    m_rready_r <= 1'b0;
-                                    m_arvalid_r <= 1'b0;
-                                    m_awvalid_r <= 1'b0;
-                                    m_wvalid_r <= 1'b0;
-                                    m_bready_r <= 1'b0;
-                                    m_wlast_r <= 1'b0;
-                                    dma_busy <= 1'b0;
-                                    dma_done <= 1'b1;
-                                    dma_error <= 1'b1;
-                                    dma_finish <= 1'b1;
-                                    stream_rd_state <= RD_IDLE;
-                                    stream_wr_state <= WR_IDLE;
-                                    dma_state <= M_IDLE;
-                                end
-                                else begin
-                                    stream_rd_addr <= stream_rd_addr + 32'd4;
-                                    dma_cur_src <= stream_rd_addr + 32'd4;
-                                    stream_rd_remain <= stream_rd_remain - 32'd1;
-                                    if (stream_rd_beats == 8'd1) begin
-                                        m_rready_r <= 1'b0;
-                                        if ((stream_rd_remain_next != 32'd0) && (stream_fifo_space_next != 8'd0)) begin
-                                            stream_rd_beats <= stream_rd_words_calc_next;
-                                            m_araddr_r <= stream_rd_addr + 32'd4;
-                                            m_arlen_r <= src_burst_allow_cfg ? (stream_rd_words_calc_next - 8'd1) : 8'd0;
-                                            m_arvalid_r <= 1'b1;
-                                            stream_rd_state <= RD_AR;
-                                        end
-                                        else begin
-                                            stream_rd_state <= RD_IDLE;
-                                        end
-                                    end
-                                    else begin
-                                        stream_rd_beats <= stream_rd_beats - 8'd1;
-                                    end
-                                end
-                            end
-                        end
-                        default: begin
-                            stream_rd_state <= RD_IDLE;
-                        end
-                    endcase
-
-                    case (stream_wr_state)
-                        WR_IDLE: begin
-                            if ((stream_wr_remain != 32'd0) && (stream_fifo_count != 8'd0)) begin
-                                stream_wr_beats <= stream_wr_words_calc;
-                                m_awaddr_r <= stream_wr_addr;
-                                m_awlen_r <= dst_burst_allow_cfg ? (stream_wr_words_calc - 8'd1) : 8'd0;
-                                m_awvalid_r <= 1'b1;
-                                stream_wr_state <= WR_AW;
-                            end
-                        end
-                        WR_AW: begin
-                            if (m_aw_fire) begin
-                                m_awvalid_r <= 1'b0;
-                                m_wdata_r <= dma_buf[stream_fifo_rd_ptr];
-                                m_wlast_r <= dst_burst_allow_cfg ? (stream_wr_beats == 8'd1) : 1'b1;
-                                m_wvalid_r <= 1'b1;
-                                stream_wr_state <= WR_W;
-                            end
-                        end
-                        WR_W: begin
-                            if (m_w_fire) begin
-                                stream_wr_addr <= stream_wr_addr + 32'd4;
-                                dma_cur_dst <= stream_wr_addr + 32'd4;
-                                stream_wr_remain <= stream_wr_remain - 32'd1;
-                                if (stream_wr_beats == 8'd1) begin
-                                    m_wvalid_r <= 1'b0;
-                                    m_wlast_r <= 1'b0;
-                                    m_bready_r <= 1'b1;
-                                    stream_wr_state <= WR_B;
-                                end
-                                else begin
-                                    stream_wr_beats <= stream_wr_beats - 8'd1;
-                                    m_wdata_r <= dma_buf[stream_fifo_rd_ptr + 7'd1];
-                                    m_wlast_r <= dst_burst_allow_cfg ? (stream_wr_beats == 8'd2) : 1'b1;
-                                end
-                            end
-                        end
-                        WR_B: begin
-                            if (m_b_fire) begin
-                                m_bready_r <= 1'b0;
-                                if (m_bresp != 2'b00) begin
-                                    m_rready_r <= 1'b0;
-                                    m_arvalid_r <= 1'b0;
-                                    m_awvalid_r <= 1'b0;
-                                    m_wvalid_r <= 1'b0;
-                                    m_wlast_r <= 1'b0;
-                                    dma_busy <= 1'b0;
-                                    dma_done <= 1'b1;
-                                    dma_error <= 1'b1;
-                                    dma_finish <= 1'b1;
-                                    stream_rd_state <= RD_IDLE;
-                                    stream_wr_state <= WR_IDLE;
-                                    dma_state <= M_IDLE;
-                                end
-                                else if ((stream_wr_remain != 32'd0) && (stream_fifo_count != 8'd0)) begin
-                                    stream_wr_beats <= stream_wr_words_calc;
-                                    m_awaddr_r <= stream_wr_addr;
-                                    m_awlen_r <= dst_burst_allow_cfg ? (stream_wr_words_calc - 8'd1) : 8'd0;
-                                    m_awvalid_r <= 1'b1;
-                                    stream_wr_state <= WR_AW;
-                                end
-                                else begin
-                                    stream_wr_state <= WR_IDLE;
-                                end
-                            end
-                        end
-                        default: begin
-                            stream_wr_state <= WR_IDLE;
-                        end
-                    endcase
-
-                    dma_remain <= (stream_wr_remain << 2);
-
-                    if ((stream_rd_remain == 32'd0) &&
-                        (stream_wr_remain == 32'd0) &&
-                        (stream_fifo_count == 8'd0) &&
-                        (stream_rd_state == RD_IDLE) &&
-                        (stream_wr_state == WR_IDLE) &&
-                        !m_arvalid_r &&
-                        !m_rready_r &&
-                        !m_awvalid_r &&
-                        !m_wvalid_r &&
-                        !m_bready_r) begin
-                        dma_busy <= 1'b0;
-                        dma_done <= 1'b1;
-                        dma_error <= 1'b0;
-                        dma_finish <= 1'b1;
-                        dma_state <= M_IDLE;
+                ST_AW: begin
+                    if (m_axi_awvalid && m_axi_awready) begin
+                        write_beat <= 8'd0;
+                        state <= ST_W;
                     end
                 end
-
-                M_AR: begin
-                    if (m_ar_fire) begin
-                        m_arvalid_r <= 1'b0;
-                        m_rready_r <= 1'b1;
-                        dma_state <= M_R;
-                    end
-                end
-
-                M_R: begin
-                    if (m_r_fire) begin
-                        if (m_rresp != 2'b00) begin
-                            m_rready_r <= 1'b0;
-                            dma_busy <= 1'b0;
-                            dma_done <= 1'b1;
-                            dma_error <= 1'b1;
-                            dma_finish <= 1'b1;
-                            m_arvalid_r <= 1'b0;
-                            m_bready_r <= 1'b0;
-                            m_awvalid_r <= 1'b0;
-                            m_wvalid_r <= 1'b0;
-                            m_wlast_r <= 1'b0;
-                            dma_state <= M_IDLE;
-                        end
-                        else begin
-                            dma_buf[dma_rd_cnt] <= m_rdata;
-                            if (dma_rd_cnt + 8'd1 >= dma_burst_words) begin
-                                m_rready_r <= 1'b0;
-                                dma_rd_cnt <= 8'd0;
-                                dma_wr_cnt <= 8'd0;
-                                m_awaddr_r <= dma_cur_dst;
-                                m_awlen_r <= dma_dst_burst_en ? ({1'b0, dma_burst_words} - 8'd1) : 8'd0;
-                                m_awvalid_r <= 1'b1;
-                                dma_state <= M_AW;
-                            end
-                            else begin
-                                if (dma_src_burst_en) begin
-                                    dma_rd_cnt <= dma_rd_cnt + 8'd1;
-                                end
-                                else begin
-                                    dma_rd_cnt <= dma_rd_cnt + 8'd1;
-                                    m_rready_r <= 1'b0;
-                                    m_araddr_r <= dma_cur_src + ({24'd0, dma_rd_cnt + 8'd1} << 2);
-                                    m_arlen_r <= 8'd0;
-                                    m_arvalid_r <= 1'b1;
-                                    dma_state <= M_AR;
-                                end
-                            end
+                ST_W: begin
+                    if (m_axi_wvalid && m_axi_wready) begin
+                        if (write_beat == burst_last) begin
+                            state <= ST_B;
+                        end else begin
+                            write_beat <= write_beat + 8'd1;
                         end
                     end
                 end
-
-                M_AW: begin
-                    if (m_aw_fire) begin
-                        m_awvalid_r <= 1'b0;
-                        m_wdata_r <= dma_buf[dma_wr_cnt];
-                        m_wlast_r <= dma_dst_burst_en ? (dma_burst_words == 8'd1) : 1'b1;
-                        m_wvalid_r <= 1'b1;
-                        dma_state <= M_W;
-                    end
-                end
-
-                M_W: begin
-                    if (m_w_fire) begin
-                        if (dma_dst_burst_en) begin
-                            if (dma_wr_cnt + 8'd1 >= dma_burst_words) begin
-                                m_wvalid_r <= 1'b0;
-                                m_wlast_r <= 1'b0;
-                                m_bready_r <= 1'b1;
-                                dma_state <= M_B;
-                            end
-                            else begin
-                                dma_wr_cnt <= dma_wr_cnt + 8'd1;
-                                m_wdata_r <= dma_buf[dma_wr_cnt + 8'd1];
-                                m_wlast_r <= ((dma_wr_cnt + 8'd2) >= dma_burst_words);
-                            end
-                        end
-                        else begin
-                            m_wvalid_r <= 1'b0;
-                            m_wlast_r <= 1'b0;
-                            m_bready_r <= 1'b1;
-                            dma_state <= M_B;
+                ST_B: begin
+                    if (m_axi_bvalid && m_axi_bready) begin
+                        if (m_axi_bresp != 2'b00)
+                            error <= 1'b1;
+                        src_addr <= src_addr + {22'd0, burst_last, 2'b00} + 32'd4;
+                        dst_addr <= dst_addr + {22'd0, burst_last, 2'b00} + 32'd4;
+                        done_bytes <= done_bytes + {22'd0, burst_last, 2'b00} + 32'd4;
+                        words_remaining <= words_remaining - ({24'd0, burst_last} + 32'd1);
+                        if (words_remaining == ({24'd0, burst_last} + 32'd1)) begin
+                            busy  <= 1'b0;
+                            done  <= 1'b1;
+                            state <= ST_IDLE;
+                        end else begin
+                            state <= ST_AR;
                         end
                     end
                 end
-
-                M_B: begin
-                    if (m_b_fire) begin
-                        m_bready_r <= 1'b0;
-                        if (m_bresp != 2'b00) begin
-                            dma_busy <= 1'b0;
-                            dma_done <= 1'b1;
-                            dma_error <= 1'b1;
-                            dma_finish <= 1'b1;
-                            dma_state <= M_IDLE;
-                        end
-                        else if (!dma_dst_burst_en && (dma_wr_cnt + 8'd1 < dma_burst_words)) begin
-                            dma_wr_cnt <= dma_wr_cnt + 8'd1;
-                            m_awaddr_r <= dma_cur_dst + ({24'd0, dma_wr_cnt + 8'd1} << 2);
-                            m_awlen_r <= 8'd0;
-                            m_awvalid_r <= 1'b1;
-                            dma_state <= M_AW;
-                        end
-                        else begin
-                            if (dma_remain <= dma_burst_bytes) begin
-                                dma_cur_src <= dma_next_src;
-                                dma_cur_dst <= dma_next_dst;
-                                dma_remain <= 32'd0;
-                                dma_busy <= 1'b0;
-                                dma_done <= 1'b1;
-                                dma_error <= 1'b0;
-                                dma_finish <= 1'b1;
-                                dma_state <= M_IDLE;
-                            end
-                            else begin
-                                dma_cur_src <= dma_next_src;
-                                dma_cur_dst <= dma_next_dst;
-                                dma_remain <= dma_remain_next;
-                                dma_burst_words <= dma_words_from_next;
-                                dma_src_burst_en <= src_burst_allow_next;
-                                dma_dst_burst_en <= dst_burst_allow_next;
-                                dma_rd_cnt <= 8'd0;
-                                dma_wr_cnt <= 8'd0;
-                                m_araddr_r <= dma_next_src;
-                                m_arlen_r <= src_burst_allow_next ? ({1'b0, dma_words_from_next} - 8'd1) : 8'd0;
-                                m_arvalid_r <= 1'b1;
-                                m_rready_r <= 1'b0;
-                                dma_state <= M_AR;
-                            end
-                        end
-                    end
-                end
-
-                default: begin
-                    dma_state <= M_IDLE;
-                end
+                default: state <= ST_IDLE;
             endcase
         end
     end
-
-    assign s_wready = s_wready_r;
-    assign s_bvalid = s_bvalid_r;
-    assign s_bid = buf_id;
-    assign s_bresp = 2'b0;
-    assign s_rvalid = s_rvalid_r;
-    assign s_rdata = s_rdata_r;
-    assign s_rid = buf_id;
-    assign s_rresp = 2'b0;
-    assign s_rlast = s_rlast_r;
-
-    assign m_arid = 4'b0;
-    assign m_araddr = m_araddr_r;
-    assign m_arlen = m_arlen_r;
-    assign m_arsize = 3'd2;
-    assign m_arburst = 2'b01;
-    assign m_arlock = 1'b0;
-    assign m_arcache = 4'b0;
-    assign m_arprot = 3'b0;
-    assign m_arvalid = m_arvalid_r;
-    assign m_rready = m_rready_r;
-
-    assign m_awid = 4'b0;
-    assign m_awaddr = m_awaddr_r;
-    assign m_awlen = m_awlen_r;
-    assign m_awsize = 3'd2;
-    assign m_awburst = 2'b01;
-    assign m_awlock = 1'b0;
-    assign m_awcache = 4'b0;
-    assign m_awprot = 3'b0;
-    assign m_awvalid = m_awvalid_r;
-
-    assign m_wdata = m_wdata_r;
-    assign m_wstrb = 4'hf;
-    assign m_wlast = m_wlast_r;
-    assign m_wvalid = m_wvalid_r;
-    assign m_bready = m_bready_r;
+end
 
 endmodule
