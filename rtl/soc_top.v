@@ -326,98 +326,98 @@ assign     uart0_dcd_i = UART_DCD;
 assign     uart0_dsr_i = UART_DSR;
 assign     uart0_ri_i  = UART_RI ;
 
-//matmul dma master axi
-wire [3 :0] matmul_dma_m_arid   ;
-wire [31:0] matmul_dma_m_araddr ;
-wire [7 :0] matmul_dma_m_arlen  ;
-wire [2 :0] matmul_dma_m_arsize ;
-wire [1 :0] matmul_dma_m_arburst;
-wire        matmul_dma_m_arlock ;
-wire [3 :0] matmul_dma_m_arcache;
-wire [2 :0] matmul_dma_m_arprot ;
-wire        matmul_dma_m_arvalid;
-wire        matmul_dma_m_arready;
-wire [3 :0] matmul_dma_m_rid    ;
-wire [31:0] matmul_dma_m_rdata  ;
-wire [1 :0] matmul_dma_m_rresp  ;
-wire        matmul_dma_m_rlast  ;
-wire        matmul_dma_m_rvalid ;
-wire        matmul_dma_m_rready ;
-wire [3 :0] matmul_dma_m_awid   ;
-wire [31:0] matmul_dma_m_awaddr ;
-wire [7 :0] matmul_dma_m_awlen  ;
-wire [2 :0] matmul_dma_m_awsize ;
-wire [1 :0] matmul_dma_m_awburst;
-wire        matmul_dma_m_awlock ;
-wire [3 :0] matmul_dma_m_awcache;
-wire [2 :0] matmul_dma_m_awprot ;
-wire        matmul_dma_m_awvalid;
-wire        matmul_dma_m_awready;
-wire [3 :0] matmul_dma_m_wid    ;
-wire [31:0] matmul_dma_m_wdata  ;
-wire [3 :0] matmul_dma_m_wstrb  ;
-wire        matmul_dma_m_wlast  ;
-wire        matmul_dma_m_wvalid ;
-wire        matmul_dma_m_wready ;
-wire [3 :0] matmul_dma_m_bid    ;
-wire [1 :0] matmul_dma_m_bresp  ;
-wire        matmul_dma_m_bvalid ;
-wire        matmul_dma_m_bready ;
+//dma master axi
+wire [3 :0] dma_m_arid   ;
+wire [31:0] dma_m_araddr ;
+wire [7 :0] dma_m_arlen  ;
+wire [2 :0] dma_m_arsize ;
+wire [1 :0] dma_m_arburst;
+wire        dma_m_arlock ;
+wire [3 :0] dma_m_arcache;
+wire [2 :0] dma_m_arprot ;
+wire        dma_m_arvalid;
+wire        dma_m_arready;
+wire [3 :0] dma_m_rid    ;
+wire [31:0] dma_m_rdata  ;
+wire [1 :0] dma_m_rresp  ;
+wire        dma_m_rlast  ;
+wire        dma_m_rvalid ;
+wire        dma_m_rready ;
+wire [3 :0] dma_m_awid   ;
+wire [31:0] dma_m_awaddr ;
+wire [7 :0] dma_m_awlen  ;
+wire [2 :0] dma_m_awsize ;
+wire [1 :0] dma_m_awburst;
+wire        dma_m_awlock ;
+wire [3 :0] dma_m_awcache;
+wire [2 :0] dma_m_awprot ;
+wire        dma_m_awvalid;
+wire        dma_m_awready;
+wire [3 :0] dma_m_wid    ;
+wire [31:0] dma_m_wdata  ;
+wire [3 :0] dma_m_wstrb  ;
+wire        dma_m_wlast  ;
+wire        dma_m_wvalid ;
+wire        dma_m_wready ;
+wire [3 :0] dma_m_bid    ;
+wire [1 :0] dma_m_bresp  ;
+wire        dma_m_bvalid ;
+wire        dma_m_bready ;
 
-assign matmul_dma_m_wid        = 4'b0;
+assign dma_m_wid        = 4'b0;
 
-wire [4 :0] matmul_dma_s_arid   ;
-wire [31:0] matmul_dma_s_araddr ;
-wire [7 :0] matmul_dma_s_arlen  ;
-wire [2 :0] matmul_dma_s_arsize ;
-wire [1 :0] matmul_dma_s_arburst;
-wire        matmul_dma_s_arlock ;
-wire [3 :0] matmul_dma_s_arcache;
-wire [2 :0] matmul_dma_s_arprot ;
-wire        matmul_dma_s_arvalid;
-wire        matmul_dma_s_arready;
-wire [4 :0] matmul_dma_s_rid    ;
-wire [31:0] matmul_dma_s_rdata  ;
-wire [1 :0] matmul_dma_s_rresp  ;
-wire        matmul_dma_s_rlast  ;
-wire        matmul_dma_s_rvalid ;
-wire        matmul_dma_s_rready ;
-wire [4 :0] matmul_dma_s_awid   ;
-wire [31:0] matmul_dma_s_awaddr ;
-wire [7 :0] matmul_dma_s_awlen  ;
-wire [2 :0] matmul_dma_s_awsize ;
-wire [1 :0] matmul_dma_s_awburst;
-wire        matmul_dma_s_awlock ;
-wire [3 :0] matmul_dma_s_awcache;
-wire [2 :0] matmul_dma_s_awprot ;
-wire        matmul_dma_s_awvalid;
-wire        matmul_dma_s_awready;
-wire [31:0] matmul_dma_s_wdata  ;
-wire [3 :0] matmul_dma_s_wstrb  ;
-wire        matmul_dma_s_wlast  ;
-wire        matmul_dma_s_wvalid ;
-wire        matmul_dma_s_wready ;
-wire [4 :0] matmul_dma_s_bid    ;
-wire [1 :0] matmul_dma_s_bresp  ;
-wire        matmul_dma_s_bvalid ;
-wire        matmul_dma_s_bready ;
-wire        matmul_dma_finish   ;
-wire        matmul_dma_start_banner_valid;
-wire        matmul_dma_crc32_valid;
-wire [31:0] matmul_dma_crc32_final;
-wire        matmul_dma_active;
-wire        matmul_dma_stream_valid;
-wire [3:0]  matmul_dma_stream_start;
-wire [3:0]  matmul_dma_stream_core;
-wire [4:0]  matmul_dma_stream_index;
-wire [31:0] matmul_dma_stream_data;
-wire [3:0]  matmul_dma_ready;
-wire [3:0]  matmul_dma_done;
-wire [3:0]  matmul_dma_result_index;
-wire [65:0] matmul_dma_result_data0;
-wire [65:0] matmul_dma_result_data1;
-wire [65:0] matmul_dma_result_data2;
-wire [65:0] matmul_dma_result_data3;
+wire [4 :0] dma_s_arid   ;
+wire [31:0] dma_s_araddr ;
+wire [7 :0] dma_s_arlen  ;
+wire [2 :0] dma_s_arsize ;
+wire [1 :0] dma_s_arburst;
+wire        dma_s_arlock ;
+wire [3 :0] dma_s_arcache;
+wire [2 :0] dma_s_arprot ;
+wire        dma_s_arvalid;
+wire        dma_s_arready;
+wire [4 :0] dma_s_rid    ;
+wire [31:0] dma_s_rdata  ;
+wire [1 :0] dma_s_rresp  ;
+wire        dma_s_rlast  ;
+wire        dma_s_rvalid ;
+wire        dma_s_rready ;
+wire [4 :0] dma_s_awid   ;
+wire [31:0] dma_s_awaddr ;
+wire [7 :0] dma_s_awlen  ;
+wire [2 :0] dma_s_awsize ;
+wire [1 :0] dma_s_awburst;
+wire        dma_s_awlock ;
+wire [3 :0] dma_s_awcache;
+wire [2 :0] dma_s_awprot ;
+wire        dma_s_awvalid;
+wire        dma_s_awready;
+wire [31:0] dma_s_wdata  ;
+wire [3 :0] dma_s_wstrb  ;
+wire        dma_s_wlast  ;
+wire        dma_s_wvalid ;
+wire        dma_s_wready ;
+wire [4 :0] dma_s_bid    ;
+wire [1 :0] dma_s_bresp  ;
+wire        dma_s_bvalid ;
+wire        dma_s_bready ;
+wire        dma_finish   ;
+wire        dma_start_banner_valid;
+wire        dma_crc32_valid;
+wire [31:0] dma_crc32_final;
+wire        dma_matmul_active;
+wire        dma_matmul_stream_valid;
+wire [3:0]  dma_matmul_stream_start;
+wire [3:0]  dma_matmul_stream_core;
+wire [4:0]  dma_matmul_stream_index;
+wire [31:0] dma_matmul_stream_data;
+wire [3:0]  dma_matmul_ready;
+wire [3:0]  dma_matmul_done;
+wire [3:0]  dma_matmul_result_index;
+wire [65:0] dma_matmul_result_data0;
+wire [65:0] dma_matmul_result_data1;
+wire [65:0] dma_matmul_result_data2;
+wire [65:0] dma_matmul_result_data3;
 
 
 //Kyber_ip (deleted)
@@ -644,92 +644,92 @@ matmul_dma #(
     .clk            (sys_clk),
     .resetn         (sys_resetn),
 
-    .s_axi_awid     (matmul_dma_s_awid),
-    .s_axi_awaddr   (matmul_dma_s_awaddr),
-    .s_axi_awlen    (matmul_dma_s_awlen),
-    .s_axi_awsize   (matmul_dma_s_awsize),
-    .s_axi_awburst  (matmul_dma_s_awburst),
-    .s_axi_awlock   (matmul_dma_s_awlock),
-    .s_axi_awcache  (matmul_dma_s_awcache),
-    .s_axi_awprot   (matmul_dma_s_awprot),
-    .s_axi_awvalid  (matmul_dma_s_awvalid),
-    .s_axi_awready  (matmul_dma_s_awready),
-    .s_axi_wdata    (matmul_dma_s_wdata),
-    .s_axi_wstrb    (matmul_dma_s_wstrb),
-    .s_axi_wlast    (matmul_dma_s_wlast),
-    .s_axi_wvalid   (matmul_dma_s_wvalid),
-    .s_axi_wready   (matmul_dma_s_wready),
-    .s_axi_bid      (matmul_dma_s_bid),
-    .s_axi_bresp    (matmul_dma_s_bresp),
-    .s_axi_bvalid   (matmul_dma_s_bvalid),
-    .s_axi_bready   (matmul_dma_s_bready),
-    .s_axi_arid     (matmul_dma_s_arid),
-    .s_axi_araddr   (matmul_dma_s_araddr),
-    .s_axi_arlen    (matmul_dma_s_arlen),
-    .s_axi_arsize   (matmul_dma_s_arsize),
-    .s_axi_arburst  (matmul_dma_s_arburst),
-    .s_axi_arlock   (matmul_dma_s_arlock),
-    .s_axi_arcache  (matmul_dma_s_arcache),
-    .s_axi_arprot   (matmul_dma_s_arprot),
-    .s_axi_arvalid  (matmul_dma_s_arvalid),
-    .s_axi_arready  (matmul_dma_s_arready),
-    .s_axi_rid      (matmul_dma_s_rid),
-    .s_axi_rdata    (matmul_dma_s_rdata),
-    .s_axi_rresp    (matmul_dma_s_rresp),
-    .s_axi_rlast    (matmul_dma_s_rlast),
-    .s_axi_rvalid   (matmul_dma_s_rvalid),
-    .s_axi_rready   (matmul_dma_s_rready),
+    .s_axi_awid     (dma_s_awid),
+    .s_axi_awaddr   (dma_s_awaddr),
+    .s_axi_awlen    (dma_s_awlen),
+    .s_axi_awsize   (dma_s_awsize),
+    .s_axi_awburst  (dma_s_awburst),
+    .s_axi_awlock   (dma_s_awlock),
+    .s_axi_awcache  (dma_s_awcache),
+    .s_axi_awprot   (dma_s_awprot),
+    .s_axi_awvalid  (dma_s_awvalid),
+    .s_axi_awready  (dma_s_awready),
+    .s_axi_wdata    (dma_s_wdata),
+    .s_axi_wstrb    (dma_s_wstrb),
+    .s_axi_wlast    (dma_s_wlast),
+    .s_axi_wvalid   (dma_s_wvalid),
+    .s_axi_wready   (dma_s_wready),
+    .s_axi_bid      (dma_s_bid),
+    .s_axi_bresp    (dma_s_bresp),
+    .s_axi_bvalid   (dma_s_bvalid),
+    .s_axi_bready   (dma_s_bready),
+    .s_axi_arid     (dma_s_arid),
+    .s_axi_araddr   (dma_s_araddr),
+    .s_axi_arlen    (dma_s_arlen),
+    .s_axi_arsize   (dma_s_arsize),
+    .s_axi_arburst  (dma_s_arburst),
+    .s_axi_arlock   (dma_s_arlock),
+    .s_axi_arcache  (dma_s_arcache),
+    .s_axi_arprot   (dma_s_arprot),
+    .s_axi_arvalid  (dma_s_arvalid),
+    .s_axi_arready  (dma_s_arready),
+    .s_axi_rid      (dma_s_rid),
+    .s_axi_rdata    (dma_s_rdata),
+    .s_axi_rresp    (dma_s_rresp),
+    .s_axi_rlast    (dma_s_rlast),
+    .s_axi_rvalid   (dma_s_rvalid),
+    .s_axi_rready   (dma_s_rready),
 
-    .m_axi_awid     (matmul_dma_m_awid),
-    .m_axi_awaddr   (matmul_dma_m_awaddr),
-    .m_axi_awlen    (matmul_dma_m_awlen),
-    .m_axi_awsize   (matmul_dma_m_awsize),
-    .m_axi_awburst  (matmul_dma_m_awburst),
-    .m_axi_awlock   (matmul_dma_m_awlock),
-    .m_axi_awcache  (matmul_dma_m_awcache),
-    .m_axi_awprot   (matmul_dma_m_awprot),
-    .m_axi_awvalid  (matmul_dma_m_awvalid),
-    .m_axi_awready  (matmul_dma_m_awready),
-    .m_axi_wdata    (matmul_dma_m_wdata),
-    .m_axi_wstrb    (matmul_dma_m_wstrb),
-    .m_axi_wlast    (matmul_dma_m_wlast),
-    .m_axi_wvalid   (matmul_dma_m_wvalid),
-    .m_axi_wready   (matmul_dma_m_wready),
-    .m_axi_bid      (matmul_dma_m_bid),
-    .m_axi_bresp    (matmul_dma_m_bresp),
-    .m_axi_bvalid   (matmul_dma_m_bvalid),
-    .m_axi_bready   (matmul_dma_m_bready),
-    .m_axi_arid     (matmul_dma_m_arid),
-    .m_axi_araddr   (matmul_dma_m_araddr),
-    .m_axi_arlen    (matmul_dma_m_arlen),
-    .m_axi_arsize   (matmul_dma_m_arsize),
-    .m_axi_arburst  (matmul_dma_m_arburst),
-    .m_axi_arlock   (matmul_dma_m_arlock),
-    .m_axi_arcache  (matmul_dma_m_arcache),
-    .m_axi_arprot   (matmul_dma_m_arprot),
-    .m_axi_arvalid  (matmul_dma_m_arvalid),
-    .m_axi_arready  (matmul_dma_m_arready),
-    .m_axi_rid      (matmul_dma_m_rid),
-    .m_axi_rdata    (matmul_dma_m_rdata),
-    .m_axi_rresp    (matmul_dma_m_rresp),
-    .m_axi_rlast    (matmul_dma_m_rlast),
-    .m_axi_rvalid   (matmul_dma_m_rvalid),
-    .m_axi_rready   (matmul_dma_m_rready),
-    .matmul_active  (matmul_dma_active),
-    .matmul_stream_valid(matmul_dma_stream_valid),
-    .matmul_stream_start(matmul_dma_stream_start),
-    .matmul_stream_core (matmul_dma_stream_core),
-    .matmul_stream_index(matmul_dma_stream_index),
-    .matmul_stream_data (matmul_dma_stream_data),
-    .matmul_ready   (matmul_dma_ready),
-    .matmul_done    (matmul_dma_done),
-    .matmul_result_index (matmul_dma_result_index),
-    .matmul_result_data0 (matmul_dma_result_data0),
-    .matmul_result_data1 (matmul_dma_result_data1),
-    .finish         (matmul_dma_finish),
-    .start_banner_valid(matmul_dma_start_banner_valid),
-    .crc32_valid    (matmul_dma_crc32_valid),
-    .crc32_final    (matmul_dma_crc32_final)
+    .m_axi_awid     (dma_m_awid),
+    .m_axi_awaddr   (dma_m_awaddr),
+    .m_axi_awlen    (dma_m_awlen),
+    .m_axi_awsize   (dma_m_awsize),
+    .m_axi_awburst  (dma_m_awburst),
+    .m_axi_awlock   (dma_m_awlock),
+    .m_axi_awcache  (dma_m_awcache),
+    .m_axi_awprot   (dma_m_awprot),
+    .m_axi_awvalid  (dma_m_awvalid),
+    .m_axi_awready  (dma_m_awready),
+    .m_axi_wdata    (dma_m_wdata),
+    .m_axi_wstrb    (dma_m_wstrb),
+    .m_axi_wlast    (dma_m_wlast),
+    .m_axi_wvalid   (dma_m_wvalid),
+    .m_axi_wready   (dma_m_wready),
+    .m_axi_bid      (dma_m_bid),
+    .m_axi_bresp    (dma_m_bresp),
+    .m_axi_bvalid   (dma_m_bvalid),
+    .m_axi_bready   (dma_m_bready),
+    .m_axi_arid     (dma_m_arid),
+    .m_axi_araddr   (dma_m_araddr),
+    .m_axi_arlen    (dma_m_arlen),
+    .m_axi_arsize   (dma_m_arsize),
+    .m_axi_arburst  (dma_m_arburst),
+    .m_axi_arlock   (dma_m_arlock),
+    .m_axi_arcache  (dma_m_arcache),
+    .m_axi_arprot   (dma_m_arprot),
+    .m_axi_arvalid  (dma_m_arvalid),
+    .m_axi_arready  (dma_m_arready),
+    .m_axi_rid      (dma_m_rid),
+    .m_axi_rdata    (dma_m_rdata),
+    .m_axi_rresp    (dma_m_rresp),
+    .m_axi_rlast    (dma_m_rlast),
+    .m_axi_rvalid   (dma_m_rvalid),
+    .m_axi_rready   (dma_m_rready),
+    .matmul_active  (dma_matmul_active),
+    .matmul_stream_valid(dma_matmul_stream_valid),
+    .matmul_stream_start(dma_matmul_stream_start),
+    .matmul_stream_core (dma_matmul_stream_core),
+    .matmul_stream_index(dma_matmul_stream_index),
+    .matmul_stream_data (dma_matmul_stream_data),
+    .matmul_ready   (dma_matmul_ready),
+    .matmul_done    (dma_matmul_done),
+    .matmul_result_index (dma_matmul_result_index),
+    .matmul_result_data0 (dma_matmul_result_data0),
+    .matmul_result_data1 (dma_matmul_result_data1),
+    .finish         (dma_finish),
+    .start_banner_valid(dma_start_banner_valid),
+    .crc32_valid    (dma_crc32_valid),
+    .crc32_final    (dma_crc32_final)
 );
 
 matmul_axi_slave u_matmul (
@@ -777,19 +777,19 @@ matmul_axi_slave u_matmul (
     .s_axi_rvalid   ( axiOut_7_rvalid   ),
     .s_axi_rready   ( axiOut_7_rready   ),
 
-    .matmul_dma_active     ( matmul_dma_active ),
-    .matmul_dma_stream_valid(matmul_dma_stream_valid),
-    .matmul_dma_stream_start(matmul_dma_stream_start),
-    .matmul_dma_stream_core (matmul_dma_stream_core),
-    .matmul_dma_stream_index(matmul_dma_stream_index),
-    .matmul_dma_stream_data (matmul_dma_stream_data),
-    .matmul_dma_ready      ( matmul_dma_ready  ),
-    .matmul_dma_done       ( matmul_dma_done   ),
-    .matmul_dma_result_index ( matmul_dma_result_index ),
-    .matmul_dma_result_data0 ( matmul_dma_result_data0 ),
-    .matmul_dma_result_data1 ( matmul_dma_result_data1 ),
-    .matmul_dma_result_data2 ( matmul_dma_result_data2 ),
-    .matmul_dma_result_data3 ( matmul_dma_result_data3 )
+    .dma_active     ( dma_matmul_active ),
+    .dma_stream_valid(dma_matmul_stream_valid),
+    .dma_stream_start(dma_matmul_stream_start),
+    .dma_stream_core (dma_matmul_stream_core),
+    .dma_stream_index(dma_matmul_stream_index),
+    .dma_stream_data (dma_matmul_stream_data),
+    .dma_ready      ( dma_matmul_ready  ),
+    .dma_done       ( dma_matmul_done   ),
+    .dma_result_index ( dma_matmul_result_index ),
+    .dma_result_data0 ( dma_matmul_result_data0 ),
+    .dma_result_data1 ( dma_matmul_result_data1 ),
+    .dma_result_data2 ( dma_matmul_result_data2 ),
+    .dma_result_data3 ( dma_matmul_result_data3 )
 );
 
 wire confreg_int;
@@ -843,45 +843,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //master 1
     //aw
-    .axiIn_1_awvalid         ( matmul_dma_m_awvalid       ),
-    .axiIn_1_awready         ( matmul_dma_m_awready       ),
-    .axiIn_1_awaddr          ( matmul_dma_m_awaddr        ),
-    .axiIn_1_awid            ( matmul_dma_m_awid          ),
-    .axiIn_1_awlen           ( matmul_dma_m_awlen         ),
-    .axiIn_1_awsize          ( matmul_dma_m_awsize        ),
-    .axiIn_1_awburst         ( matmul_dma_m_awburst       ),
-    .axiIn_1_awlock          ( matmul_dma_m_awlock        ),
-    .axiIn_1_awcache         ( matmul_dma_m_awcache       ),
-    .axiIn_1_awprot          ( matmul_dma_m_awprot        ),
+    .axiIn_1_awvalid         ( dma_m_awvalid       ),
+    .axiIn_1_awready         ( dma_m_awready       ),
+    .axiIn_1_awaddr          ( dma_m_awaddr        ),
+    .axiIn_1_awid            ( dma_m_awid          ),
+    .axiIn_1_awlen           ( dma_m_awlen         ),
+    .axiIn_1_awsize          ( dma_m_awsize        ),
+    .axiIn_1_awburst         ( dma_m_awburst       ),
+    .axiIn_1_awlock          ( dma_m_awlock        ),
+    .axiIn_1_awcache         ( dma_m_awcache       ),
+    .axiIn_1_awprot          ( dma_m_awprot        ),
     //w
-    .axiIn_1_wvalid          ( matmul_dma_m_wvalid        ),
-    .axiIn_1_wready          ( matmul_dma_m_wready        ),
-    .axiIn_1_wdata           ( matmul_dma_m_wdata         ),
-    .axiIn_1_wstrb           ( matmul_dma_m_wstrb         ),
-    .axiIn_1_wlast           ( matmul_dma_m_wlast         ),
+    .axiIn_1_wvalid          ( dma_m_wvalid        ),
+    .axiIn_1_wready          ( dma_m_wready        ),
+    .axiIn_1_wdata           ( dma_m_wdata         ),
+    .axiIn_1_wstrb           ( dma_m_wstrb         ),
+    .axiIn_1_wlast           ( dma_m_wlast         ),
     //b
-    .axiIn_1_bready          ( matmul_dma_m_bready        ),
-    .axiIn_1_bvalid          ( matmul_dma_m_bvalid        ),
-    .axiIn_1_bid             ( matmul_dma_m_bid           ),
-    .axiIn_1_bresp           ( matmul_dma_m_bresp         ),
+    .axiIn_1_bready          ( dma_m_bready        ),
+    .axiIn_1_bvalid          ( dma_m_bvalid        ),
+    .axiIn_1_bid             ( dma_m_bid           ),
+    .axiIn_1_bresp           ( dma_m_bresp         ),
     //ar
-    .axiIn_1_arvalid         ( matmul_dma_m_arvalid       ),
-    .axiIn_1_arready         ( matmul_dma_m_arready       ),
-    .axiIn_1_araddr          ( matmul_dma_m_araddr        ),
-    .axiIn_1_arid            ( matmul_dma_m_arid          ),
-    .axiIn_1_arlen           ( matmul_dma_m_arlen         ),
-    .axiIn_1_arsize          ( matmul_dma_m_arsize        ),
-    .axiIn_1_arburst         ( matmul_dma_m_arburst       ),
-    .axiIn_1_arlock          ( matmul_dma_m_arlock        ),
-    .axiIn_1_arcache         ( matmul_dma_m_arcache       ),
-    .axiIn_1_arprot          ( matmul_dma_m_arprot        ),
+    .axiIn_1_arvalid         ( dma_m_arvalid       ),
+    .axiIn_1_arready         ( dma_m_arready       ),
+    .axiIn_1_araddr          ( dma_m_araddr        ),
+    .axiIn_1_arid            ( dma_m_arid          ),
+    .axiIn_1_arlen           ( dma_m_arlen         ),
+    .axiIn_1_arsize          ( dma_m_arsize        ),
+    .axiIn_1_arburst         ( dma_m_arburst       ),
+    .axiIn_1_arlock          ( dma_m_arlock        ),
+    .axiIn_1_arcache         ( dma_m_arcache       ),
+    .axiIn_1_arprot          ( dma_m_arprot        ),
     //r
-    .axiIn_1_rvalid          ( matmul_dma_m_rvalid        ),
-    .axiIn_1_rready          ( matmul_dma_m_rready        ),
-    .axiIn_1_rdata           ( matmul_dma_m_rdata         ),
-    .axiIn_1_rid             ( matmul_dma_m_rid           ),
-    .axiIn_1_rresp           ( matmul_dma_m_rresp         ),
-    .axiIn_1_rlast           ( matmul_dma_m_rlast         ),
+    .axiIn_1_rvalid          ( dma_m_rvalid        ),
+    .axiIn_1_rready          ( dma_m_rready        ),
+    .axiIn_1_rdata           ( dma_m_rdata         ),
+    .axiIn_1_rid             ( dma_m_rid           ),
+    .axiIn_1_rresp           ( dma_m_rresp         ),
+    .axiIn_1_rlast           ( dma_m_rlast         ),
 
     //slave 0
     //aw
@@ -1096,45 +1096,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 5
     //aw
-    .axiOut_5_awvalid        ( matmul_dma_s_awvalid   ),
-    .axiOut_5_awready        ( matmul_dma_s_awready   ),
-    .axiOut_5_awaddr         ( matmul_dma_s_awaddr    ),
-    .axiOut_5_awid           ( matmul_dma_s_awid      ),
-    .axiOut_5_awlen          ( matmul_dma_s_awlen     ),
-    .axiOut_5_awsize         ( matmul_dma_s_awsize    ),
-    .axiOut_5_awburst        ( matmul_dma_s_awburst   ),
-    .axiOut_5_awlock         ( matmul_dma_s_awlock    ),
-    .axiOut_5_awcache        ( matmul_dma_s_awcache   ),
-    .axiOut_5_awprot         ( matmul_dma_s_awprot    ),
+    .axiOut_5_awvalid        ( dma_s_awvalid   ),
+    .axiOut_5_awready        ( dma_s_awready   ),
+    .axiOut_5_awaddr         ( dma_s_awaddr    ),
+    .axiOut_5_awid           ( dma_s_awid      ),
+    .axiOut_5_awlen          ( dma_s_awlen     ),
+    .axiOut_5_awsize         ( dma_s_awsize    ),
+    .axiOut_5_awburst        ( dma_s_awburst   ),
+    .axiOut_5_awlock         ( dma_s_awlock    ),
+    .axiOut_5_awcache        ( dma_s_awcache   ),
+    .axiOut_5_awprot         ( dma_s_awprot    ),
     //w
-    .axiOut_5_wvalid         ( matmul_dma_s_wvalid    ),
-    .axiOut_5_wready         ( matmul_dma_s_wready    ),
-    .axiOut_5_wdata          ( matmul_dma_s_wdata     ),
-    .axiOut_5_wstrb          ( matmul_dma_s_wstrb     ),
-    .axiOut_5_wlast          ( matmul_dma_s_wlast     ),
+    .axiOut_5_wvalid         ( dma_s_wvalid    ),
+    .axiOut_5_wready         ( dma_s_wready    ),
+    .axiOut_5_wdata          ( dma_s_wdata     ),
+    .axiOut_5_wstrb          ( dma_s_wstrb     ),
+    .axiOut_5_wlast          ( dma_s_wlast     ),
     //b
-    .axiOut_5_bready         ( matmul_dma_s_bready    ),
-    .axiOut_5_bvalid         ( matmul_dma_s_bvalid    ),
-    .axiOut_5_bid            ( matmul_dma_s_bid       ),
-    .axiOut_5_bresp          ( matmul_dma_s_bresp     ),
+    .axiOut_5_bready         ( dma_s_bready    ),
+    .axiOut_5_bvalid         ( dma_s_bvalid    ),
+    .axiOut_5_bid            ( dma_s_bid       ),
+    .axiOut_5_bresp          ( dma_s_bresp     ),
     //ar
-    .axiOut_5_arvalid        ( matmul_dma_s_arvalid   ),
-    .axiOut_5_arready        ( matmul_dma_s_arready   ),
-    .axiOut_5_araddr         ( matmul_dma_s_araddr    ),
-    .axiOut_5_arid           ( matmul_dma_s_arid      ),
-    .axiOut_5_arlen          ( matmul_dma_s_arlen     ),
-    .axiOut_5_arsize         ( matmul_dma_s_arsize    ),
-    .axiOut_5_arburst        ( matmul_dma_s_arburst   ),
-    .axiOut_5_arlock         ( matmul_dma_s_arlock    ),
-    .axiOut_5_arcache        ( matmul_dma_s_arcache   ),
-    .axiOut_5_arprot         ( matmul_dma_s_arprot    ),
+    .axiOut_5_arvalid        ( dma_s_arvalid   ),
+    .axiOut_5_arready        ( dma_s_arready   ),
+    .axiOut_5_araddr         ( dma_s_araddr    ),
+    .axiOut_5_arid           ( dma_s_arid      ),
+    .axiOut_5_arlen          ( dma_s_arlen     ),
+    .axiOut_5_arsize         ( dma_s_arsize    ),
+    .axiOut_5_arburst        ( dma_s_arburst   ),
+    .axiOut_5_arlock         ( dma_s_arlock    ),
+    .axiOut_5_arcache        ( dma_s_arcache   ),
+    .axiOut_5_arprot         ( dma_s_arprot    ),
     //r
-    .axiOut_5_rvalid         ( matmul_dma_s_rvalid    ),
-    .axiOut_5_rready         ( matmul_dma_s_rready    ),
-    .axiOut_5_rdata          ( matmul_dma_s_rdata     ),
-    .axiOut_5_rid            ( matmul_dma_s_rid       ),
-    .axiOut_5_rresp          ( matmul_dma_s_rresp     ),
-    .axiOut_5_rlast          ( matmul_dma_s_rlast     ),
+    .axiOut_5_rvalid         ( dma_s_rvalid    ),
+    .axiOut_5_rready         ( dma_s_rready    ),
+    .axiOut_5_rdata          ( dma_s_rdata     ),
+    .axiOut_5_rid            ( dma_s_rid       ),
+    .axiOut_5_rresp          ( dma_s_rresp     ),
+    .axiOut_5_rlast          ( dma_s_rlast     ),
 
     //slave 6
     //aw
@@ -1493,9 +1493,9 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
     .uart0_int (uart0_int ),
-    .auto_start_valid (matmul_dma_start_banner_valid ),
-    .auto_crc_valid (matmul_dma_crc32_valid ),
-    .auto_crc32 (matmul_dma_crc32_final )
+    .auto_start_valid (dma_start_banner_valid ),
+    .auto_crc_valid (dma_crc32_valid ),
+    .auto_crc32 (dma_crc32_final )
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---
@@ -1544,7 +1544,7 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
 
     .switch ( dip_sw ),
     .touch_btn ( touch_btn ),
-    .matmul_dma_finish ( matmul_dma_finish ),
+    .dma_finish ( dma_finish ),
     .fft_finish ( fft_finish ),
     .led ( leds ),
     .dpy0 ( dpy0 ),

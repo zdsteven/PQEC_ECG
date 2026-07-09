@@ -1,4 +1,4 @@
-#include "matmul_dma.h"
+#include "dma.h"
 
 unsigned long UART_BASE = 0xbf000000;
 unsigned long CONFREG_TIMER_BASE = 0xbf20f100;
@@ -18,7 +18,7 @@ int main(int argc, char **argv)
     (void)argv;
 
     /* DMA starts from its fixed evaluation defaults at reset release. */
-    (void)MatMulDMA_Wait(0u);
+    (void)DMA_Wait(0u);
 
     while (1) {
     }

@@ -42,19 +42,19 @@ module matmul_axi_slave (
     output reg        s_axi_rvalid,
     input             s_axi_rready,
 
-    input             matmul_dma_active,
-    input             matmul_dma_stream_valid,
-    input      [3:0]  matmul_dma_stream_start,
-    input      [3:0]  matmul_dma_stream_core,
-    input      [4:0]  matmul_dma_stream_index,
-    input      [31:0] matmul_dma_stream_data,
-    output     [3:0]  matmul_dma_ready,
-    output     [3:0]  matmul_dma_done,
-    input      [3:0]  matmul_dma_result_index,
-    output     [65:0] matmul_dma_result_data0,
-    output     [65:0] matmul_dma_result_data1,
-    output     [65:0] matmul_dma_result_data2,
-    output     [65:0] matmul_dma_result_data3
+    input             dma_active,
+    input             dma_stream_valid,
+    input      [3:0]  dma_stream_start,
+    input      [3:0]  dma_stream_core,
+    input      [4:0]  dma_stream_index,
+    input      [31:0] dma_stream_data,
+    output     [3:0]  dma_ready,
+    output     [3:0]  dma_done,
+    input      [3:0]  dma_result_index,
+    output     [65:0] dma_result_data0,
+    output     [65:0] dma_result_data1,
+    output     [65:0] dma_result_data2,
+    output     [65:0] dma_result_data3
 );
 
 localparam [11:0] ADDR_CTRL      = 12'h000;
@@ -84,7 +84,7 @@ reg        clear_status_pulse;
 
 reg        cpu_done;
 reg        cpu_error;
-reg        owner_matmul_dma;
+reg        owner_dma;
 reg        capture_active;
 reg [3:0]  capture_index;
 
@@ -105,24 +105,24 @@ wire write_fire   = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
 wire start_write  = write_fire && (write_offset == ADDR_CTRL) && wdata_hold[0];
 wire busy_status  = core0_busy || core0_done || core1_busy || core1_done ||
                     capture_active;
-wire matmul_dma_accept0  = matmul_dma_stream_start[0] && matmul_dma_ready[0];
-wire matmul_dma_accept1  = matmul_dma_stream_start[1] && matmul_dma_ready[1];
-wire cpu_accept   = start_write && !matmul_dma_active && !busy_status;
-wire core0_start  = matmul_dma_accept0 || cpu_accept;
+wire dma_accept0  = dma_stream_start[0] && dma_ready[0];
+wire dma_accept1  = dma_stream_start[1] && dma_ready[1];
+wire cpu_accept   = start_write && !dma_active && !busy_status;
+wire core0_start  = dma_accept0 || cpu_accept;
 
-assign matmul_dma_ready[0]       = matmul_dma_active && !core0_busy && !core0_done && !capture_active;
-assign matmul_dma_ready[1]       = matmul_dma_active && !core1_busy && !core1_done;
-assign matmul_dma_ready[2]       = 1'b0;
-assign matmul_dma_ready[3]       = 1'b0;
-assign matmul_dma_done[0]        = core0_done && owner_matmul_dma;
-assign matmul_dma_done[1]        = core1_done;
-assign matmul_dma_done[2]        = 1'b0;
-assign matmul_dma_done[3]        = 1'b0;
-assign matmul_dma_result_data0   = core0_result_data;
-assign matmul_dma_result_data1   = core1_result_data;
-assign matmul_dma_result_data2   = 66'd0;
-assign matmul_dma_result_data3   = 66'd0;
-assign core0_result_index = owner_matmul_dma ? matmul_dma_result_index : capture_index;
+assign dma_ready[0]       = dma_active && !core0_busy && !core0_done && !capture_active;
+assign dma_ready[1]       = dma_active && !core1_busy && !core1_done;
+assign dma_ready[2]       = 1'b0;
+assign dma_ready[3]       = 1'b0;
+assign dma_done[0]        = core0_done && owner_dma;
+assign dma_done[1]        = core1_done;
+assign dma_done[2]        = 1'b0;
+assign dma_done[3]        = 1'b0;
+assign dma_result_data0   = core0_result_data;
+assign dma_result_data1   = core1_result_data;
+assign dma_result_data2   = 66'd0;
+assign dma_result_data3   = 66'd0;
+assign core0_result_index = owner_dma ? dma_result_index : capture_index;
 
 function [31:0] apply_wstrb;
     input [31:0] old_value;
@@ -172,10 +172,10 @@ matmul_batch_core u_matmul_batch_core0 (
     .resetn       (resetn),
     .start        (core0_start),
     .matrix_words (cpu_matrix_words),
-    .stream_enable(matmul_dma_active),
-    .stream_valid (matmul_dma_stream_valid && matmul_dma_stream_core[0]),
-    .stream_index (matmul_dma_stream_index),
-    .stream_data  (matmul_dma_stream_data),
+    .stream_enable(dma_active),
+    .stream_valid (dma_stream_valid && dma_stream_core[0]),
+    .stream_index (dma_stream_index),
+    .stream_data  (dma_stream_data),
     .busy         (core0_busy),
     .done         (core0_done),
     .result_index (core0_result_index),
@@ -185,15 +185,15 @@ matmul_batch_core u_matmul_batch_core0 (
 matmul_batch_core u_matmul_batch_core1 (
     .clk          (clk),
     .resetn       (resetn),
-    .start        (matmul_dma_accept1),
+    .start        (dma_accept1),
     .matrix_words (1024'd0),
     .stream_enable(1'b1),
-    .stream_valid (matmul_dma_stream_valid && matmul_dma_stream_core[1]),
-    .stream_index (matmul_dma_stream_index),
-    .stream_data  (matmul_dma_stream_data),
+    .stream_valid (dma_stream_valid && dma_stream_core[1]),
+    .stream_index (dma_stream_index),
+    .stream_data  (dma_stream_data),
     .busy         (core1_busy),
     .done         (core1_done),
-    .result_index (matmul_dma_result_index),
+    .result_index (dma_result_index),
     .result_data  (core1_result_data)
 );
 
@@ -294,7 +294,7 @@ always @(posedge clk) begin
     if (!resetn) begin
         cpu_done       <= 1'b0;
         cpu_error      <= 1'b0;
-        owner_matmul_dma      <= 1'b0;
+        owner_dma      <= 1'b0;
         capture_active <= 1'b0;
         capture_index  <= 4'd0;
         for (result_reset_index = 0; result_reset_index < 16; result_reset_index = result_reset_index + 1)
@@ -305,15 +305,15 @@ always @(posedge clk) begin
             cpu_error <= 1'b0;
         end
 
-        if (matmul_dma_accept0) begin
-            owner_matmul_dma <= 1'b1;
+        if (dma_accept0) begin
+            owner_dma <= 1'b1;
         end else if (cpu_accept) begin
-            owner_matmul_dma <= 1'b0;
+            owner_dma <= 1'b0;
             cpu_done  <= 1'b0;
             cpu_error <= 1'b0;
         end
 
-        if (core0_done && !owner_matmul_dma) begin
+        if (core0_done && !owner_dma) begin
             capture_active <= 1'b1;
             capture_index  <= 4'd0;
         end else if (capture_active) begin
