@@ -39,7 +39,7 @@ C_SRCS   += $(COMMON_DIR)/drivers/confreg_time.c
 C_SRCS   += $(COMMON_DIR)/drivers/core_time.c
 C_SRCS   += $(COMMON_DIR)/drivers/common_func.c
 C_SRCS   += $(COMMON_DIR)/drivers/dvi.c \
-			$(COMMON_DIR)/drivers/dma.c \
+			$(COMMON_DIR)/drivers/matmul_dma.c \
 			$(COMMON_DIR)/drivers/led.c \
 			$(COMMON_DIR)/drivers/seg7.c \
 			$(COMMON_DIR)/drivers/matmul.c
