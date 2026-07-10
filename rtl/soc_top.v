@@ -108,18 +108,28 @@ else begin: pll_clk
     clk_pll u_clk_pll(
         .cpu_clk    (cpu_clk),
         .sys_clk    (sys_clk),
+`ifdef USE_EVALUATION_UART_SRAM
         // Keep the PLL running while the platform holds CPU/SoC reset.
         // Its lock time is then paid before the timed reset release.
         .resetn     (1'b1),
+`else
+        // Generic mode restores the conventional active-low PLL reset.
+        .resetn     (~reset),
+`endif
         .locked     (pll_locked),
         .clk_in1    (clk)
     );
     rst_sync u_rst_sys(
         .clk(sys_clk),
+`ifdef USE_EVALUATION_UART_SRAM
         // PLL lock and external reset are separate concerns: clocks remain
         // locked, while all system state stays reset until the platform
         // explicitly releases reset.
         .rst_n_in(pll_locked & ~reset),
+`else
+        // Generic mode releases the SoC as soon as the PLL has locked.
+        .rst_n_in(pll_locked),
+`endif
         .rst_n_out(sys_resetn)
     );
     rst_sync u_rst_cpu(
