@@ -103,7 +103,7 @@ _start:
 
 #endif
 
-#if 0
+#if UART_INIT_ON_START
 	/* UART has hardware reset defaults for the autonomous matmul reporter.
 	 * Do not reset its FIFO while MATMUL_START is already being transmitted. */
 	la.local    t0, UART_BASE
