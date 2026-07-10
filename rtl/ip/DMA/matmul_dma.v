@@ -98,10 +98,7 @@ module matmul_dma #(
     input      [65:0] matmul_result_data0,
     input      [65:0] matmul_result_data1,
 
-    output            finish,
-    output reg        start_banner_valid,
-    output reg        crc32_valid,
-    output reg [31:0] crc32_final
+    output            finish
 );
 
 localparam [11:0] ADDR_CTRL       = 12'h000;
@@ -373,21 +370,15 @@ always @(posedge clk) begin
         stream_core         <= 1'b0;
         core_result_pending <= 2'b00;
         crc_value            <= 32'hffffffff;
-        start_banner_valid   <= 1'b0;
         crc_result_data      <= 66'd0;
         crc_result_valid     <= 1'b0;
         crc_finish_pending   <= 1'b0;
-        crc32_valid          <= 1'b0;
-        crc32_final          <= 32'd0;
         auto_start_armed     <= 1'b1;
         for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
             core_group[core_reset_index] = 13'd0;
             core_result_group[core_reset_index] = 13'd0;
         end
     end else begin
-        start_banner_valid <= 1'b0;
-        crc32_valid  <= 1'b0;
-
         if (clear_status_pulse) begin
             done  <= 1'b0;
             error <= 1'b0;
@@ -395,7 +386,6 @@ always @(posedge clk) begin
 
         if (auto_start_armed || start_pulse) begin
             auto_start_armed <= 1'b0;
-            start_banner_valid <= 1'b1;
             done <= 1'b0;
             if ((group_num == 32'd0) || (group_num > MAX_GROUPS) ||
                 (src_base[1:0] != 2'b00) || (dst_base[1:0] != 2'b00)) begin
@@ -419,7 +409,6 @@ always @(posedge clk) begin
                 crc_result_data      <= 66'd0;
                 crc_result_valid     <= 1'b0;
                 crc_finish_pending   <= 1'b0;
-                crc32_final          <= 32'd0;
                 for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
@@ -512,9 +501,6 @@ always @(posedge clk) begin
                     crc_finish_pending <= 1'b0;
                     busy <= 1'b0;
                     done <= 1'b1;
-                    crc32_valid <= 1'b1;
-                    crc32_final <= crc32_update_result(crc_value, crc_result_data)
-                                   ^ 32'hffffffff;
                 end
             end
         end

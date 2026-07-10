@@ -40,6 +40,7 @@ module uart_regs (clk, rst, clk_carrier,
     addr, dat_i, dat_o, we, re, 
     auto_tx_valid,
     auto_tx_data,
+    auto_tx_busy,
     auto_tx_ready,
     tx_idle,
 
@@ -61,6 +62,7 @@ input        we;
 input        re;
 input        auto_tx_valid;
 input  [7:0] auto_tx_data;
+input        auto_tx_busy;
 output       auto_tx_ready;
 output       tx_idle;
 
@@ -200,7 +202,11 @@ wire 	     lsr0, lsr1, lsr2, lsr3, lsr4, lsr5, lsr6, lsr7;
 reg	     lsr0r, lsr1r, lsr2r, lsr3r, lsr4r, lsr5r, lsr6r, lsr7r;
 wire 	     lsr_mask; 
 
-assign    lsr[7:0] = { lsr7r, lsr6r, lsr5r, lsr4r, lsr3r, lsr2r, lsr1r, lsr0r };
+// Hide transient FIFO-empty gaps from software until the autonomous prefix
+// has queued its final character.  The raw flags remain available internally
+// so the autonomous state machine can pace its own writes.
+assign    lsr[7:0] = { lsr7r, lsr6r & ~auto_tx_busy,
+                       lsr5r & ~auto_tx_busy, lsr4r, lsr3r, lsr2r, lsr1r, lsr0r };
 
 assign    {cts_pad_i, dsr_pad_i, ri_pad_i, dcd_pad_i} = modem_inputs;
 assign 	  {cts, dsr, ri, dcd} = ~{cts_pad_i,dsr_pad_i,ri_pad_i,dcd_pad_i};
@@ -513,7 +519,10 @@ always @(posedge clk )
 
 always @(posedge clk )
 	if (rst) lsr5r <= 1;
-	else     lsr5r <= (fifo_write) ? 0 :  lsr5r || (lsr5 && ~lsr5_d);
+	// Both APB writes and the autonomous banner writer occupy the TX FIFO.
+	// Clearing TFE on the combined push prevents software from writing CRC
+	// bytes while the autonomous prefix is still being transmitted.
+	else     lsr5r <= tf_push ? 0 : lsr5r || (lsr5 && ~lsr5_d);
 
 reg lsr6_d;
 
@@ -523,7 +532,7 @@ always @(posedge clk )
 
 always @(posedge clk )
     if (rst) lsr6r <= 1;
-    else     lsr6r <= (fifo_write) ? 0 : lsr6r || (lsr6 && ~lsr6_d);
+    else     lsr6r <= tf_push ? 0 : lsr6r || (lsr6 && ~lsr6_d);
 
 reg lsr7_d;
 
@@ -580,7 +589,7 @@ begin
   if (rst)
     block_cnt <= 8'd0;
   else
-  if(lsr5r & fifo_write)  
+  if(lsr5r & tf_push)
     block_cnt <= usart_t0  ? (block_value + 8'h16) : block_value;
   else
   if (enable & block_cnt != 8'b0)  
