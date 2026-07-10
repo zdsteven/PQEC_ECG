@@ -638,9 +638,14 @@ wire [1 :0] axiOut_7_bresp  ;
 wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
 
+`ifdef USE_EVALUATION_UART_SRAM
 matmul_dma #(
     .MAX_GROUPS      (5000)
-) u_matmul_dma (
+)
+`else
+axi_dma
+`endif
+u_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),
 
@@ -715,6 +720,7 @@ matmul_dma #(
     .m_axi_rlast    (dma_m_rlast),
     .m_axi_rvalid   (dma_m_rvalid),
     .m_axi_rready   (dma_m_rready),
+`ifdef USE_EVALUATION_UART_SRAM
     .matmul_active  (dma_matmul_active),
     .matmul_stream_valid(dma_matmul_stream_valid),
     .matmul_stream_start(dma_matmul_stream_start),
@@ -730,7 +736,24 @@ matmul_dma #(
     .start_banner_valid(dma_start_banner_valid),
     .crc32_valid    (dma_crc32_valid),
     .crc32_final    (dma_crc32_final)
+`else
+    .finish         (dma_finish)
+`endif
 );
+
+`ifndef USE_EVALUATION_UART_SRAM
+// Generic DMA mode has no private Matmul or autonomous-UART sideband link.
+assign dma_start_banner_valid  = 1'b0;
+assign dma_crc32_valid         = 1'b0;
+assign dma_crc32_final         = 32'd0;
+assign dma_matmul_active       = 1'b0;
+assign dma_matmul_stream_valid = 1'b0;
+assign dma_matmul_stream_start = 4'd0;
+assign dma_matmul_stream_core  = 4'd0;
+assign dma_matmul_stream_index = 5'd0;
+assign dma_matmul_stream_data  = 32'd0;
+assign dma_matmul_result_index = 4'd0;
+`endif
 
 matmul_axi_slave u_matmul (
     .clk            ( sys_clk           ),
@@ -1492,10 +1515,14 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dsr_i (uart0_dsr_i ),
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
+`ifdef USE_EVALUATION_UART_SRAM
     .uart0_int (uart0_int ),
     .auto_start_valid (dma_start_banner_valid ),
     .auto_crc_valid (dma_crc32_valid ),
     .auto_crc32 (dma_crc32_final )
+`else
+    .uart0_int (uart0_int )
+`endif
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---

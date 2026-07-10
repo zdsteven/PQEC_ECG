@@ -33,9 +33,9 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 `define SRAM_Init_File "../../../../../../sdk/axi_ram.mif"
 
-// Define this symbol to select the evaluation-tuned UART and external SRAM
-// bridge implementations.  Undefine it to select the original generic
-// implementations embedded in the corresponding source files.
+// Define this symbol to select the evaluation-tuned Matmul DMA, UART and
+// external SRAM bridge implementations.  Undefine it to select the generic
+// AXI DMA plus the original UART/SRAM implementations.
 // (The Verilog preprocessor selects module definitions by symbol presence.)
 `define USE_EVALUATION_UART_SRAM
 
