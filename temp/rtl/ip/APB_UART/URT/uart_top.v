@@ -31,70 +31,77 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 ------------------------------------------------------------------------------*/
 
-`define SRAM_Init_File "../../../../../../sdk/axi_ram.mif"
+`include "uart_defines.h"
 
-// Define this symbol to select the evaluation-tuned UART and external SRAM
-// bridge implementations.  Undefine it to select the original generic
-// implementations embedded in the corresponding source files.
-// (The Verilog preprocessor selects module definitions by symbol presence.)
-`define USE_EVALUATION_UART_SRAM
+module UART_TOP(
+        PCLK,        PRST_,
+        PSEL,        PENABLE,     PADDR,       PWRITE,
+        PWDATA,      URT_PRDATA,
 
-`define USE_CACHE
+        INT, clk_carrier, 
+        
+        TXD_i, TXD_o, TXD_oe,     
+        RXD_i, RXD_o, RXD_oe,
+        
+        RTS,         CTS,         DSR,
+        DCD,         DTR,         RI
+    );
 
-`define Lawcmd 4
-`define Lawdirqid 4
-`define Lawstate 2
-`define Lawscseti 2
-`define Lawid 4
-`define Lawaddr 32 
-`define Lawlen 8
-`define Lawsize 3
-`define Lawburst 2
-`define Lawlock 2
-`define Lawcache 4
-`define Lawprot 3
-`define Lawvalid 1
-`define Lawready 1
-`define Lwid 4
-`define Lwdata 32
-`define Lwstrb 4
-`define Lwlast 1
-`define Lwvalid 1
-`define Lwready 1
-`define Lbid 4
-`define Lbresp 2
-`define Lbvalid 1
-`define Lbready 1
-`define Larcmd 4
-`define Larcpuno 10
-`define Larid 4
-`define Laraddr 32
-`define Larlen 8
-`define Larsize 3
-`define Larburst 2
-`define Larlock 2
-`define Larcache 4
-`define Larprot 3
-`define Larvalid 1
-`define Larready 1
-`define Lrstate 2
-`define Lrscseti 2
-`define Lrid 4
-`define Lrdata 32
-`define Lrresp 2
-`define Lrlast 1
-`define Lrvalid 1
-`define Lrready 1
-`define Lrrequest 1
+input   PCLK,        PRST_;
+input   PSEL,        PENABLE,     PWRITE;
+input   [7:0]     PADDR;
+input   [7:0]     PWDATA;
+output  [7:0]     URT_PRDATA;
 
-`define LID 4
-`define LADDR 32
-`define LLEN 8
-`define LSIZE 3
-`define LDATA 32
-`define LSTRB 4
-`define LBURST 2
-`define LLOCK 2
-`define LCACHE 4
-`define LPROT 3
-`define LRESP 2
+output  INT;
+input   clk_carrier; 
+
+input   TXD_i;
+output  TXD_o;
+output  TXD_oe;
+input   RXD_i;
+output  RXD_o;
+output  RXD_oe;
+
+output  RTS;
+input   CTS,         DSR,         DCD;
+output  DTR;
+input   RI;
+
+wire prst = !PRST_;
+wire we   = PSEL & PENABLE & PWRITE;      
+wire re   = PSEL & PENABLE & !PWRITE;               
+
+wire rx_en;
+wire tx2rx_en;
+wire isomode;
+
+assign  TXD_oe = isomode&&(rx_en||tx2rx_en) ? 1'b1:1'b0;
+assign  RXD_oe =~isomode;
+
+uart_regs	regs(
+    .clk         (PCLK       ),
+    .rst         (prst       ),
+    .clk_carrier (clk_carrier),
+    .addr        (PADDR[2:0] ),
+    .dat_i       (PWDATA     ),
+    .dat_o       (URT_PRDATA ),
+    .we          (we         ),
+    .re          (re         ),
+    
+    .modem_inputs({ CTS, DSR, RI, DCD }	),
+    .rts_pad_o   (RTS      ),
+    .dtr_pad_o   (DTR      ),
+    .stx_pad_o   (TXD_o	   ),
+    .TXD_i       (TXD_i    ),
+    .srx_pad_i   (RXD_i    ),
+    .RXD_o       (RXD_o    ),
+    .int_o       ( INT     ),
+    .tx2rx_en    (tx2rx_en ),
+    .rx_en       (rx_en    ),
+    .usart_mode  (isomode  )
+
+);
+
+
+endmodule
