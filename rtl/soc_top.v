@@ -402,6 +402,9 @@ wire [1 :0] dma_s_bresp  ;
 wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
+wire        dma_start_banner_valid;
+wire        dma_crc32_valid;
+wire [31:0] dma_crc32_final;
 wire        dma_matmul_active;
 wire        dma_matmul_stream_valid;
 wire [3:0]  dma_matmul_stream_start;
@@ -723,7 +726,10 @@ matmul_dma #(
     .matmul_result_index (dma_matmul_result_index),
     .matmul_result_data0 (dma_matmul_result_data0),
     .matmul_result_data1 (dma_matmul_result_data1),
-    .finish         (dma_finish)
+    .finish         (dma_finish),
+    .start_banner_valid(dma_start_banner_valid),
+    .crc32_valid    (dma_crc32_valid),
+    .crc32_final    (dma_crc32_final)
 );
 
 matmul_axi_slave u_matmul (
@@ -1486,7 +1492,10 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dsr_i (uart0_dsr_i ),
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
-    .uart0_int (uart0_int )
+    .uart0_int (uart0_int ),
+    .auto_start_valid (dma_start_banner_valid ),
+    .auto_crc_valid (dma_crc32_valid ),
+    .auto_crc32 (dma_crc32_final )
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---
