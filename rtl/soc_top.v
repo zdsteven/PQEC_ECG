@@ -403,44 +403,6 @@ wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
 
-
-//Crypto_ip
-wire [4 :0] Crypto_arid   ;
-wire [31:0] Crypto_araddr ;
-wire [7 :0] Crypto_arlen  ;
-wire [2 :0] Crypto_arsize ;
-wire [1 :0] Crypto_arburst;
-wire        Crypto_arlock ;
-wire [3 :0] Crypto_arcache;
-wire [2 :0] Crypto_arprot ;
-wire        Crypto_arvalid;
-wire        Crypto_arready;
-wire [4 :0] Crypto_rid    ;
-wire [31:0] Crypto_rdata  ;
-wire [1 :0] Crypto_rresp  ;
-wire        Crypto_rlast  ;
-wire        Crypto_rvalid ;
-wire        Crypto_rready ;
-wire [4 :0] Crypto_awid   ;
-wire [31:0] Crypto_awaddr ;
-wire [7 :0] Crypto_awlen  ;
-wire [2 :0] Crypto_awsize ;
-wire [1 :0] Crypto_awburst;
-wire        Crypto_awlock ;
-wire [3 :0] Crypto_awcache;
-wire [2 :0] Crypto_awprot ;
-wire        Crypto_awvalid;
-wire        Crypto_awready;
-wire [4 :0] Crypto_wid    ;
-wire [31:0] Crypto_wdata  ;
-wire [3 :0] Crypto_wstrb  ;
-wire        Crypto_wlast  ;
-wire        Crypto_wvalid ;
-wire        Crypto_wready ;
-wire [4 :0] Crypto_bid    ;
-wire [1 :0] Crypto_bresp  ;
-wire        Crypto_bvalid ;
-wire        Crypto_bready ;
 wire        dma_start_banner_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
@@ -457,58 +419,6 @@ wire [65:0] dma_matmul_result_data0;
 wire [65:0] dma_matmul_result_data1;
 wire [65:0] dma_matmul_result_data2;
 wire [65:0] dma_matmul_result_data3;
-
-
-//Kyber_ip (deleted)
-//slave 7
-wire [4 :0] axiOut_1_arid   ;
-wire [31:0] axiOut_1_araddr ;
-wire [7 :0] axiOut_1_arlen  ;
-wire [2 :0] axiOut_1_arsize ;
-wire [1 :0] axiOut_1_arburst;
-wire        axiOut_1_arlock ;
-wire [3 :0] axiOut_1_arcache;
-wire [2 :0] axiOut_1_arprot ;
-wire        axiOut_1_arvalid;
-wire        axiOut_1_arready;
-wire [4 :0] axiOut_1_rid    ;
-wire [31:0] axiOut_1_rdata  ;
-wire [1 :0] axiOut_1_rresp  ;
-wire        axiOut_1_rlast  ;
-wire        axiOut_1_rvalid ;
-wire        axiOut_1_rready ;
-wire [4 :0] axiOut_1_awid   ;
-wire [31:0] axiOut_1_awaddr ;
-wire [7 :0] axiOut_1_awlen  ;
-wire [2 :0] axiOut_1_awsize ;
-wire [1 :0] axiOut_1_awburst;
-wire        axiOut_1_awlock ;
-wire [3 :0] axiOut_1_awcache;
-wire [2 :0] axiOut_1_awprot ;
-wire        axiOut_1_awvalid;
-wire        axiOut_1_awready;
-wire [4 :0] axiOut_1_wid    ;
-wire [31:0] axiOut_1_wdata  ;
-wire [3 :0] axiOut_1_wstrb  ;
-wire        axiOut_1_wlast  ;
-wire        axiOut_1_wvalid ;
-wire        axiOut_1_wready ;
-wire [4 :0] axiOut_1_bid    ;
-wire [1 :0] axiOut_1_bresp  ;
-wire        axiOut_1_bvalid ;
-wire        axiOut_1_bready ;
-
-assign axiOut_1_arready = 1'b1;
-assign axiOut_1_rid    = 5'b0;
-assign axiOut_1_rdata  = 32'b0;
-assign axiOut_1_rresp  = 2'b0;
-assign axiOut_1_rlast  = 1'b0;
-assign axiOut_1_rvalid = 1'b0;
-assign axiOut_1_awready = 1'b1;
-assign axiOut_1_wready = 1'b1;
-assign axiOut_1_bid    = 5'b0;
-assign axiOut_1_bresp = 2'b0;
-assign axiOut_1_bvalid = 1'b0;
 
 
 //axi dvi
@@ -666,6 +576,44 @@ wire [4 :0] axiOut_7_bid    ;
 wire [1 :0] axiOut_7_bresp  ;
 wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
+
+//Crypto_ip
+wire [4 :0] Crypto_arid   ;
+wire [31:0] Crypto_araddr ;
+wire [7 :0] Crypto_arlen  ;
+wire [2 :0] Crypto_arsize ;
+wire [1 :0] Crypto_arburst;
+wire        Crypto_arlock ;
+wire [3 :0] Crypto_arcache;
+wire [2 :0] Crypto_arprot ;
+wire        Crypto_arvalid;
+wire        Crypto_arready;
+wire [4 :0] Crypto_rid    ;
+wire [31:0] Crypto_rdata  ;
+wire [1 :0] Crypto_rresp  ;
+wire        Crypto_rlast  ;
+wire        Crypto_rvalid ;
+wire        Crypto_rready ;
+wire [4 :0] Crypto_awid   ;
+wire [31:0] Crypto_awaddr ;
+wire [7 :0] Crypto_awlen  ;
+wire [2 :0] Crypto_awsize ;
+wire [1 :0] Crypto_awburst;
+wire        Crypto_awlock ;
+wire [3 :0] Crypto_awcache;
+wire [2 :0] Crypto_awprot ;
+wire        Crypto_awvalid;
+wire        Crypto_awready;
+wire [4 :0] Crypto_wid    ;
+wire [31:0] Crypto_wdata  ;
+wire [3 :0] Crypto_wstrb  ;
+wire        Crypto_wlast  ;
+wire        Crypto_wvalid ;
+wire        Crypto_wready ;
+wire [4 :0] Crypto_bid    ;
+wire [1 :0] Crypto_bresp  ;
+wire        Crypto_bvalid ;
+wire        Crypto_bready ;
 
 `ifdef USE_EVALUATION_UART_SRAM
 matmul_dma #(
@@ -845,7 +793,6 @@ matmul_axi_slave u_matmul (
 );
 
 wire confreg_int;
-wire fft_finish = 1'b0;
 
 AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
     .clk                     ( sys_clk             ),
