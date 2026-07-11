@@ -38,7 +38,7 @@ module matmul_axi_slave (
     output reg [4:0]  s_axi_rid,
     output reg [31:0] s_axi_rdata,
     output     [1:0]  s_axi_rresp,
-    output            s_axi_rlast,
+    output reg        s_axi_rlast,
     output reg        s_axi_rvalid,
     input             s_axi_rready,
 
@@ -81,14 +81,16 @@ reg [31:0] wdata_hold;
 reg [3:0]  wstrb_hold;
 reg        w_hold_valid;
 reg        clear_status_pulse;
+reg [31:0] araddr_hold;
+reg [7:0]  arlen_count;
 
 reg        cpu_done;
 reg        cpu_error;
 reg        owner_dma;
 reg        capture_active;
 reg [3:0]  capture_index;
+reg [5:0]  cpu_stream_count;
 
-wire [1023:0] cpu_matrix_words;
 wire          core0_busy;
 wire          core0_done;
 wire [3:0]    core0_result_index;
@@ -98,7 +100,6 @@ wire          core1_done;
 wire [65:0]   core1_result_data;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
-wire [11:0] read_offset  = s_axi_araddr[11:0];
 wire aw_handshake = s_axi_awvalid && s_axi_awready;
 wire w_handshake  = s_axi_wvalid && s_axi_wready;
 wire write_fire   = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
@@ -137,6 +138,23 @@ function [31:0] apply_wstrb;
     end
 endfunction
 
+wire cpu_input_write = write_fire && !dma_active &&
+                       (write_offset >= ADDR_A_BASE) &&
+                       (write_offset < ADDR_C_BASE);
+wire cpu_input_is_b = write_offset >= ADDR_B_BASE;
+wire [3:0] cpu_input_pos = cpu_input_is_b ?
+                           (write_offset - ADDR_B_BASE) >> 2 :
+                           (write_offset - ADDR_A_BASE) >> 2;
+wire [4:0] cpu_stream_index = {cpu_input_is_b, cpu_input_pos};
+wire [31:0] cpu_stream_data = cpu_input_is_b ?
+    apply_wstrb(b_data[cpu_input_pos], wdata_hold, wstrb_hold) :
+    apply_wstrb(a_data[cpu_input_pos], wdata_hold, wstrb_hold);
+wire core0_stream_valid = dma_active ?
+                          (dma_stream_valid && dma_stream_core[0]) :
+                          (cpu_input_write && core0_busy && !capture_active);
+wire [4:0] core0_stream_index = dma_active ? dma_stream_index : cpu_stream_index;
+wire [31:0] core0_stream_data = dma_active ? dma_stream_data : cpu_stream_data;
+
 function [31:0] c_read_word;
     input [5:0] word_number;
     reg [3:0] element_number;
@@ -152,30 +170,42 @@ function [31:0] c_read_word;
     end
 endfunction
 
+function [31:0] read_register;
+    input [11:0] offset;
+    begin
+        if (offset == ADDR_STATUS)
+            read_register = {29'd0, cpu_error, cpu_done, busy_status};
+        else if (offset == ADDR_SRC_BASE)
+            read_register = src_base;
+        else if (offset == ADDR_DST_BASE)
+            read_register = dst_base;
+        else if (offset == ADDR_GROUP_NUM)
+            read_register = group_num;
+        else if ((offset >= ADDR_A_BASE) && (offset < ADDR_B_BASE))
+            read_register = a_data[(offset - ADDR_A_BASE) >> 2];
+        else if ((offset >= ADDR_B_BASE) && (offset < ADDR_C_BASE))
+            read_register = b_data[(offset - ADDR_B_BASE) >> 2];
+        else if ((offset >= ADDR_C_BASE) &&
+                 (offset < ADDR_C_BASE + 12'h0c0))
+            read_register = c_read_word((offset - ADDR_C_BASE) >> 2);
+        else
+            read_register = 32'd0;
+    end
+endfunction
+
 assign s_axi_awready = !aw_hold_valid && !s_axi_bvalid;
 assign s_axi_wready  = aw_hold_valid && !w_hold_valid && !s_axi_bvalid;
 assign s_axi_bresp   = 2'b00;
 assign s_axi_arready = !s_axi_rvalid;
 assign s_axi_rresp   = 2'b00;
-assign s_axi_rlast   = 1'b1;
-
-genvar matrix_word;
-generate
-    for (matrix_word = 0; matrix_word < 16; matrix_word = matrix_word + 1) begin: CPU_MATRIX_PACK
-        assign cpu_matrix_words[matrix_word*32 +: 32] = a_data[matrix_word];
-        assign cpu_matrix_words[(matrix_word+16)*32 +: 32] = b_data[matrix_word];
-    end
-endgenerate
 
 matmul_batch_core u_matmul_batch_core0 (
     .clk          (clk),
     .resetn       (resetn),
     .start        (core0_start),
-    .matrix_words (cpu_matrix_words),
-    .stream_enable(dma_active),
-    .stream_valid (dma_stream_valid && dma_stream_core[0]),
-    .stream_index (dma_stream_index),
-    .stream_data  (dma_stream_data),
+    .stream_valid (core0_stream_valid),
+    .stream_index (core0_stream_index),
+    .stream_data  (core0_stream_data),
     .busy         (core0_busy),
     .done         (core0_done),
     .result_index (core0_result_index),
@@ -186,8 +216,6 @@ matmul_batch_core u_matmul_batch_core1 (
     .clk          (clk),
     .resetn       (resetn),
     .start        (dma_accept1),
-    .matrix_words (1024'd0),
-    .stream_enable(1'b1),
     .stream_valid (dma_stream_valid && dma_stream_core[1]),
     .stream_index (dma_stream_index),
     .stream_data  (dma_stream_data),
@@ -211,11 +239,14 @@ always @(posedge clk) begin
         wstrb_hold         <= 4'd0;
         w_hold_valid       <= 1'b0;
         clear_status_pulse <= 1'b0;
+        araddr_hold        <= 32'd0;
+        arlen_count        <= 8'd0;
         s_axi_bid          <= 5'd0;
         s_axi_bvalid       <= 1'b0;
         s_axi_rid          <= 5'd0;
         s_axi_rdata        <= 32'd0;
         s_axi_rvalid       <= 1'b0;
+        s_axi_rlast        <= 1'b0;
         for (i = 0; i < 16; i = i + 1) begin
             a_data[i] <= 32'd0;
             b_data[i] <= 32'd0;
@@ -265,26 +296,22 @@ always @(posedge clk) begin
         end
 
         if (s_axi_arvalid && s_axi_arready) begin
+            araddr_hold <= s_axi_araddr;
+            arlen_count <= s_axi_arlen;
             s_axi_rid    <= s_axi_arid;
             s_axi_rvalid <= 1'b1;
-            if (read_offset == ADDR_STATUS)
-                s_axi_rdata <= {29'd0, cpu_error, cpu_done, busy_status};
-            else if (read_offset == ADDR_SRC_BASE)
-                s_axi_rdata <= src_base;
-            else if (read_offset == ADDR_DST_BASE)
-                s_axi_rdata <= dst_base;
-            else if (read_offset == ADDR_GROUP_NUM)
-                s_axi_rdata <= group_num;
-            else if ((read_offset >= ADDR_A_BASE) && (read_offset < ADDR_B_BASE))
-                s_axi_rdata <= a_data[(read_offset - ADDR_A_BASE) >> 2];
-            else if ((read_offset >= ADDR_B_BASE) && (read_offset < ADDR_C_BASE))
-                s_axi_rdata <= b_data[(read_offset - ADDR_B_BASE) >> 2];
-            else if ((read_offset >= ADDR_C_BASE) && (read_offset < ADDR_C_BASE + 12'h0c0))
-                s_axi_rdata <= c_read_word((read_offset - ADDR_C_BASE) >> 2);
-            else
-                s_axi_rdata <= 32'd0;
+            s_axi_rlast  <= (s_axi_arlen == 8'd0);
+            s_axi_rdata  <= read_register(s_axi_araddr[11:0]);
         end else if (s_axi_rvalid && s_axi_rready) begin
-            s_axi_rvalid <= 1'b0;
+            if (arlen_count == 8'd0) begin
+                s_axi_rvalid <= 1'b0;
+                s_axi_rlast  <= 1'b0;
+            end else begin
+                araddr_hold  <= araddr_hold + 32'd4;
+                arlen_count  <= arlen_count - 8'd1;
+                s_axi_rlast  <= (arlen_count == 8'd1);
+                s_axi_rdata  <= read_register(araddr_hold[11:0] + 12'd4);
+            end
         end
     end
 end
@@ -297,6 +324,7 @@ always @(posedge clk) begin
         owner_dma      <= 1'b0;
         capture_active <= 1'b0;
         capture_index  <= 4'd0;
+        cpu_stream_count <= 6'd0;
         for (result_reset_index = 0; result_reset_index < 16; result_reset_index = result_reset_index + 1)
             c_data[result_reset_index] <= 66'd0;
     end else begin
@@ -311,9 +339,22 @@ always @(posedge clk) begin
             owner_dma <= 1'b0;
             cpu_done  <= 1'b0;
             cpu_error <= 1'b0;
+            cpu_stream_count <= 6'd0;
+        end
+
+        if (cpu_input_write) begin
+            if (!core0_busy || capture_active ||
+                (cpu_stream_count >= 6'd32) ||
+                (cpu_stream_index != cpu_stream_count[4:0])) begin
+                cpu_error <= 1'b1;
+            end else begin
+                cpu_stream_count <= cpu_stream_count + 6'd1;
+            end
         end
 
         if (core0_done && !owner_dma) begin
+            if (cpu_stream_count != 6'd32)
+                cpu_error <= 1'b1;
             capture_active <= 1'b1;
             capture_index  <= 4'd0;
         end else if (capture_active) begin

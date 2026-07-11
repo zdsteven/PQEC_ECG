@@ -7,8 +7,6 @@ module matmul_batch_core (
     input               clk,
     input               resetn,
     input               start,
-    input      [1023:0] matrix_words,
-    input               stream_enable,
     input               stream_valid,
     input      [4:0]    stream_index,
     input      [31:0]   stream_data,
@@ -22,7 +20,6 @@ reg [31:0] a_data [0:15];
 reg [15:0] a_valid;
 reg [65:0] accumulator [0:15];
 reg [65:0] result_snapshot [0:15];
-reg [5:0] replay_index;
 
 // Four lanes, sixteen radix-4 stages per lane.
 reg [65:0] mul_x [0:63];
@@ -33,12 +30,9 @@ reg [3:0]  mul_tag [0:63];
 reg        mul_valid [0:63];
 reg        mul_last [0:63];
 
-wire input_fire = busy && (stream_enable ? stream_valid : (replay_index < 6'd32));
-wire [4:0] input_index = stream_enable ? stream_index : replay_index[4:0];
-wire [31:0] input_word = stream_enable ? stream_data :
-                         ((replay_index < 6'd16) ?
-                          matrix_words[replay_index*32 +: 32] :
-                          matrix_words[(replay_index-6'd16)*32 + 16*32 +: 32]);
+wire input_fire = busy && stream_valid;
+wire [4:0] input_index = stream_index;
+wire [31:0] input_word = stream_data;
 wire input_is_b = input_index[4];
 wire [3:0] input_pos = input_index[3:0];
 wire [1:0] input_k = input_pos[3:2];
@@ -88,7 +82,6 @@ always @(posedge clk) begin
         busy <= 1'b0;
         done <= 1'b0;
         a_valid <= 16'd0;
-        replay_index <= 6'd32;
         for (i=0;i<16;i=i+1) begin
             a_data[i] = 32'd0;
             accumulator[i] = 66'd0;
@@ -105,22 +98,19 @@ always @(posedge clk) begin
         if (start && !busy) begin
             busy <= 1'b1;
             a_valid <= 16'd0;
-            replay_index <= stream_enable ? 6'd32 : 6'd0;
             for (i=0;i<16;i=i+1)
                 accumulator[i] <= 66'd0;
             for (i=0;i<64;i=i+1) begin
                 mul_valid[i] <= 1'b0;
                 mul_last[i] <= 1'b0;
             end
-            // DMA presents A00 together with start; consume it by bypass.
-            if (stream_enable && stream_valid && !stream_index[4]) begin
+            // A streaming producer may present A00 together with start;
+            // consume that first word through the input bypass.
+            if (stream_valid && !stream_index[4]) begin
                 a_data[stream_index[3:0]] <= stream_data;
                 a_valid[stream_index[3:0]] <= 1'b1;
             end
         end else if (busy) begin
-            if (!stream_enable && replay_index < 6'd32)
-                replay_index <= replay_index + 6'd1;
-
             // Default stage-0 bubbles.  A B word overrides all four lanes.
             for (lane=0; lane<4; lane=lane+1) begin
                 mul_valid[lane*16] <= 1'b0;
