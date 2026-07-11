@@ -1,4 +1,4 @@
-TARGET = Kyber_NTT_INTT
+TARGET = Kyber_Hash
 
 CFLAGS += -O3 -g
 EXCLUDE_KYBER_DRIVER = 1

@@ -1,7 +1,6 @@
-TARGET = Kyber_NTT_INTT
+TARGET = MLKEM_HARDWARE
 
 CFLAGS += -O3 -g
-EXCLUDE_KYBER_DRIVER = 1
 
 C_SRCS := $(wildcard ./*.c )
 
