@@ -90,7 +90,7 @@ module confreg #(
     input      [31:0] switch,
     input      [3 :0] touch_btn,
     input             dma_finish,
-    input             fft_finish,
+    input             ecg_finish,
     output            confreg_int
 );
 

@@ -402,6 +402,45 @@ wire [1 :0] dma_s_bresp  ;
 wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
+
+
+//Crypto_ip
+wire [4 :0] Crypto_arid   ;
+wire [31:0] Crypto_araddr ;
+wire [7 :0] Crypto_arlen  ;
+wire [2 :0] Crypto_arsize ;
+wire [1 :0] Crypto_arburst;
+wire        Crypto_arlock ;
+wire [3 :0] Crypto_arcache;
+wire [2 :0] Crypto_arprot ;
+wire        Crypto_arvalid;
+wire        Crypto_arready;
+wire [4 :0] Crypto_rid    ;
+wire [31:0] Crypto_rdata  ;
+wire [1 :0] Crypto_rresp  ;
+wire        Crypto_rlast  ;
+wire        Crypto_rvalid ;
+wire        Crypto_rready ;
+wire [4 :0] Crypto_awid   ;
+wire [31:0] Crypto_awaddr ;
+wire [7 :0] Crypto_awlen  ;
+wire [2 :0] Crypto_awsize ;
+wire [1 :0] Crypto_awburst;
+wire        Crypto_awlock ;
+wire [3 :0] Crypto_awcache;
+wire [2 :0] Crypto_awprot ;
+wire        Crypto_awvalid;
+wire        Crypto_awready;
+wire [4 :0] Crypto_wid    ;
+wire [31:0] Crypto_wdata  ;
+wire [3 :0] Crypto_wstrb  ;
+wire        Crypto_wlast  ;
+wire        Crypto_wvalid ;
+wire        Crypto_wready ;
+wire [4 :0] Crypto_bid    ;
+wire [1 :0] Crypto_bresp  ;
+wire        Crypto_bvalid ;
+wire        Crypto_bready ;
 wire        dma_start_banner_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
@@ -550,55 +589,45 @@ wire [1 :0] confreg_bresp  ;
 wire        confreg_bvalid ;
 wire        confreg_bready ;
 
-//slave 6 FFT/IFFT (deleted)
-wire [4 :0] axiOut_6_arid   ;
-wire [31:0] axiOut_6_araddr ;
-wire [7 :0] axiOut_6_arlen  ;
-wire [2 :0] axiOut_6_arsize ;
-wire [1 :0] axiOut_6_arburst;
-wire        axiOut_6_arlock ;
-wire [3 :0] axiOut_6_arcache;
-wire [2 :0] axiOut_6_arprot ;
-wire        axiOut_6_arvalid;
-wire        axiOut_6_arready;
-wire [4 :0] axiOut_6_rid    ;
-wire [31:0] axiOut_6_rdata  ;
-wire [1 :0] axiOut_6_rresp  ;
-wire        axiOut_6_rlast  ;
-wire        axiOut_6_rvalid ;
-wire        axiOut_6_rready ;
-wire [4 :0] axiOut_6_awid   ;
-wire [31:0] axiOut_6_awaddr ;
-wire [7 :0] axiOut_6_awlen  ;
-wire [2 :0] axiOut_6_awsize ;
-wire [1 :0] axiOut_6_awburst;
-wire        axiOut_6_awlock ;
-wire [3 :0] axiOut_6_awcache;
-wire [2 :0] axiOut_6_awprot ;
-wire        axiOut_6_awvalid;
-wire        axiOut_6_awready;
-wire [4 :0] axiOut_6_wid    ;
-wire [31:0] axiOut_6_wdata  ;
-wire [3 :0] axiOut_6_wstrb  ;
-wire        axiOut_6_wlast  ;
-wire        axiOut_6_wvalid ;
-wire        axiOut_6_wready ;
-wire [4 :0] axiOut_6_bid    ;
-wire [1 :0] axiOut_6_bresp  ;
-wire        axiOut_6_bvalid ;
-wire        axiOut_6_bready ;
+//slave 6 ecg/Iecg
+wire [4 :0] ecg_arid   ;
+wire [31:0] ecg_araddr ;
+wire [7 :0] ecg_arlen  ;
+wire [2 :0] ecg_arsize ;
+wire [1 :0] ecg_arburst;
+wire        ecg_arlock ;
+wire [3 :0] ecg_arcache;
+wire [2 :0] ecg_arprot ;
+wire        ecg_arvalid;
+wire        ecg_arready;
+wire [4 :0] ecg_rid    ;
+wire [31:0] ecg_rdata  ;
+wire [1 :0] ecg_rresp  ;
+wire        ecg_rlast  ;
+wire        ecg_rvalid ;
+wire        ecg_rready ;
+wire [4 :0] ecg_awid   ;
+wire [31:0] ecg_awaddr ;
+wire [7 :0] ecg_awlen  ;
+wire [2 :0] ecg_awsize ;
+wire [1 :0] ecg_awburst;
+wire        ecg_awlock ;
+wire [3 :0] ecg_awcache;
+wire [2 :0] ecg_awprot ;
+wire        ecg_awvalid;
+wire        ecg_awready;
+wire [4 :0] ecg_wid    ;
+wire [31:0] ecg_wdata  ;
+wire [3 :0] ecg_wstrb  ;
+wire        ecg_wlast  ;
+wire        ecg_wvalid ;
+wire        ecg_wready ;
+wire [4 :0] ecg_bid    ;
+wire [1 :0] ecg_bresp  ;
+wire        ecg_bvalid ;
+wire        ecg_bready ;
+wire        ecg_finish ;
 
-assign axiOut_6_arready = 1'b1;
-assign axiOut_6_rid    = 5'b0;
-assign axiOut_6_rdata  = 32'b0;
-assign axiOut_6_rresp  = 2'b0;
-assign axiOut_6_rlast  = 1'b0;
-assign axiOut_6_rvalid = 1'b0;
-assign axiOut_6_awready = 1'b1;
-assign axiOut_6_wready = 1'b1;
-assign axiOut_6_bid    = 5'b0;
-assign axiOut_6_bresp = 2'b0;
-assign axiOut_6_bvalid = 1'b0;
 
 //slave 7
 wire [4 :0] axiOut_7_arid   ;
@@ -950,45 +979,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 1
     //aw
-    .axiOut_1_awvalid        (  axiOut_1_awvalid   ),
-    .axiOut_1_awready        (  axiOut_1_awready   ),
-    .axiOut_1_awaddr         (  axiOut_1_awaddr    ),
-    .axiOut_1_awid           (  axiOut_1_awid      ),
-    .axiOut_1_awlen          (  axiOut_1_awlen     ),
-    .axiOut_1_awsize         (  axiOut_1_awsize    ),
-    .axiOut_1_awburst        (  axiOut_1_awburst   ),
-    .axiOut_1_awlock         (  axiOut_1_awlock    ),
-    .axiOut_1_awcache        (  axiOut_1_awcache   ),
-    .axiOut_1_awprot         (  axiOut_1_awprot    ),
+    .axiOut_1_awvalid        ( Crypto_awvalid   ),
+    .axiOut_1_awready        ( Crypto_awready   ),
+    .axiOut_1_awaddr         ( Crypto_awaddr    ),
+    .axiOut_1_awid           ( Crypto_awid      ),
+    .axiOut_1_awlen          ( Crypto_awlen     ),
+    .axiOut_1_awsize         ( Crypto_awsize    ),
+    .axiOut_1_awburst        ( Crypto_awburst   ),
+    .axiOut_1_awlock         ( Crypto_awlock    ),
+    .axiOut_1_awcache        ( Crypto_awcache   ),
+    .axiOut_1_awprot         ( Crypto_awprot    ),
     //w
-    .axiOut_1_wvalid         (  axiOut_1_wvalid    ),
-    .axiOut_1_wready         (  axiOut_1_wready    ),
-    .axiOut_1_wdata          (  axiOut_1_wdata     ),
-    .axiOut_1_wstrb          (  axiOut_1_wstrb     ),
-    .axiOut_1_wlast          (  axiOut_1_wlast     ),
+    .axiOut_1_wvalid         ( Crypto_wvalid    ),
+    .axiOut_1_wready         ( Crypto_wready    ),
+    .axiOut_1_wdata          ( Crypto_wdata     ),
+    .axiOut_1_wstrb          ( Crypto_wstrb     ),
+    .axiOut_1_wlast          ( Crypto_wlast     ),
     //b
-    .axiOut_1_bready         (  axiOut_1_bready    ),
-    .axiOut_1_bvalid         (  axiOut_1_bvalid    ),
-    .axiOut_1_bid            (  axiOut_1_bid       ),
-    .axiOut_1_bresp          (  axiOut_1_bresp     ),
+    .axiOut_1_bready         ( Crypto_bready    ),
+    .axiOut_1_bvalid         ( Crypto_bvalid    ),
+    .axiOut_1_bid            ( Crypto_bid       ),
+    .axiOut_1_bresp          ( Crypto_bresp     ),
     //ar
-    .axiOut_1_arvalid        (  axiOut_1_arvalid   ),
-    .axiOut_1_arready        (  axiOut_1_arready   ),
-    .axiOut_1_araddr         (  axiOut_1_araddr    ),
-    .axiOut_1_arid           (  axiOut_1_arid      ),
-    .axiOut_1_arlen          (  axiOut_1_arlen     ),
-    .axiOut_1_arsize         (  axiOut_1_arsize    ),
-    .axiOut_1_arburst        (  axiOut_1_arburst   ),
-    .axiOut_1_arlock         (  axiOut_1_arlock    ),
-    .axiOut_1_arcache        (  axiOut_1_arcache   ),
-    .axiOut_1_arprot         (  axiOut_1_arprot    ),
+    .axiOut_1_arvalid        ( Crypto_arvalid   ),
+    .axiOut_1_arready        ( Crypto_arready   ),
+    .axiOut_1_araddr         ( Crypto_araddr    ),
+    .axiOut_1_arid           ( Crypto_arid      ),
+    .axiOut_1_arlen          ( Crypto_arlen     ),
+    .axiOut_1_arsize         ( Crypto_arsize    ),
+    .axiOut_1_arburst        ( Crypto_arburst   ),
+    .axiOut_1_arlock         ( Crypto_arlock    ),
+    .axiOut_1_arcache        ( Crypto_arcache   ),
+    .axiOut_1_arprot         ( Crypto_arprot    ),
     //r
-    .axiOut_1_rvalid         (  axiOut_1_rvalid    ),
-    .axiOut_1_rready         (  axiOut_1_rready    ),
-    .axiOut_1_rdata          (  axiOut_1_rdata     ),
-    .axiOut_1_rid            (  axiOut_1_rid       ),
-    .axiOut_1_rresp          (  axiOut_1_rresp     ),
-    .axiOut_1_rlast          (  axiOut_1_rlast     ),
+    .axiOut_1_rvalid         ( Crypto_rvalid    ),
+    .axiOut_1_rready         ( Crypto_rready    ),
+    .axiOut_1_rdata          ( Crypto_rdata     ),
+    .axiOut_1_rid            ( Crypto_rid       ),
+    .axiOut_1_rresp          ( Crypto_rresp     ),
+    .axiOut_1_rlast          ( Crypto_rlast     ),
 
     //slave 2
     //aw
@@ -1161,45 +1190,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 6
     //aw
-    .axiOut_6_awvalid        ( axiOut_6_awvalid     ),
-    .axiOut_6_awready        ( axiOut_6_awready     ),
-    .axiOut_6_awaddr         ( axiOut_6_awaddr      ),
-    .axiOut_6_awid           ( axiOut_6_awid        ),
-    .axiOut_6_awlen          ( axiOut_6_awlen       ),
-    .axiOut_6_awsize         ( axiOut_6_awsize      ),
-    .axiOut_6_awburst        ( axiOut_6_awburst   ),
-    .axiOut_6_awlock         ( axiOut_6_awlock    ),
-    .axiOut_6_awcache        ( axiOut_6_awcache   ),
-    .axiOut_6_awprot         ( axiOut_6_awprot    ),
+    .axiOut_6_awvalid        ( ecg_awvalid     ),
+    .axiOut_6_awready        ( ecg_awready     ),
+    .axiOut_6_awaddr         ( ecg_awaddr      ),
+    .axiOut_6_awid           ( ecg_awid        ),
+    .axiOut_6_awlen          ( ecg_awlen       ),
+    .axiOut_6_awsize         ( ecg_awsize      ),
+    .axiOut_6_awburst        ( ecg_awburst     ),
+    .axiOut_6_awlock         ( ecg_awlock      ),
+    .axiOut_6_awcache        ( ecg_awcache     ),
+    .axiOut_6_awprot         ( ecg_awprot      ),
     //w
-    .axiOut_6_wvalid         ( axiOut_6_wvalid    ),
-    .axiOut_6_wready         ( axiOut_6_wready    ),
-    .axiOut_6_wdata          ( axiOut_6_wdata     ),
-    .axiOut_6_wstrb          ( axiOut_6_wstrb     ),
-    .axiOut_6_wlast          ( axiOut_6_wlast     ),
+    .axiOut_6_wvalid         ( ecg_wvalid      ),
+    .axiOut_6_wready         ( ecg_wready      ),
+    .axiOut_6_wdata          ( ecg_wdata       ),
+    .axiOut_6_wstrb          ( ecg_wstrb       ),
+    .axiOut_6_wlast          ( ecg_wlast       ),
     //b
-    .axiOut_6_bready         ( axiOut_6_bready      ),
-    .axiOut_6_bvalid         ( axiOut_6_bvalid      ),
-    .axiOut_6_bid            ( axiOut_6_bid         ),
-    .axiOut_6_bresp          ( axiOut_6_bresp       ),
+    .axiOut_6_bready         ( ecg_bready      ),
+    .axiOut_6_bvalid         ( ecg_bvalid      ),
+    .axiOut_6_bid            ( ecg_bid         ),
+    .axiOut_6_bresp          ( ecg_bresp       ),
     //ar
-    .axiOut_6_arvalid        ( axiOut_6_arvalid     ),
-    .axiOut_6_arready        ( axiOut_6_arready     ),
-    .axiOut_6_araddr         ( axiOut_6_araddr      ),
-    .axiOut_6_arid           ( axiOut_6_arid        ),
-    .axiOut_6_arlen          ( axiOut_6_arlen       ),
-    .axiOut_6_arsize         ( axiOut_6_arsize      ),
-    .axiOut_6_arburst        ( axiOut_6_arburst   ),
-    .axiOut_6_arlock         ( axiOut_6_arlock    ),
-    .axiOut_6_arcache        ( axiOut_6_arcache   ),
-    .axiOut_6_arprot         ( axiOut_6_arprot    ),
+    .axiOut_6_arvalid        ( ecg_arvalid     ),
+    .axiOut_6_arready        ( ecg_arready     ),
+    .axiOut_6_araddr         ( ecg_araddr      ),
+    .axiOut_6_arid           ( ecg_arid        ),
+    .axiOut_6_arlen          ( ecg_arlen       ),
+    .axiOut_6_arsize         ( ecg_arsize      ),
+    .axiOut_6_arburst        ( ecg_arburst     ),
+    .axiOut_6_arlock         ( ecg_arlock      ),
+    .axiOut_6_arcache        ( ecg_arcache     ),
+    .axiOut_6_arprot         ( ecg_arprot      ),
     //r
-    .axiOut_6_rvalid         ( axiOut_6_rvalid    ),
-    .axiOut_6_rready         ( axiOut_6_rready    ),
-    .axiOut_6_rdata          ( axiOut_6_rdata     ),
-    .axiOut_6_rid            ( axiOut_6_rid         ),
-    .axiOut_6_rresp          ( axiOut_6_rresp       ),
-    .axiOut_6_rlast          ( axiOut_6_rlast       ),
+    .axiOut_6_rvalid         ( ecg_rvalid      ),
+    .axiOut_6_rready         ( ecg_rready      ),
+    .axiOut_6_rdata          ( ecg_rdata       ),
+    .axiOut_6_rid            ( ecg_rid         ),
+    .axiOut_6_rresp          ( ecg_rresp       ),
+    .axiOut_6_rlast          ( ecg_rlast       ),
 
     //slave 7
     //aw
@@ -1572,13 +1601,55 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
     .switch ( dip_sw ),
     .touch_btn ( touch_btn ),
     .dma_finish ( dma_finish ),
-    .fft_finish ( fft_finish ),
+    .ecg_finish ( ecg_finish ),
     .led ( leds ),
     .dpy0 ( dpy0 ),
     .dpy1 ( dpy1 ),
     .confreg_int ( confreg_int )
 );
 
+//ecg
+axi_ECG_top u_axi_ECG_top (
+    .s_awvalid ( ecg_awvalid ),
+    .s_awaddr ( ecg_awaddr ),
+    .s_awid ( ecg_awid ),
+    .s_awlen ( ecg_awlen ),
+    .s_awsize ( ecg_awsize ),
+    .s_awburst ( ecg_awburst ),
+    .s_awlock ( ecg_awlock ),
+    .s_awcache ( ecg_awcache ),
+    .s_awprot ( ecg_awprot ),
+    .s_wvalid ( ecg_wvalid ),
+    .s_wdata ( ecg_wdata ),
+    .s_wstrb ( ecg_wstrb ),
+    .s_wlast ( ecg_wlast ),
+    .s_bready ( ecg_bready ),
+    .s_arvalid ( ecg_arvalid ),
+    .s_araddr ( ecg_araddr ),
+    .s_arid ( ecg_arid ),
+    .s_arlen ( ecg_arlen ),
+    .s_arsize ( ecg_arsize ),
+    .s_arburst ( ecg_arburst ),
+    .s_arlock ( ecg_arlock ),
+    .s_arcache ( ecg_arcache ),
+    .s_arprot ( ecg_arprot ),
+    .s_rready ( ecg_rready ),
+    .aclk ( sys_clk ),
+    .aresetn ( sys_resetn ),
+
+    .s_awready ( ecg_awready ),
+    .s_wready ( ecg_wready ),
+    .s_bvalid ( ecg_bvalid ),
+    .s_bid ( ecg_bid ),
+    .s_bresp ( ecg_bresp ),
+    .s_arready ( ecg_arready ),
+    .s_rvalid ( ecg_rvalid ),
+    .s_rdata ( ecg_rdata ),
+    .s_rid ( ecg_rid ),
+    .s_rresp ( ecg_rresp ),
+    .s_rlast ( ecg_rlast ),
+    .ecg_finish ( ecg_finish )
+);
 
 //dvi
 axi_dvi u_axi_dvi (
@@ -1627,6 +1698,47 @@ axi_dvi u_axi_dvi (
     .video_red ( video_red ),
     .video_green ( video_green ),
     .video_blue ( video_blue )
+);
+
+//Crypto_ip
+Crypto u_Crypto(
+    .aclk      (  sys_clk       ),
+    .aresetn   (  sys_resetn    ),
+    .s_awvalid (  Crypto_awvalid ),
+    .s_awready (  Crypto_awready ),
+    .s_awaddr  (  Crypto_awaddr  ),
+    .s_awid    (  Crypto_awid    ),
+    .s_awlen   (  Crypto_awlen   ),
+    .s_awsize  (  Crypto_awsize  ),
+    .s_awburst (  Crypto_awburst ),
+    .s_awlock  (  Crypto_awlock  ),
+    .s_awcache (  Crypto_awcache ),
+    .s_awprot  (  Crypto_awprot  ),
+    .s_wvalid  (  Crypto_wvalid  ),
+    .s_wready  (  Crypto_wready  ),
+    .s_wdata   (  Crypto_wdata   ),
+    .s_wstrb   (  Crypto_wstrb   ),
+    .s_wlast   (  Crypto_wlast   ),
+    .s_bvalid  (  Crypto_bvalid  ),
+    .s_bready  (  Crypto_bready  ),
+    .s_bid     (  Crypto_bid     ),
+    .s_bresp   (  Crypto_bresp   ),
+    .s_arvalid (  Crypto_arvalid ),
+    .s_arready (  Crypto_arready ),
+    .s_araddr  (  Crypto_araddr  ),
+    .s_arid    (  Crypto_arid    ),
+    .s_arlen   (  Crypto_arlen   ),
+    .s_arsize  (  Crypto_arsize  ),
+    .s_arburst (  Crypto_arburst ),
+    .s_arlock  (  Crypto_arlock  ),
+    .s_arcache (  Crypto_arcache ),
+    .s_arprot  (  Crypto_arprot  ),
+    .s_rvalid  (  Crypto_rvalid  ),
+    .s_rready  (  Crypto_rready  ),
+    .s_rdata   (  Crypto_rdata   ),
+    .s_rid     (  Crypto_rid     ),
+    .s_rresp   (  Crypto_rresp   ),
+    .s_rlast   (  Crypto_rlast   )
 );
 
 
