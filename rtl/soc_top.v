@@ -718,7 +718,7 @@ u_dma (
 `endif
 );
 
-`ifdef USE_EVALUATION_UART_SRAM
+`ifndef USE_EVALUATION_UART_SRAM
 // Generic DMA mode has no private Matmul or autonomous-UART sideband link.
 assign dma_start_banner_valid  = 1'b0;
 assign dma_crc32_valid         = 1'b0;
