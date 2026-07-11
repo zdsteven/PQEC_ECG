@@ -7,6 +7,10 @@ LA32R_GDB     := loongarch32r-linux-gnusf-gdb
 LA32R_AR      := loongarch32r-linux-gnusf-ar
 LA32R_OBJCOPY := loongarch32r-linux-gnusf-objcopy
 LA32R_READELF := loongarch32r-linux-gnusf-readelf
+COPY_OUTPUT ?= 1
+# Set to 1 for software-controlled UART FIFO/divisor initialization in start.S.
+# Keep 0 when the UART autonomous reporter must preserve its reset-time output.
+UART_INIT_ON_START ?= 1
 
 .PHONY: all
 all: $(TARGET)
@@ -18,6 +22,7 @@ CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -nostartfiles -nostdlib -nostdinc -static -fno-builtin 
 CFLAGS += -DCLOCKS_PER_SEC=CORE_CLOCKS_PER_SEC -D_CLOCKS_PER_SEC_=CORE_CLOCKS_PER_SEC
 CFLAGS += -DUSE_CPU_CLOCK_COUNT
+CFLAGS += -DUART_INIT_ON_START=$(UART_INIT_ON_START)
 
 #若使用 newlib , 将下面的 -lsemihost 替换为 -lgloss
 LDFLAGS +=  	-T $(LINKER_SCRIPT) \
@@ -40,8 +45,10 @@ C_SRCS   += $(COMMON_DIR)/drivers/common_func.c
 C_SRCS   += $(COMMON_DIR)/drivers/dvi.c \
 			$(COMMON_DIR)/drivers/dma.c \
 			$(COMMON_DIR)/drivers/fft.c \
+			$(COMMON_DIR)/drivers/Kyber.c \
 			$(COMMON_DIR)/drivers/led.c \
-			$(COMMON_DIR)/drivers/seg7.c
+			$(COMMON_DIR)/drivers/seg7.c \
+			$(COMMON_DIR)/drivers/matmul.c
 
 ifneq ($(EXCLUDE_KYBER_DRIVER),1)
 C_SRCS   += $(COMMON_DIR)/drivers/kem/Kem_api.c \
@@ -69,10 +76,13 @@ $(TARGET): $(LINK_OBJS) $(LINK_DEPS) convert Makefile
 	$(LA32R_OBJCOPY) -O binary $(OBJDIR)/$@.elf $(OBJDIR)/$@.bin
 	$(LA32R_OBJDUMP) --disassemble-all -S $(OBJDIR)/$@.elf > $(OBJDIR)/$@.s
 	$(OBJDIR)/convert $@.bin $(OBJDIR)/
+ifeq ($(COPY_OUTPUT),1)
 	cp ./$(OBJDIR)/axi_ram.mif $(COMMON_DIR)/../../
+ifdef LA32RSOC_WINDOWS_HOME
 	cp ./$(OBJDIR)/axi_ram.mif $(LA32RSOC_WINDOWS_HOME)/sdk
-	cp ./$(OBJDIR)/$@.bin $(COMMON_DIR)/../../
-	cp ./$(OBJDIR)/$@.bin $(LA32RSOC_WINDOWS_HOME)/sdk
+	cp ./$(OBJDIR)/$(TARGET).bin $(LA32RSOC_WINDOWS_HOME)/sdk
+endif
+endif
 	rm -f $(LINK_OBJS)
 	rm -f $(OBJDIR)/convert
 
