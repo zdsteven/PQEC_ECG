@@ -1,4 +1,4 @@
-module Kyber (
+module Crypto (
     input            aclk,
     input            aresetn,
 
@@ -52,11 +52,15 @@ module Kyber (
     //ctrl [12] : polyvec reset
     //ctrl [14:13] : polyvec reset bank quantity
     //ctrl[15] : polyvec fqadd from intt 0: add 1: sub
+    //ctrl[16] :aes init
+    //ctrl[17] :aes keylen 0: 128bit 1: 256bit
+    //ctrl[18] :aes start
     localparam STATUS_ADDR     = 16'h0004;
     //status[0] = 1: ntt_intt buzy
     //status[1] = 1: Hash buzy
     //status[2] = 1: polyvec reset buzy
     //status[3] = 1: polyvec buzy
+    //status[4] = 1: aes buzy
 
     localparam NTT_INTT_DATA_BASE_ADDR  = 16'h0100;
     localparam NTT_INTT_DATA_LAST_ADDR  = NTT_INTT_DATA_BASE_ADDR + 128 * 4 - 4;//16'h02FC
@@ -66,6 +70,15 @@ module Kyber (
     localparam BASEMUL_DATA_LAST_ADDR = BASEMUL_DATA_BASE_ADDR + 128 * 4 - 4;//16'h06FC
     localparam POLYVEC_DATA_BASE_ADDR = 16'h0700;
     localparam POLYVEC_DATA_LAST_ADDR = POLYVEC_DATA_BASE_ADDR + 512 * 4 - 4;//16'h0EFC
+
+    localparam AES_DATA_BASE_ADDR = 16'h0F00;
+    localparam AES_DATA_LAST_ADDR = AES_DATA_BASE_ADDR + 64 * 4 - 4;//16'h0FFC
+    localparam AES_KEY_BASE_ADDR = 16'h1000;
+    localparam AES_KEY_LAST_ADDR = AES_KEY_BASE_ADDR + 8 * 4 - 4;//16'h101C
+    localparam AES_NONCE_COUNTER_ADDR = 16'h1020;
+    localparam AES_NONCE_2_ADDR = 16'h1024;
+    localparam AES_NONCE_1_ADDR = 16'h1028;
+
 
 
 //-------------------------------{axi ctrl}begin---------------------------//
@@ -94,6 +107,7 @@ module Kyber (
     reg         read_pipe_is_ntt_intt;
     reg         read_pipe_is_hash;
     reg         read_pipe_is_polyvec;
+    reg         read_pipe_is_aes;
     reg [31:0]  read_pipe_rdata;
 
     wire ar_enter = s_arvalid & s_arready;
@@ -190,6 +204,26 @@ module Kyber (
     wire [31:0] Hash_sample_data;
     wire Hash_done;
 //---------------------------------{Hash}end--------------------------------//
+
+//---------------------------------{aes}begin-------------------------------//
+    // aes Inputs
+    wire write_addr_is_aes = write_addr[11:8] == 4'b1111;
+    wire read_addr_is_aes = read_addr[11:8] == 4'b1111;
+    wire aes_init = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[16] == 1'b1);
+    wire aes_keylen = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[17] == 1'b1);
+    wire aes_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[18] == 1'b1);
+    wire aes_load_key_en = w_fire & write_addr[12] & (~write_addr[5]);
+    wire [2:0] aes_load_key_addr = write_addr[4:2];
+    wire [31:0] aes_load_key = s_wdata;
+    reg [95:0] aes_nonce;
+    wire aes_load_ct_data_en = w_fire & write_addr_is_aes;
+    wire [5:0] aes_load_ct_data_addr = write_addr[7:2];
+    wire [31:0] aes_load_ct_data = s_wdata;
+    wire aes_take_ct_data_en = read_issue & read_addr_is_aes;
+    wire [5:0] aes_take_ct_data_addr = read_addr[7:2];
+    wire [31:0] aes_take_ct_data;
+    wire aes_ready;
+//---------------------------------{aes}end---------------------------------//
 
 //--------------------------------------------------------------------------------------------------------//
 //--------------------------------------------------------------------------------------------------------//
@@ -331,6 +365,9 @@ module Kyber (
                 else if (read_pipe_is_polyvec) begin
                     s_rdata_r <= polyvec_read_data;
                 end
+                else if(read_pipe_is_aes) begin
+                    s_rdata_r <= aes_take_ct_data;
+                end
                 else begin
                     s_rdata_r <= read_pipe_rdata;
                 end
@@ -346,6 +383,7 @@ module Kyber (
                 read_pipe_is_ntt_intt <= read_addr_is_ntt_intt;
                 read_pipe_is_hash <= read_addr_is_hash;
                 read_pipe_is_polyvec <= read_addr_is_polyvec;
+                read_pipe_is_aes <= read_addr_is_aes;
                 read_pipe_rdata <= rdata_d;
             end
 
@@ -387,6 +425,12 @@ module Kyber (
             end
             else if (basemul_start | polyvec_fqadd_from_sample_start | polyvec_fqadd_from_intt_start) begin
                 status_reg[3] <= 1'b1;
+            end
+            if (aes_start | aes_init) begin
+                status_reg[4] <= 1'b1;
+            end
+            else if (aes_ready) begin
+                status_reg[4] <= 1'b0;
             end
         end
     end
@@ -483,5 +527,41 @@ module Kyber (
         .done               (Hash_done               )
     );
 //---------------------------------{Hash}end--------------------------------//
+
+//---------------------------------{aes}begin-------------------------------//
+    always @(posedge aclk) begin
+        if (~aresetn) begin
+            aes_nonce <= 96'b0;
+        end
+        else if (w_fire & write_addr[12] & write_addr[5] & (write_addr[3:2] == 2'd0)) begin
+            aes_nonce[31:0] <= s_wdata;
+        end
+        else if (w_fire & write_addr[12] & write_addr[5] & (write_addr[3:2] == 2'd1)) begin
+            aes_nonce[63:32] <= {s_wdata[7:0], s_wdata[15:8], s_wdata[23:16], s_wdata[31:24]};
+        end
+        else if (w_fire & write_addr[12] & write_addr[5] & (write_addr[3:2] == 2'd2)) begin
+            aes_nonce[95:64] <= {s_wdata[7:0], s_wdata[15:8], s_wdata[23:16], s_wdata[31:24]};
+        end
+    end
+
+    aes  u_aes (
+        .clk                     ( aclk                 ),
+        .reset_n                 ( aresetn              ),
+        .init                    ( aes_init             ),
+        .start                   ( aes_start            ),
+        .keylen                  ( aes_keylen           ),
+        .load_key_en             ( aes_load_key_en      ),
+        .load_key_addr           ( aes_load_key_addr    ),
+        .load_key                ( aes_load_key         ),
+        .nonce                   ( aes_nonce            ),
+        .load_ct_data_en         ( aes_load_ct_data_en  ),
+        .load_ct_data_addr       ( aes_load_ct_data_addr),
+        .load_ct_data            ( aes_load_ct_data     ),
+        .take_ct_data_en         ( aes_take_ct_data_en  ),
+        .take_ct_data_addr       ( aes_take_ct_data_addr),
+        .ready                   ( aes_ready            ),
+        .take_ct_data            ( aes_take_ct_data     )
+    );
+//---------------------------------{aes}end---------------------------------//
 
 endmodule

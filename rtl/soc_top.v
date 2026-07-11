@@ -399,43 +399,43 @@ wire        dma_s_bready ;
 wire        dma_finish   ;
 
 
-//Kyber_ip
-wire [4 :0] Kyber_arid   ;
-wire [31:0] Kyber_araddr ;
-wire [7 :0] Kyber_arlen  ;
-wire [2 :0] Kyber_arsize ;
-wire [1 :0] Kyber_arburst;
-wire        Kyber_arlock ;
-wire [3 :0] Kyber_arcache;
-wire [2 :0] Kyber_arprot ;
-wire        Kyber_arvalid;
-wire        Kyber_arready;
-wire [4 :0] Kyber_rid    ;
-wire [31:0] Kyber_rdata  ;
-wire [1 :0] Kyber_rresp  ;
-wire        Kyber_rlast  ;
-wire        Kyber_rvalid ;
-wire        Kyber_rready ;
-wire [4 :0] Kyber_awid   ;
-wire [31:0] Kyber_awaddr ;
-wire [7 :0] Kyber_awlen  ;
-wire [2 :0] Kyber_awsize ;
-wire [1 :0] Kyber_awburst;
-wire        Kyber_awlock ;
-wire [3 :0] Kyber_awcache;
-wire [2 :0] Kyber_awprot ;
-wire        Kyber_awvalid;
-wire        Kyber_awready;
-wire [4 :0] Kyber_wid    ;
-wire [31:0] Kyber_wdata  ;
-wire [3 :0] Kyber_wstrb  ;
-wire        Kyber_wlast  ;
-wire        Kyber_wvalid ;
-wire        Kyber_wready ;
-wire [4 :0] Kyber_bid    ;
-wire [1 :0] Kyber_bresp  ;
-wire        Kyber_bvalid ;
-wire        Kyber_bready ;
+//Crypto_ip
+wire [4 :0] Crypto_arid   ;
+wire [31:0] Crypto_araddr ;
+wire [7 :0] Crypto_arlen  ;
+wire [2 :0] Crypto_arsize ;
+wire [1 :0] Crypto_arburst;
+wire        Crypto_arlock ;
+wire [3 :0] Crypto_arcache;
+wire [2 :0] Crypto_arprot ;
+wire        Crypto_arvalid;
+wire        Crypto_arready;
+wire [4 :0] Crypto_rid    ;
+wire [31:0] Crypto_rdata  ;
+wire [1 :0] Crypto_rresp  ;
+wire        Crypto_rlast  ;
+wire        Crypto_rvalid ;
+wire        Crypto_rready ;
+wire [4 :0] Crypto_awid   ;
+wire [31:0] Crypto_awaddr ;
+wire [7 :0] Crypto_awlen  ;
+wire [2 :0] Crypto_awsize ;
+wire [1 :0] Crypto_awburst;
+wire        Crypto_awlock ;
+wire [3 :0] Crypto_awcache;
+wire [2 :0] Crypto_awprot ;
+wire        Crypto_awvalid;
+wire        Crypto_awready;
+wire [4 :0] Crypto_wid    ;
+wire [31:0] Crypto_wdata  ;
+wire [3 :0] Crypto_wstrb  ;
+wire        Crypto_wlast  ;
+wire        Crypto_wvalid ;
+wire        Crypto_wready ;
+wire [4 :0] Crypto_bid    ;
+wire [1 :0] Crypto_bresp  ;
+wire        Crypto_bvalid ;
+wire        Crypto_bready ;
 
 
 //axi dvi
@@ -516,44 +516,44 @@ wire [1 :0] confreg_bresp  ;
 wire        confreg_bvalid ;
 wire        confreg_bready ;
 
-//slave 6 FFT/IFFT
-wire [4 :0] fft_arid   ;
-wire [31:0] fft_araddr ;
-wire [7 :0] fft_arlen  ;
-wire [2 :0] fft_arsize ;
-wire [1 :0] fft_arburst;
-wire        fft_arlock ;
-wire [3 :0] fft_arcache;
-wire [2 :0] fft_arprot ;
-wire        fft_arvalid;
-wire        fft_arready;
-wire [4 :0] fft_rid    ;
-wire [31:0] fft_rdata  ;
-wire [1 :0] fft_rresp  ;
-wire        fft_rlast  ;
-wire        fft_rvalid ;
-wire        fft_rready ;
-wire [4 :0] fft_awid   ;
-wire [31:0] fft_awaddr ;
-wire [7 :0] fft_awlen  ;
-wire [2 :0] fft_awsize ;
-wire [1 :0] fft_awburst;
-wire        fft_awlock ;
-wire [3 :0] fft_awcache;
-wire [2 :0] fft_awprot ;
-wire        fft_awvalid;
-wire        fft_awready;
-wire [4 :0] fft_wid    ;
-wire [31:0] fft_wdata  ;
-wire [3 :0] fft_wstrb  ;
-wire        fft_wlast  ;
-wire        fft_wvalid ;
-wire        fft_wready ;
-wire [4 :0] fft_bid    ;
-wire [1 :0] fft_bresp  ;
-wire        fft_bvalid ;
-wire        fft_bready ;
-wire        fft_finish ;
+//slave 6 ecg/Iecg
+wire [4 :0] ecg_arid   ;
+wire [31:0] ecg_araddr ;
+wire [7 :0] ecg_arlen  ;
+wire [2 :0] ecg_arsize ;
+wire [1 :0] ecg_arburst;
+wire        ecg_arlock ;
+wire [3 :0] ecg_arcache;
+wire [2 :0] ecg_arprot ;
+wire        ecg_arvalid;
+wire        ecg_arready;
+wire [4 :0] ecg_rid    ;
+wire [31:0] ecg_rdata  ;
+wire [1 :0] ecg_rresp  ;
+wire        ecg_rlast  ;
+wire        ecg_rvalid ;
+wire        ecg_rready ;
+wire [4 :0] ecg_awid   ;
+wire [31:0] ecg_awaddr ;
+wire [7 :0] ecg_awlen  ;
+wire [2 :0] ecg_awsize ;
+wire [1 :0] ecg_awburst;
+wire        ecg_awlock ;
+wire [3 :0] ecg_awcache;
+wire [2 :0] ecg_awprot ;
+wire        ecg_awvalid;
+wire        ecg_awready;
+wire [4 :0] ecg_wid    ;
+wire [31:0] ecg_wdata  ;
+wire [3 :0] ecg_wstrb  ;
+wire        ecg_wlast  ;
+wire        ecg_wvalid ;
+wire        ecg_wready ;
+wire [4 :0] ecg_bid    ;
+wire [1 :0] ecg_bresp  ;
+wire        ecg_bvalid ;
+wire        ecg_bready ;
+wire        ecg_finish ;
 
 
 //slave 7
@@ -740,45 +740,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 1
     //aw
-    .axiOut_1_awvalid        ( Kyber_awvalid   ),
-    .axiOut_1_awready        ( Kyber_awready   ),
-    .axiOut_1_awaddr         ( Kyber_awaddr    ),
-    .axiOut_1_awid           ( Kyber_awid      ),
-    .axiOut_1_awlen          ( Kyber_awlen     ),
-    .axiOut_1_awsize         ( Kyber_awsize    ),
-    .axiOut_1_awburst        ( Kyber_awburst   ),
-    .axiOut_1_awlock         ( Kyber_awlock    ),
-    .axiOut_1_awcache        ( Kyber_awcache   ),
-    .axiOut_1_awprot         ( Kyber_awprot    ),
+    .axiOut_1_awvalid        ( Crypto_awvalid   ),
+    .axiOut_1_awready        ( Crypto_awready   ),
+    .axiOut_1_awaddr         ( Crypto_awaddr    ),
+    .axiOut_1_awid           ( Crypto_awid      ),
+    .axiOut_1_awlen          ( Crypto_awlen     ),
+    .axiOut_1_awsize         ( Crypto_awsize    ),
+    .axiOut_1_awburst        ( Crypto_awburst   ),
+    .axiOut_1_awlock         ( Crypto_awlock    ),
+    .axiOut_1_awcache        ( Crypto_awcache   ),
+    .axiOut_1_awprot         ( Crypto_awprot    ),
     //w
-    .axiOut_1_wvalid         ( Kyber_wvalid    ),
-    .axiOut_1_wready         ( Kyber_wready    ),
-    .axiOut_1_wdata          ( Kyber_wdata     ),
-    .axiOut_1_wstrb          ( Kyber_wstrb     ),
-    .axiOut_1_wlast          ( Kyber_wlast     ),
+    .axiOut_1_wvalid         ( Crypto_wvalid    ),
+    .axiOut_1_wready         ( Crypto_wready    ),
+    .axiOut_1_wdata          ( Crypto_wdata     ),
+    .axiOut_1_wstrb          ( Crypto_wstrb     ),
+    .axiOut_1_wlast          ( Crypto_wlast     ),
     //b
-    .axiOut_1_bready         ( Kyber_bready    ),
-    .axiOut_1_bvalid         ( Kyber_bvalid    ),
-    .axiOut_1_bid            ( Kyber_bid       ),
-    .axiOut_1_bresp          ( Kyber_bresp     ),
+    .axiOut_1_bready         ( Crypto_bready    ),
+    .axiOut_1_bvalid         ( Crypto_bvalid    ),
+    .axiOut_1_bid            ( Crypto_bid       ),
+    .axiOut_1_bresp          ( Crypto_bresp     ),
     //ar
-    .axiOut_1_arvalid        ( Kyber_arvalid   ),
-    .axiOut_1_arready        ( Kyber_arready   ),
-    .axiOut_1_araddr         ( Kyber_araddr    ),
-    .axiOut_1_arid           ( Kyber_arid      ),
-    .axiOut_1_arlen          ( Kyber_arlen     ),
-    .axiOut_1_arsize         ( Kyber_arsize    ),
-    .axiOut_1_arburst        ( Kyber_arburst   ),
-    .axiOut_1_arlock         ( Kyber_arlock    ),
-    .axiOut_1_arcache        ( Kyber_arcache   ),
-    .axiOut_1_arprot         ( Kyber_arprot    ),
+    .axiOut_1_arvalid        ( Crypto_arvalid   ),
+    .axiOut_1_arready        ( Crypto_arready   ),
+    .axiOut_1_araddr         ( Crypto_araddr    ),
+    .axiOut_1_arid           ( Crypto_arid      ),
+    .axiOut_1_arlen          ( Crypto_arlen     ),
+    .axiOut_1_arsize         ( Crypto_arsize    ),
+    .axiOut_1_arburst        ( Crypto_arburst   ),
+    .axiOut_1_arlock         ( Crypto_arlock    ),
+    .axiOut_1_arcache        ( Crypto_arcache   ),
+    .axiOut_1_arprot         ( Crypto_arprot    ),
     //r
-    .axiOut_1_rvalid         ( Kyber_rvalid    ),
-    .axiOut_1_rready         ( Kyber_rready    ),
-    .axiOut_1_rdata          ( Kyber_rdata     ),
-    .axiOut_1_rid            ( Kyber_rid       ),
-    .axiOut_1_rresp          ( Kyber_rresp     ),
-    .axiOut_1_rlast          ( Kyber_rlast     ),
+    .axiOut_1_rvalid         ( Crypto_rvalid    ),
+    .axiOut_1_rready         ( Crypto_rready    ),
+    .axiOut_1_rdata          ( Crypto_rdata     ),
+    .axiOut_1_rid            ( Crypto_rid       ),
+    .axiOut_1_rresp          ( Crypto_rresp     ),
+    .axiOut_1_rlast          ( Crypto_rlast     ),
 
     //slave 2
     //aw
@@ -951,45 +951,45 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
     //slave 6
     //aw
-    .axiOut_6_awvalid        ( fft_awvalid     ),
-    .axiOut_6_awready        ( fft_awready     ),
-    .axiOut_6_awaddr         ( fft_awaddr      ),
-    .axiOut_6_awid           ( fft_awid        ),
-    .axiOut_6_awlen          ( fft_awlen       ),
-    .axiOut_6_awsize         ( fft_awsize      ),
-    .axiOut_6_awburst        ( fft_awburst     ),
-    .axiOut_6_awlock         ( fft_awlock      ),
-    .axiOut_6_awcache        ( fft_awcache     ),
-    .axiOut_6_awprot         ( fft_awprot      ),
+    .axiOut_6_awvalid        ( ecg_awvalid     ),
+    .axiOut_6_awready        ( ecg_awready     ),
+    .axiOut_6_awaddr         ( ecg_awaddr      ),
+    .axiOut_6_awid           ( ecg_awid        ),
+    .axiOut_6_awlen          ( ecg_awlen       ),
+    .axiOut_6_awsize         ( ecg_awsize      ),
+    .axiOut_6_awburst        ( ecg_awburst     ),
+    .axiOut_6_awlock         ( ecg_awlock      ),
+    .axiOut_6_awcache        ( ecg_awcache     ),
+    .axiOut_6_awprot         ( ecg_awprot      ),
     //w
-    .axiOut_6_wvalid         ( fft_wvalid      ),
-    .axiOut_6_wready         ( fft_wready      ),
-    .axiOut_6_wdata          ( fft_wdata       ),
-    .axiOut_6_wstrb          ( fft_wstrb       ),
-    .axiOut_6_wlast          ( fft_wlast       ),
+    .axiOut_6_wvalid         ( ecg_wvalid      ),
+    .axiOut_6_wready         ( ecg_wready      ),
+    .axiOut_6_wdata          ( ecg_wdata       ),
+    .axiOut_6_wstrb          ( ecg_wstrb       ),
+    .axiOut_6_wlast          ( ecg_wlast       ),
     //b
-    .axiOut_6_bready         ( fft_bready      ),
-    .axiOut_6_bvalid         ( fft_bvalid      ),
-    .axiOut_6_bid            ( fft_bid         ),
-    .axiOut_6_bresp          ( fft_bresp       ),
+    .axiOut_6_bready         ( ecg_bready      ),
+    .axiOut_6_bvalid         ( ecg_bvalid      ),
+    .axiOut_6_bid            ( ecg_bid         ),
+    .axiOut_6_bresp          ( ecg_bresp       ),
     //ar
-    .axiOut_6_arvalid        ( fft_arvalid     ),
-    .axiOut_6_arready        ( fft_arready     ),
-    .axiOut_6_araddr         ( fft_araddr      ),
-    .axiOut_6_arid           ( fft_arid        ),
-    .axiOut_6_arlen          ( fft_arlen       ),
-    .axiOut_6_arsize         ( fft_arsize      ),
-    .axiOut_6_arburst        ( fft_arburst     ),
-    .axiOut_6_arlock         ( fft_arlock      ),
-    .axiOut_6_arcache        ( fft_arcache     ),
-    .axiOut_6_arprot         ( fft_arprot      ),
+    .axiOut_6_arvalid        ( ecg_arvalid     ),
+    .axiOut_6_arready        ( ecg_arready     ),
+    .axiOut_6_araddr         ( ecg_araddr      ),
+    .axiOut_6_arid           ( ecg_arid        ),
+    .axiOut_6_arlen          ( ecg_arlen       ),
+    .axiOut_6_arsize         ( ecg_arsize      ),
+    .axiOut_6_arburst        ( ecg_arburst     ),
+    .axiOut_6_arlock         ( ecg_arlock      ),
+    .axiOut_6_arcache        ( ecg_arcache     ),
+    .axiOut_6_arprot         ( ecg_arprot      ),
     //r
-    .axiOut_6_rvalid         ( fft_rvalid      ),
-    .axiOut_6_rready         ( fft_rready      ),
-    .axiOut_6_rdata          ( fft_rdata       ),
-    .axiOut_6_rid            ( fft_rid         ),
-    .axiOut_6_rresp          ( fft_rresp       ),
-    .axiOut_6_rlast          ( fft_rlast       ),
+    .axiOut_6_rvalid         ( ecg_rvalid      ),
+    .axiOut_6_rready         ( ecg_rready      ),
+    .axiOut_6_rdata          ( ecg_rdata       ),
+    .axiOut_6_rid            ( ecg_rid         ),
+    .axiOut_6_rresp          ( ecg_rresp       ),
+    .axiOut_6_rlast          ( ecg_rlast       ),
 
     //slave 7
     //aw
@@ -1435,54 +1435,54 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
     .switch ( dip_sw ),
     .touch_btn ( touch_btn ),
     .dma_finish ( dma_finish ),
-    .fft_finish ( fft_finish ),
+    .ecg_finish ( ecg_finish ),
     .led ( leds ),
     .dpy0 ( dpy0 ),
     .dpy1 ( dpy1 ),
     .confreg_int ( confreg_int )
 );
 
-//fft
-axi_fft_top u_axi_fft_top (
-    .s_awvalid ( fft_awvalid ),
-    .s_awaddr ( fft_awaddr ),
-    .s_awid ( fft_awid ),
-    .s_awlen ( fft_awlen ),
-    .s_awsize ( fft_awsize ),
-    .s_awburst ( fft_awburst ),
-    .s_awlock ( fft_awlock ),
-    .s_awcache ( fft_awcache ),
-    .s_awprot ( fft_awprot ),
-    .s_wvalid ( fft_wvalid ),
-    .s_wdata ( fft_wdata ),
-    .s_wstrb ( fft_wstrb ),
-    .s_wlast ( fft_wlast ),
-    .s_bready ( fft_bready ),
-    .s_arvalid ( fft_arvalid ),
-    .s_araddr ( fft_araddr ),
-    .s_arid ( fft_arid ),
-    .s_arlen ( fft_arlen ),
-    .s_arsize ( fft_arsize ),
-    .s_arburst ( fft_arburst ),
-    .s_arlock ( fft_arlock ),
-    .s_arcache ( fft_arcache ),
-    .s_arprot ( fft_arprot ),
-    .s_rready ( fft_rready ),
+//ecg
+axi_ECG_top u_axi_ECG_top (
+    .s_awvalid ( ecg_awvalid ),
+    .s_awaddr ( ecg_awaddr ),
+    .s_awid ( ecg_awid ),
+    .s_awlen ( ecg_awlen ),
+    .s_awsize ( ecg_awsize ),
+    .s_awburst ( ecg_awburst ),
+    .s_awlock ( ecg_awlock ),
+    .s_awcache ( ecg_awcache ),
+    .s_awprot ( ecg_awprot ),
+    .s_wvalid ( ecg_wvalid ),
+    .s_wdata ( ecg_wdata ),
+    .s_wstrb ( ecg_wstrb ),
+    .s_wlast ( ecg_wlast ),
+    .s_bready ( ecg_bready ),
+    .s_arvalid ( ecg_arvalid ),
+    .s_araddr ( ecg_araddr ),
+    .s_arid ( ecg_arid ),
+    .s_arlen ( ecg_arlen ),
+    .s_arsize ( ecg_arsize ),
+    .s_arburst ( ecg_arburst ),
+    .s_arlock ( ecg_arlock ),
+    .s_arcache ( ecg_arcache ),
+    .s_arprot ( ecg_arprot ),
+    .s_rready ( ecg_rready ),
     .aclk ( sys_clk ),
     .aresetn ( sys_resetn ),
 
-    .s_awready ( fft_awready ),
-    .s_wready ( fft_wready ),
-    .s_bvalid ( fft_bvalid ),
-    .s_bid ( fft_bid ),
-    .s_bresp ( fft_bresp ),
-    .s_arready ( fft_arready ),
-    .s_rvalid ( fft_rvalid ),
-    .s_rdata ( fft_rdata ),
-    .s_rid ( fft_rid ),
-    .s_rresp ( fft_rresp ),
-    .s_rlast ( fft_rlast ),
-    .fft_finish ( fft_finish )
+    .s_awready ( ecg_awready ),
+    .s_wready ( ecg_wready ),
+    .s_bvalid ( ecg_bvalid ),
+    .s_bid ( ecg_bid ),
+    .s_bresp ( ecg_bresp ),
+    .s_arready ( ecg_arready ),
+    .s_rvalid ( ecg_rvalid ),
+    .s_rdata ( ecg_rdata ),
+    .s_rid ( ecg_rid ),
+    .s_rresp ( ecg_rresp ),
+    .s_rlast ( ecg_rlast ),
+    .ecg_finish ( ecg_finish )
 );
 
 //dvi
@@ -1534,45 +1534,45 @@ axi_dvi u_axi_dvi (
     .video_blue ( video_blue )
 );
 
-//Kyber_ip
-Kyber u_Kyber(
+//Crypto_ip
+Crypto u_Crypto(
     .aclk      (  sys_clk       ),
     .aresetn   (  sys_resetn    ),
-    .s_awvalid (  Kyber_awvalid ),
-    .s_awready (  Kyber_awready ),
-    .s_awaddr  (  Kyber_awaddr  ),
-    .s_awid    (  Kyber_awid    ),
-    .s_awlen   (  Kyber_awlen   ),
-    .s_awsize  (  Kyber_awsize  ),
-    .s_awburst (  Kyber_awburst ),
-    .s_awlock  (  Kyber_awlock  ),
-    .s_awcache (  Kyber_awcache ),
-    .s_awprot  (  Kyber_awprot  ),
-    .s_wvalid  (  Kyber_wvalid  ),
-    .s_wready  (  Kyber_wready  ),
-    .s_wdata   (  Kyber_wdata   ),
-    .s_wstrb   (  Kyber_wstrb   ),
-    .s_wlast   (  Kyber_wlast   ),
-    .s_bvalid  (  Kyber_bvalid  ),
-    .s_bready  (  Kyber_bready  ),
-    .s_bid     (  Kyber_bid     ),
-    .s_bresp   (  Kyber_bresp   ),
-    .s_arvalid (  Kyber_arvalid ),
-    .s_arready (  Kyber_arready ),
-    .s_araddr  (  Kyber_araddr  ),
-    .s_arid    (  Kyber_arid    ),
-    .s_arlen   (  Kyber_arlen   ),
-    .s_arsize  (  Kyber_arsize  ),
-    .s_arburst (  Kyber_arburst ),
-    .s_arlock  (  Kyber_arlock  ),
-    .s_arcache (  Kyber_arcache ),
-    .s_arprot  (  Kyber_arprot  ),
-    .s_rvalid  (  Kyber_rvalid  ),
-    .s_rready  (  Kyber_rready  ),
-    .s_rdata   (  Kyber_rdata   ),
-    .s_rid     (  Kyber_rid     ),
-    .s_rresp   (  Kyber_rresp   ),
-    .s_rlast   (  Kyber_rlast   )
+    .s_awvalid (  Crypto_awvalid ),
+    .s_awready (  Crypto_awready ),
+    .s_awaddr  (  Crypto_awaddr  ),
+    .s_awid    (  Crypto_awid    ),
+    .s_awlen   (  Crypto_awlen   ),
+    .s_awsize  (  Crypto_awsize  ),
+    .s_awburst (  Crypto_awburst ),
+    .s_awlock  (  Crypto_awlock  ),
+    .s_awcache (  Crypto_awcache ),
+    .s_awprot  (  Crypto_awprot  ),
+    .s_wvalid  (  Crypto_wvalid  ),
+    .s_wready  (  Crypto_wready  ),
+    .s_wdata   (  Crypto_wdata   ),
+    .s_wstrb   (  Crypto_wstrb   ),
+    .s_wlast   (  Crypto_wlast   ),
+    .s_bvalid  (  Crypto_bvalid  ),
+    .s_bready  (  Crypto_bready  ),
+    .s_bid     (  Crypto_bid     ),
+    .s_bresp   (  Crypto_bresp   ),
+    .s_arvalid (  Crypto_arvalid ),
+    .s_arready (  Crypto_arready ),
+    .s_araddr  (  Crypto_araddr  ),
+    .s_arid    (  Crypto_arid    ),
+    .s_arlen   (  Crypto_arlen   ),
+    .s_arsize  (  Crypto_arsize  ),
+    .s_arburst (  Crypto_arburst ),
+    .s_arlock  (  Crypto_arlock  ),
+    .s_arcache (  Crypto_arcache ),
+    .s_arprot  (  Crypto_arprot  ),
+    .s_rvalid  (  Crypto_rvalid  ),
+    .s_rready  (  Crypto_rready  ),
+    .s_rdata   (  Crypto_rdata   ),
+    .s_rid     (  Crypto_rid     ),
+    .s_rresp   (  Crypto_rresp   ),
+    .s_rlast   (  Crypto_rlast   )
 );
 
 
