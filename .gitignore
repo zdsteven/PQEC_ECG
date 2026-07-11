@@ -1,9 +1,13 @@
 fpga/*
 sim/*
-doc/*
 rtl/ip/PLL_2019_2/*
 obj/
 *.mif
 *.bin
-xsim.dir/
+*.bit
+*.sdb
+*.rlx
+rtl/xsim.dir/*
+xsim.dir/*
 xvlog.pb
+matmul_testdata/

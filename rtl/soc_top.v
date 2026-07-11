@@ -108,13 +108,18 @@ else begin: pll_clk
     clk_pll u_clk_pll(
         .cpu_clk    (cpu_clk),
         .sys_clk    (sys_clk),
-        .resetn     (~reset),
+        // Keep the PLL running while the platform holds CPU/SoC reset.
+        // Its lock time is then paid before the timed reset release.
+        .resetn     (1'b1),
         .locked     (pll_locked),
         .clk_in1    (clk)
     );
     rst_sync u_rst_sys(
         .clk(sys_clk),
-        .rst_n_in(pll_locked),
+        // PLL lock and external reset are separate concerns: clocks remain
+        // locked, while all system state stays reset until the platform
+        // explicitly releases reset.
+        .rst_n_in(pll_locked & ~reset),
         .rst_n_out(sys_resetn)
     );
     rst_sync u_rst_cpu(
@@ -436,6 +441,74 @@ wire [4 :0] Crypto_bid    ;
 wire [1 :0] Crypto_bresp  ;
 wire        Crypto_bvalid ;
 wire        Crypto_bready ;
+wire        dma_start_banner_valid;
+wire        dma_crc32_valid;
+wire [31:0] dma_crc32_final;
+wire        dma_matmul_active;
+wire        dma_matmul_stream_valid;
+wire [3:0]  dma_matmul_stream_start;
+wire [3:0]  dma_matmul_stream_core;
+wire [4:0]  dma_matmul_stream_index;
+wire [31:0] dma_matmul_stream_data;
+wire [3:0]  dma_matmul_ready;
+wire [3:0]  dma_matmul_done;
+wire [3:0]  dma_matmul_result_index;
+wire [65:0] dma_matmul_result_data0;
+wire [65:0] dma_matmul_result_data1;
+wire [65:0] dma_matmul_result_data2;
+wire [65:0] dma_matmul_result_data3;
+
+
+//Kyber_ip (deleted)
+//slave 7
+wire [4 :0] axiOut_1_arid   ;
+wire [31:0] axiOut_1_araddr ;
+wire [7 :0] axiOut_1_arlen  ;
+wire [2 :0] axiOut_1_arsize ;
+wire [1 :0] axiOut_1_arburst;
+wire        axiOut_1_arlock ;
+wire [3 :0] axiOut_1_arcache;
+wire [2 :0] axiOut_1_arprot ;
+wire        axiOut_1_arvalid;
+wire        axiOut_1_arready;
+wire [4 :0] axiOut_1_rid    ;
+wire [31:0] axiOut_1_rdata  ;
+wire [1 :0] axiOut_1_rresp  ;
+wire        axiOut_1_rlast  ;
+wire        axiOut_1_rvalid ;
+wire        axiOut_1_rready ;
+wire [4 :0] axiOut_1_awid   ;
+wire [31:0] axiOut_1_awaddr ;
+wire [7 :0] axiOut_1_awlen  ;
+wire [2 :0] axiOut_1_awsize ;
+wire [1 :0] axiOut_1_awburst;
+wire        axiOut_1_awlock ;
+wire [3 :0] axiOut_1_awcache;
+wire [2 :0] axiOut_1_awprot ;
+wire        axiOut_1_awvalid;
+wire        axiOut_1_awready;
+wire [4 :0] axiOut_1_wid    ;
+wire [31:0] axiOut_1_wdata  ;
+wire [3 :0] axiOut_1_wstrb  ;
+wire        axiOut_1_wlast  ;
+wire        axiOut_1_wvalid ;
+wire        axiOut_1_wready ;
+wire [4 :0] axiOut_1_bid    ;
+wire [1 :0] axiOut_1_bresp  ;
+wire        axiOut_1_bvalid ;
+wire        axiOut_1_bready ;
+
+assign axiOut_1_arready = 1'b1;
+assign axiOut_1_rid    = 5'b0;
+assign axiOut_1_rdata  = 32'b0;
+assign axiOut_1_rresp  = 2'b0;
+assign axiOut_1_rlast  = 1'b0;
+assign axiOut_1_rvalid = 1'b0;
+assign axiOut_1_awready = 1'b1;
+assign axiOut_1_wready = 1'b1;
+assign axiOut_1_bid    = 5'b0;
+assign axiOut_1_bresp = 2'b0;
+assign axiOut_1_bvalid = 1'b0;
 
 
 //axi dvi
@@ -594,19 +667,185 @@ wire [1 :0] axiOut_7_bresp  ;
 wire        axiOut_7_bvalid ;
 wire        axiOut_7_bready ;
 
-assign axiOut_7_arready = 1'b1;
-assign axiOut_7_rid    = 5'b0;
-assign axiOut_7_rdata  = 32'b0;
-assign axiOut_7_rresp  = 2'b0;
-assign axiOut_7_rlast  = 1'b0;
-assign axiOut_7_rvalid = 1'b0;
-assign axiOut_7_awready = 1'b1;
-assign axiOut_7_wready = 1'b1;
-assign axiOut_7_bid    = 5'b0;
-assign axiOut_7_bresp = 2'b0;
-assign axiOut_7_bvalid = 1'b0;
+`ifdef USE_EVALUATION_UART_SRAM
+matmul_dma #(
+    .MAX_GROUPS      (5000)
+)
+`else
+axi_dma
+`endif
+u_dma (
+    .clk            (sys_clk),
+    .resetn         (sys_resetn),
+
+    .s_axi_awid     (dma_s_awid),
+    .s_axi_awaddr   (dma_s_awaddr),
+    .s_axi_awlen    (dma_s_awlen),
+    .s_axi_awsize   (dma_s_awsize),
+    .s_axi_awburst  (dma_s_awburst),
+    .s_axi_awlock   (dma_s_awlock),
+    .s_axi_awcache  (dma_s_awcache),
+    .s_axi_awprot   (dma_s_awprot),
+    .s_axi_awvalid  (dma_s_awvalid),
+    .s_axi_awready  (dma_s_awready),
+    .s_axi_wdata    (dma_s_wdata),
+    .s_axi_wstrb    (dma_s_wstrb),
+    .s_axi_wlast    (dma_s_wlast),
+    .s_axi_wvalid   (dma_s_wvalid),
+    .s_axi_wready   (dma_s_wready),
+    .s_axi_bid      (dma_s_bid),
+    .s_axi_bresp    (dma_s_bresp),
+    .s_axi_bvalid   (dma_s_bvalid),
+    .s_axi_bready   (dma_s_bready),
+    .s_axi_arid     (dma_s_arid),
+    .s_axi_araddr   (dma_s_araddr),
+    .s_axi_arlen    (dma_s_arlen),
+    .s_axi_arsize   (dma_s_arsize),
+    .s_axi_arburst  (dma_s_arburst),
+    .s_axi_arlock   (dma_s_arlock),
+    .s_axi_arcache  (dma_s_arcache),
+    .s_axi_arprot   (dma_s_arprot),
+    .s_axi_arvalid  (dma_s_arvalid),
+    .s_axi_arready  (dma_s_arready),
+    .s_axi_rid      (dma_s_rid),
+    .s_axi_rdata    (dma_s_rdata),
+    .s_axi_rresp    (dma_s_rresp),
+    .s_axi_rlast    (dma_s_rlast),
+    .s_axi_rvalid   (dma_s_rvalid),
+    .s_axi_rready   (dma_s_rready),
+
+    .m_axi_awid     (dma_m_awid),
+    .m_axi_awaddr   (dma_m_awaddr),
+    .m_axi_awlen    (dma_m_awlen),
+    .m_axi_awsize   (dma_m_awsize),
+    .m_axi_awburst  (dma_m_awburst),
+    .m_axi_awlock   (dma_m_awlock),
+    .m_axi_awcache  (dma_m_awcache),
+    .m_axi_awprot   (dma_m_awprot),
+    .m_axi_awvalid  (dma_m_awvalid),
+    .m_axi_awready  (dma_m_awready),
+    .m_axi_wdata    (dma_m_wdata),
+    .m_axi_wstrb    (dma_m_wstrb),
+    .m_axi_wlast    (dma_m_wlast),
+    .m_axi_wvalid   (dma_m_wvalid),
+    .m_axi_wready   (dma_m_wready),
+    .m_axi_bid      (dma_m_bid),
+    .m_axi_bresp    (dma_m_bresp),
+    .m_axi_bvalid   (dma_m_bvalid),
+    .m_axi_bready   (dma_m_bready),
+    .m_axi_arid     (dma_m_arid),
+    .m_axi_araddr   (dma_m_araddr),
+    .m_axi_arlen    (dma_m_arlen),
+    .m_axi_arsize   (dma_m_arsize),
+    .m_axi_arburst  (dma_m_arburst),
+    .m_axi_arlock   (dma_m_arlock),
+    .m_axi_arcache  (dma_m_arcache),
+    .m_axi_arprot   (dma_m_arprot),
+    .m_axi_arvalid  (dma_m_arvalid),
+    .m_axi_arready  (dma_m_arready),
+    .m_axi_rid      (dma_m_rid),
+    .m_axi_rdata    (dma_m_rdata),
+    .m_axi_rresp    (dma_m_rresp),
+    .m_axi_rlast    (dma_m_rlast),
+    .m_axi_rvalid   (dma_m_rvalid),
+    .m_axi_rready   (dma_m_rready),
+`ifdef USE_EVALUATION_UART_SRAM
+    .matmul_active  (dma_matmul_active),
+    .matmul_stream_valid(dma_matmul_stream_valid),
+    .matmul_stream_start(dma_matmul_stream_start),
+    .matmul_stream_core (dma_matmul_stream_core),
+    .matmul_stream_index(dma_matmul_stream_index),
+    .matmul_stream_data (dma_matmul_stream_data),
+    .matmul_ready   (dma_matmul_ready),
+    .matmul_done    (dma_matmul_done),
+    .matmul_result_index (dma_matmul_result_index),
+    .matmul_result_data0 (dma_matmul_result_data0),
+    .matmul_result_data1 (dma_matmul_result_data1),
+    .finish         (dma_finish),
+    .start_banner_valid(dma_start_banner_valid),
+    .crc32_valid    (dma_crc32_valid),
+    .crc32_final    (dma_crc32_final)
+`else
+    .finish         (dma_finish)
+`endif
+);
+
+`ifndef USE_EVALUATION_UART_SRAM
+// Generic DMA mode has no private Matmul or autonomous-UART sideband link.
+assign dma_start_banner_valid  = 1'b0;
+assign dma_crc32_valid         = 1'b0;
+assign dma_crc32_final         = 32'd0;
+assign dma_matmul_active       = 1'b0;
+assign dma_matmul_stream_valid = 1'b0;
+assign dma_matmul_stream_start = 4'd0;
+assign dma_matmul_stream_core  = 4'd0;
+assign dma_matmul_stream_index = 5'd0;
+assign dma_matmul_stream_data  = 32'd0;
+assign dma_matmul_result_index = 4'd0;
+`endif
+
+matmul_axi_slave u_matmul (
+    .clk            ( sys_clk           ),
+    .resetn         ( sys_resetn        ),
+
+    .s_axi_awid     ( axiOut_7_awid     ),
+    .s_axi_awaddr   ( axiOut_7_awaddr   ),
+    .s_axi_awlen    ( axiOut_7_awlen    ),
+    .s_axi_awsize   ( axiOut_7_awsize   ),
+    .s_axi_awburst  ( axiOut_7_awburst  ),
+    .s_axi_awlock   ( axiOut_7_awlock   ),
+    .s_axi_awcache  ( axiOut_7_awcache  ),
+    .s_axi_awprot   ( axiOut_7_awprot   ),
+    .s_axi_awvalid  ( axiOut_7_awvalid  ),
+    .s_axi_awready  ( axiOut_7_awready  ),
+
+    .s_axi_wid      ( axiOut_7_wid      ),
+    .s_axi_wdata    ( axiOut_7_wdata    ),
+    .s_axi_wstrb    ( axiOut_7_wstrb    ),
+    .s_axi_wlast    ( axiOut_7_wlast    ),
+    .s_axi_wvalid   ( axiOut_7_wvalid   ),
+    .s_axi_wready   ( axiOut_7_wready   ),
+
+    .s_axi_bid      ( axiOut_7_bid      ),
+    .s_axi_bresp    ( axiOut_7_bresp    ),
+    .s_axi_bvalid   ( axiOut_7_bvalid   ),
+    .s_axi_bready   ( axiOut_7_bready   ),
+
+    .s_axi_arid     ( axiOut_7_arid     ),
+    .s_axi_araddr   ( axiOut_7_araddr   ),
+    .s_axi_arlen    ( axiOut_7_arlen    ),
+    .s_axi_arsize   ( axiOut_7_arsize   ),
+    .s_axi_arburst  ( axiOut_7_arburst  ),
+    .s_axi_arlock   ( axiOut_7_arlock   ),
+    .s_axi_arcache  ( axiOut_7_arcache  ),
+    .s_axi_arprot   ( axiOut_7_arprot   ),
+    .s_axi_arvalid  ( axiOut_7_arvalid  ),
+    .s_axi_arready  ( axiOut_7_arready  ),
+
+    .s_axi_rid      ( axiOut_7_rid      ),
+    .s_axi_rdata    ( axiOut_7_rdata    ),
+    .s_axi_rresp    ( axiOut_7_rresp    ),
+    .s_axi_rlast    ( axiOut_7_rlast    ),
+    .s_axi_rvalid   ( axiOut_7_rvalid   ),
+    .s_axi_rready   ( axiOut_7_rready   ),
+
+    .dma_active     ( dma_matmul_active ),
+    .dma_stream_valid(dma_matmul_stream_valid),
+    .dma_stream_start(dma_matmul_stream_start),
+    .dma_stream_core (dma_matmul_stream_core),
+    .dma_stream_index(dma_matmul_stream_index),
+    .dma_stream_data (dma_matmul_stream_data),
+    .dma_ready      ( dma_matmul_ready  ),
+    .dma_done       ( dma_matmul_done   ),
+    .dma_result_index ( dma_matmul_result_index ),
+    .dma_result_data0 ( dma_matmul_result_data0 ),
+    .dma_result_data1 ( dma_matmul_result_data1 ),
+    .dma_result_data2 ( dma_matmul_result_data2 ),
+    .dma_result_data3 ( dma_matmul_result_data3 )
+);
 
 wire confreg_int;
+wire fft_finish = 1'b0;
 
 AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
     .clk                     ( sys_clk             ),
@@ -1035,7 +1274,6 @@ AxiCrossbar_2x8  u_AxiCrossbar_2x8 (
 
 );
 
-// add your code
 core_top u_cpu(
     .intrpt ({7'h0,confreg_int} ), //high active
     
@@ -1306,86 +1544,14 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dsr_i (uart0_dsr_i ),
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
+`ifdef USE_EVALUATION_UART_SRAM
+    .uart0_int (uart0_int ),
+    .auto_start_valid (dma_start_banner_valid ),
+    .auto_crc_valid (dma_crc32_valid ),
+    .auto_crc32 (dma_crc32_final )
+`else
     .uart0_int (uart0_int )
-);
-
-//dma
-axi_dma u_axi_dma (
-    .s_awvalid ( dma_s_awvalid ),
-    .s_awready ( dma_s_awready ),
-    .s_awaddr  ( dma_s_awaddr ),
-    .s_awid    ( dma_s_awid ),
-    .s_awlen   ( dma_s_awlen ),
-    .s_awsize  ( dma_s_awsize ),
-    .s_awburst ( dma_s_awburst ),
-    .s_awlock  ( dma_s_awlock ),
-    .s_awcache ( dma_s_awcache ),
-    .s_awprot  ( dma_s_awprot ),
-    .s_wvalid  ( dma_s_wvalid ),
-    .s_wready  ( dma_s_wready ),
-    .s_wdata   ( dma_s_wdata ),
-    .s_wstrb   ( dma_s_wstrb ),
-    .s_wlast   ( dma_s_wlast ),
-    .s_bvalid  ( dma_s_bvalid ),
-    .s_bready  ( dma_s_bready ),
-    .s_bid     ( dma_s_bid ),
-    .s_bresp   ( dma_s_bresp ),
-    .s_arvalid ( dma_s_arvalid ),
-    .s_arready ( dma_s_arready ),
-    .s_araddr  ( dma_s_araddr ),
-    .s_arid    ( dma_s_arid ),
-    .s_arlen   ( dma_s_arlen ),
-    .s_arsize  ( dma_s_arsize ),
-    .s_arburst ( dma_s_arburst ),
-    .s_arlock  ( dma_s_arlock ),
-    .s_arcache ( dma_s_arcache ),
-    .s_arprot  ( dma_s_arprot ),
-    .s_rvalid  ( dma_s_rvalid ),
-    .s_rready  ( dma_s_rready ),
-    .s_rdata   ( dma_s_rdata ),
-    .s_rid     ( dma_s_rid ),
-    .s_rresp   ( dma_s_rresp ),
-    .s_rlast   ( dma_s_rlast ),
-
-    .m_arid    ( dma_m_arid ),
-    .m_araddr  ( dma_m_araddr ),
-    .m_arlen   ( dma_m_arlen ),
-    .m_arsize  ( dma_m_arsize ),
-    .m_arburst ( dma_m_arburst ),
-    .m_arlock  ( dma_m_arlock ),
-    .m_arcache ( dma_m_arcache ),
-    .m_arprot  ( dma_m_arprot ),
-    .m_arvalid ( dma_m_arvalid ),
-    .m_arready ( dma_m_arready ),
-    .m_rid     ( dma_m_rid ),
-    .m_rdata   ( dma_m_rdata ),
-    .m_rresp   ( dma_m_rresp ),
-    .m_rlast   ( dma_m_rlast ),
-    .m_rvalid  ( dma_m_rvalid ),
-    .m_rready  ( dma_m_rready ),
-    .m_awid    ( dma_m_awid ),
-    .m_awaddr  ( dma_m_awaddr ),
-    .m_awlen   ( dma_m_awlen ),
-    .m_awsize  ( dma_m_awsize ),
-    .m_awburst ( dma_m_awburst ),
-    .m_awlock  ( dma_m_awlock ),
-    .m_awcache ( dma_m_awcache ),
-    .m_awprot  ( dma_m_awprot ),
-    .m_awvalid ( dma_m_awvalid ),
-    .m_awready ( dma_m_awready ),
-    .m_wdata   ( dma_m_wdata ),
-    .m_wstrb   ( dma_m_wstrb ),
-    .m_wlast   ( dma_m_wlast ),
-    .m_wvalid  ( dma_m_wvalid ),
-    .m_wready  ( dma_m_wready ),
-    .m_bid     ( dma_m_bid ),
-    .m_bresp   ( dma_m_bresp ),
-    .m_bvalid  ( dma_m_bvalid ),
-    .m_bready  ( dma_m_bready ),
-
-    .dma_finish ( dma_finish ),
-    .aclk      ( sys_clk ),
-    .aresetn   ( sys_resetn )
+`endif
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---

@@ -1,6 +1,8 @@
 TARGET = user-sample
 
 CFLAGS += -O3 -g
+MATMUL_GROUP_NUM ?= 5000
+CFLAGS += -DMATMUL_GROUP_NUM=$(MATMUL_GROUP_NUM)
 
 C_SRCS := $(wildcard ./*.c )
 
