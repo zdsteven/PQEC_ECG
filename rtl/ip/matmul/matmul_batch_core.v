@@ -184,3 +184,69 @@ always @(posedge clk) begin
     end
 end
 endmodule
+
+// Area-oriented implementation for generic SoC use.  Four DSP multipliers
+// match the four products launched by each B word, while the 16 accumulators
+// retain the same streaming protocol as the evaluation core.
+module matmul_batch_core_dsp (
+    input clk, input resetn, input start,
+    input stream_valid, input [4:0] stream_index, input [31:0] stream_data,
+    output reg busy, output reg done,
+    input [3:0] result_index, output [65:0] result_data
+);
+reg [31:0] a_data [0:15];
+reg [65:0] accumulator [0:15];
+reg [65:0] result_snapshot [0:15];
+wire input_fire = busy && stream_valid;
+wire input_is_b = stream_index[4];
+wire [1:0] input_k = stream_index[3:2];
+wire [1:0] input_j = stream_index[1:0];
+
+// Deliberate '*' operators: generic mode permits DSP inference.  Keeping four
+// lanes is the minimum needed to accept one B word every cycle without adding
+// a ready/backpressure signal to the established interface.
+wire [63:0] product0 = a_data[{2'd0,input_k}] * stream_data;
+wire [63:0] product1 = a_data[{2'd1,input_k}] * stream_data;
+wire [63:0] product2 = a_data[{2'd2,input_k}] * stream_data;
+wire [63:0] product3 = a_data[{2'd3,input_k}] * stream_data;
+assign result_data = result_snapshot[result_index];
+
+integer i;
+always @(posedge clk) begin
+    if (!resetn) begin
+        busy <= 1'b0;
+        done <= 1'b0;
+        for (i=0; i<16; i=i+1) begin
+            a_data[i] <= 32'd0;
+            accumulator[i] <= 66'd0;
+            result_snapshot[i] <= 66'd0;
+        end
+    end else begin
+        done <= 1'b0;
+        if (start && !busy) begin
+            busy <= 1'b1;
+            for (i=0; i<16; i=i+1)
+                accumulator[i] <= 66'd0;
+            if (stream_valid && !stream_index[4])
+                a_data[stream_index[3:0]] <= stream_data;
+        end else if (input_fire && !input_is_b) begin
+            a_data[stream_index[3:0]] <= stream_data;
+        end else if (input_fire) begin
+            accumulator[{2'd0,input_j}] <= accumulator[{2'd0,input_j}] + {2'd0,product0};
+            accumulator[{2'd1,input_j}] <= accumulator[{2'd1,input_j}] + {2'd0,product1};
+            accumulator[{2'd2,input_j}] <= accumulator[{2'd2,input_j}] + {2'd0,product2};
+            accumulator[{2'd3,input_j}] <= accumulator[{2'd3,input_j}] + {2'd0,product3};
+            if (stream_index == 5'd31) begin
+                for (i=0; i<16; i=i+1)
+                    result_snapshot[i] <= accumulator[i];
+                result_snapshot[3]  <= accumulator[3]  + {2'd0,product0};
+                result_snapshot[7]  <= accumulator[7]  + {2'd0,product1};
+                result_snapshot[11] <= accumulator[11] + {2'd0,product2};
+                result_snapshot[15] <= accumulator[15] + {2'd0,product3};
+                busy <= 1'b0;
+                done <= 1'b1;
+            end
+        end
+    end
+end
+endmodule
