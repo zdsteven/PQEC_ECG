@@ -1556,6 +1556,7 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
 );
 
 //ecg
+`ifndef USE_EVALUATION_UART_SRAM
 axi_ECG_top u_axi_ECG_top (
     .s_awvalid ( ecg_awvalid ),
     .s_awaddr ( ecg_awaddr ),
@@ -1597,6 +1598,20 @@ axi_ECG_top u_axi_ECG_top (
     .s_rlast ( ecg_rlast ),
     .ecg_finish ( ecg_finish )
 );
+`else
+assign ecg_awready = 1'b0;
+assign ecg_wready  = 1'b0;
+assign ecg_bvalid  = 1'b0;
+assign ecg_bid     = 5'b0;
+assign ecg_bresp   = 2'b0;
+assign ecg_arready = 1'b0;
+assign ecg_rvalid  = 1'b0;
+assign ecg_rdata   = 32'b0;
+assign ecg_rid     = 5'b0;
+assign ecg_rresp   = 2'b0;
+assign ecg_rlast   = 1'b0;
+assign ecg_finish  = 1'b0;
+`endif
 
 //dvi
 axi_dvi u_axi_dvi (
@@ -1648,6 +1663,7 @@ axi_dvi u_axi_dvi (
 );
 
 //Crypto_ip
+`ifndef USE_EVALUATION_UART_SRAM
 Crypto u_Crypto(
     .aclk      (  sys_clk       ),
     .aresetn   (  sys_resetn    ),
@@ -1687,6 +1703,19 @@ Crypto u_Crypto(
     .s_rresp   (  Crypto_rresp   ),
     .s_rlast   (  Crypto_rlast   )
 );
+`else
+assign Crypto_awready = 1'b0;
+assign Crypto_wready  = 1'b0;
+assign Crypto_bvalid  = 1'b0;
+assign Crypto_bid     = 5'b0;
+assign Crypto_bresp   = 2'b0;
+assign Crypto_arready = 1'b0;
+assign Crypto_rvalid  = 1'b0;
+assign Crypto_rdata   = 32'b0;
+assign Crypto_rid     = 5'b0;
+assign Crypto_rresp   = 2'b0;
+assign Crypto_rlast   = 1'b0;
+`endif
 
 
 endmodule
