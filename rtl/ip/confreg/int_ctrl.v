@@ -1,5 +1,5 @@
 module int_ctrl #(
-    parameter N = 5  // 中断源数
+    parameter N = 6
 ) (
     input sys_clk,
     input sys_resetn,
@@ -14,9 +14,9 @@ module int_ctrl #(
     output [N-1:0] int_state,
     output int_out
 );
-    reg [N-1:0] int_edge_new;
-    reg [N-1:0] int_pol_new;
-    reg [N-1:0] int_in_prev;
+    reg [3:0] int_edge_new;
+    reg [3:0] int_pol_new;
+    reg [3:0] int_in_prev;
 
 
     reg [N-1:0] int_state_reg;  //中断状态寄存器
@@ -50,7 +50,7 @@ module int_ctrl #(
 
     genvar i;
     generate
-        for (i = 0; i < N - 1; i = i + 1) begin : gen_int_ctrl
+        for (i = 0; i < 4; i = i + 1) begin : gen_int_ctrl
             always @(posedge sys_clk or negedge sys_resetn) begin
                 if (!sys_resetn) begin
                     // 复位状态
@@ -76,6 +76,15 @@ module int_ctrl #(
             int_state_reg[4] <= 1'b0;
         end else begin
             int_state_reg[4] <= int_in[4];
+        end
+    end
+
+    // UART is level-sensitive and clears when software drains the RX FIFO.
+    always @(posedge sys_clk or negedge sys_resetn) begin
+        if (!sys_resetn) begin
+            int_state_reg[5] <= 1'b0;
+        end else begin
+            int_state_reg[5] <= int_in[5];
         end
     end
     assign int_state = (int_state_reg & int_en);

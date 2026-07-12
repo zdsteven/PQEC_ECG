@@ -1549,6 +1549,7 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
     .touch_btn ( touch_btn ),
     .dma_finish ( dma_finish ),
     .ecg_finish ( ecg_finish ),
+    .uart_int ( uart0_int ),
     .led ( leds ),
     .dpy0 ( dpy0 ),
     .dpy1 ( dpy1 ),

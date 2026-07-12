@@ -91,6 +91,7 @@ module confreg #(
     input      [3 :0] touch_btn,
     input             dma_finish,
     input             ecg_finish,
+    input             uart_int,
     output            confreg_int
 );
 
@@ -101,6 +102,7 @@ reg  [31:0] simu_flag;
 
 reg [31:0] confreg_int_en,confreg_int_edge,confreg_int_pol,confreg_int_clr,confreg_int_set;
 wire [31:0] confreg_int_state;
+assign confreg_int_state[31:6] = 26'd0;
 
 reg [31:0] sys_timer,sys_timer_cmp;
 reg sys_timer_en;
@@ -378,18 +380,18 @@ wire write_confreg_int_clr  = w_enter & (buf_addr[15:0]==`CONFREG_INT_ADDR + 16'
         end
     end
 
-    int_ctrl u_int_ctrl (
+    int_ctrl #(.N(6)) u_int_ctrl (
         .sys_clk(aclk),
         .sys_resetn(aresetn),
         .cpu_clk(cpu_clk),
         .cpu_resetn(cpu_resetn),
 
-        .int_in({timer_int, touch_btn_data}),  // bit4=定时, bit3-0=按键 
-        .int_en(confreg_int_en[4:0]),
-        .int_edge(confreg_int_edge[4:0]),
-        .int_pol(confreg_int_pol[4:0]),
-        .int_clr(confreg_int_clr[4:0]),
-        .int_state(confreg_int_state[4:0]),
+        .int_in({uart_int, timer_int, touch_btn_data}),
+        .int_en(confreg_int_en[5:0]),
+        .int_edge(confreg_int_edge[5:0]),
+        .int_pol(confreg_int_pol[5:0]),
+        .int_clr(confreg_int_clr[5:0]),
+        .int_state(confreg_int_state[5:0]),
         .int_out(confreg_int)  // 输出至处理器核的intrpt[0]
     );
 //--------------------------------{int_ctrl}end-----------------------------//
