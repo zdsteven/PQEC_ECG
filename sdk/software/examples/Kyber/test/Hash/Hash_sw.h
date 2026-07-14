@@ -53,14 +53,12 @@ void shake256(uint8_t *out, size_t outlen, const uint8_t *in, size_t inlen);
 void sha3_256(uint8_t h[32], const uint8_t *in, size_t inlen);
 void sha3_512(uint8_t h[64], const uint8_t *in, size_t inlen);
 
-void kyber_shake128_absorb(keccak_state *state,
-                           const uint8_t seed[KYBER_SYMBYTES],
-                           uint8_t x, uint8_t y);
+void kyber_shake128_absorb(keccak_state *state, const uint8_t seed[KYBER_SYMBYTES], uint8_t x, uint8_t y);
 void kyber_shake256_prf(uint8_t *out, size_t outlen,
                         const uint8_t key[KYBER_SYMBYTES], uint8_t nonce);
 void kyber_shake256_rkprf(uint8_t out[KYBER_SSBYTES],
-                          const uint8_t key[KYBER_SYMBYTES],
-                          const uint8_t input[KYBER_CIPHERTEXTBYTES]);
+                        const uint8_t key[KYBER_SYMBYTES],
+                        const uint8_t input[KYBER_CIPHERTEXTBYTES]);
 
 #define hash_h(OUT, IN, INBYTES) sha3_256(OUT, IN, INBYTES)
 #define hash_g(OUT, IN, INBYTES) sha3_512(OUT, IN, INBYTES)

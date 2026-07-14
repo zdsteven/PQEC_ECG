@@ -49,6 +49,8 @@ C_SRCS   += $(COMMON_DIR)/drivers/aes/aes_hardware.c \
 			$(COMMON_DIR)/drivers/ecg.c \
 			$(COMMON_DIR)/drivers/led.c \
 			$(COMMON_DIR)/drivers/seg7.c \
+			$(COMMON_DIR)/drivers/random_api.c \
+			$(COMMON_DIR)/drivers/uart_api.c\
 			$(COMMON_DIR)/drivers/matmul.c\
 			$(COMMON_DIR)/drivers/matmul_dma.c \
 

@@ -120,7 +120,7 @@ int main(int argc, char **argv)
 
     printf("AES-%u CTR, data=%u bytes\n", AES_KEYLEN * 8u, (unsigned)AES_DATA_BYTES);
     printf("software: cycles=%lu us=%lu\n", software_cycles, cycles_to_us(software_cycles));
-    printf("hardware: cycles=%lu us=%lu dma_result=%d\n", hardware_cycles, cycles_to_us(hardware_cycles), dma_result);
+    printf("hardware: cycles=%lu us=%lu\n", hardware_cycles, cycles_to_us(hardware_cycles));
 
     if (dma_result != 0) {
         printf("AES hardware test FAIL: DMA error %d\n", dma_result);

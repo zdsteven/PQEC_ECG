@@ -4,9 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// CTR mode only. Define AES256=1 at compile time to select AES-256.
+// CTR mode only. AES-256 is the default; define AES128=1 to select AES-128.
 #if !defined(AES128) && !defined(AES256)
-#define AES128 1
+#define AES256 1
 #endif
 
 #define AES_BLOCKLEN 16
@@ -47,6 +47,9 @@ void AES_init_ctx_iv_software(struct AES_ctx* ctx, const uint8_t* key, const uin
 void AES_ctx_set_iv_software(struct AES_ctx* ctx, const uint8_t* iv);
 
 void AES_CTR_software(struct AES_ctx* ctx, uint8_t* buf, size_t length);
+void AES_CTR_software_message(const uint8_t* key, const uint8_t nonce[8],
+                                uint32_t message_index, uint8_t* buf,
+                                size_t length);
 
 void AES_init_hardware(const uint8_t* key);
 void AES_set_nonce_hardware(const uint32_t nonce_key[2], uint32_t message_index);

@@ -106,15 +106,17 @@ void crypto_kem_init()
 int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins)
 {
     unsigned int i;
-    uint8_t buf[2*KYBER_SYMBYTES] __attribute__((aligned(4)));
+    uint8_t hash_input[48] __attribute__((aligned(16)));
+    uint8_t buf[2*KYBER_SYMBYTES] __attribute__((aligned(16)));
     const uint8_t *publicseed = buf;
     const uint8_t *noiseseed = buf+KYBER_SYMBYTES;
     polyvec pkpv, skpv;
 
-    memcpy(buf, coins, KYBER_SYMBYTES);
-    buf[KYBER_SYMBYTES] = KYBER_K;
+    memcpy(hash_input, coins, KYBER_SYMBYTES);
+    hash_input[KYBER_SYMBYTES] = KYBER_K;
+    flush_cache_lines(hash_input, KYBER_SYMBYTES + 1u);
     flush_cache_lines(buf, 64u);
-    hash_g_33(buf, buf);
+    hash_g_33(buf, hash_input);
     
     //As + e
     for (i=0;i<KYBER_K;i++) {
@@ -127,9 +129,9 @@ int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins)
         //e -> ntt
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_NTT_INTT_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample s
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_PRF1);
         //ntt e
-        while (DMA_Is_Busy());
         ntt_start();
         //prepare a0
         rej_prepare(publicseed, 0, i);
@@ -137,6 +139,7 @@ int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins)
         while (KYBER_NTT_INTT_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_NTT_INTT_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample a0
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_REJECTION);
         //polyvec_fadd e
         polyvec_fadd_from_ntt_intt(i, 0);
@@ -148,10 +151,10 @@ int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins)
         //a0 -> basemul
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample a1
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_REJECTION);
         //s readback
         flush_cache_lines(skpv.vec[i].coeffs, KYBER_POLY_BYTES_HW);
-        while (DMA_Is_Busy());
         DMA_Transfer_Blocking(
             KYBER_NTT_INTT_BASE_ADDR, 
             (uint32_t)(uintptr_t)skpv.vec[i].coeffs, 
@@ -167,12 +170,12 @@ int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins)
         //a1 -> basemul
         while (KYBER_POLYVEC_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
+        while (DMA_Is_Busy());
         #if KYBER_K != 2
         //sample a2
         hash_iterate(HASH_MODE_REJECTION);
         #endif
         //basemul a1*s
-        while (DMA_Is_Busy());
         basemul_start(1);
 
         #if KYBER_K != 2
@@ -185,11 +188,11 @@ int crypto_kem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *coins)
         //a2 -> basemul
         while (KYBER_POLYVEC_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
+        while (DMA_Is_Busy());
         #if KYBER_K != 3
         //sample a3
         hash_iterate(HASH_MODE_REJECTION);
         #endif
-        while (DMA_Is_Busy());
         basemul_start(2);
 
         #if KYBER_K != 3
@@ -281,18 +284,18 @@ int crypto_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk, const uin
         //y -> ntt
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_NTT_INTT_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample a0
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_REJECTION);
         //ntt y
-        while (DMA_Is_Busy());
         ntt_start();
         //prepare a1
         rej_prepare(seed, i, 1);
         //a0 -> basemul
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample a1
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_REJECTION);
         //basemul a0*s
-        while (DMA_Is_Busy());
         basemul_start(0);
         #if KYBER_K != 2
         //prepare a2
@@ -303,12 +306,12 @@ int crypto_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk, const uin
         //a1 -> basemul
         while (KYBER_POLYVEC_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
+        while (DMA_Is_Busy());
         #if KYBER_K != 2
         //sample a2
         hash_iterate(HASH_MODE_REJECTION);
         #endif
         //basemul a1*s
-        while (DMA_Is_Busy());
         basemul_start(1);
 
         #if KYBER_K != 2
@@ -321,11 +324,11 @@ int crypto_kem_enc_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk, const uin
         //a2 -> basemul
         while (KYBER_POLYVEC_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
+        while (DMA_Is_Busy());
         #if KYBER_K != 3
         //sample a3
         hash_iterate(HASH_MODE_REJECTION);
         #endif
-        while (DMA_Is_Busy());
         basemul_start(2);
 
         #if KYBER_K != 3
@@ -522,18 +525,18 @@ int crypto_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *sk)
         //y -> ntt
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_NTT_INTT_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample a0
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_REJECTION);
         //ntt y
-        while (DMA_Is_Busy());
         ntt_start();
         //prepare a1
         rej_prepare(seed, i, 1);
         //a0 -> basemul
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
         //sample a1
+        while (DMA_Is_Busy());
         hash_iterate(HASH_MODE_REJECTION);
         //basemul a0*s
-        while (DMA_Is_Busy());
         basemul_start(0);
         #if KYBER_K != 2
         //prepare a2
@@ -544,12 +547,12 @@ int crypto_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *sk)
         //a1 -> basemul
         while (KYBER_POLYVEC_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
+        while (DMA_Is_Busy());
         #if KYBER_K != 2
         //sample a2
         hash_iterate(HASH_MODE_REJECTION);
         #endif
         //basemul a1*s
-        while (DMA_Is_Busy());
         basemul_start(1);
 
         #if KYBER_K != 2
@@ -562,11 +565,11 @@ int crypto_kem_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *sk)
         //a2 -> basemul
         while (KYBER_POLYVEC_IS_BUZY);
         DMA_Transfer_Async(KYBER_HASH_DATA_BASE_ADDR, KYBER_BASEMUL_BASE_ADDR, KYBER_POLY_BYTES_HW);
+        while (DMA_Is_Busy());
         #if KYBER_K != 3
         //sample a3
         hash_iterate(HASH_MODE_REJECTION);
         #endif
-        while (DMA_Is_Busy());
         basemul_start(2);
 
         #if KYBER_K != 3

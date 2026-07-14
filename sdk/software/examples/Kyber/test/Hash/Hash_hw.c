@@ -86,15 +86,12 @@ void hash_g_hw(uint8_t output[64], const uint8_t *input, size_t input_length)
     if (input_length == KYBER_SYMBYTES + 1u) {
         flush_cache_lines(input, 32u);
         hash_timing_start();
-        DMA_Transfer_Blocking((uint32_t)(uintptr_t)input,
-                              HASH_HW_DATA_BASE_ADDR, 32u, 0);
-        RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u,
-                 (uint32_t)input[32] | 0x00000600u);
+        DMA_Transfer_Blocking((uint32_t)(uintptr_t)input, HASH_HW_DATA_BASE_ADDR, 32u, 0);
+        RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u, (uint32_t)input[32] | 0x00000600u);
     } else {
         flush_cache_lines(input, 64u);
         hash_timing_start();
-        DMA_Transfer_Blocking((uint32_t)(uintptr_t)input,
-                              HASH_HW_DATA_BASE_ADDR, 64u, 0);
+        DMA_Transfer_Blocking((uint32_t)(uintptr_t)input, HASH_HW_DATA_BASE_ADDR, 64u, 0);
         RegWrite(HASH_HW_DATA_BASE_ADDR + 16u * 4u, 0x00000006u);
     }
     RegWrite(HASH_HW_DATA_BASE_ADDR + 17u * 4u, 0x80000000u);
@@ -120,8 +117,7 @@ void hash_h_hw(uint8_t output[32], const uint8_t input[KYBER_PUBLICKEYBYTES])
     }
 
     input += 5u * SHA3_256_RATE;
-    DMA_Transfer_Blocking((uint32_t)(uintptr_t)input,
-                          HASH_HW_DATA_BASE_ADDR, 120u, 0);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)input, HASH_HW_DATA_BASE_ADDR, 120u, 0);
     RegWrite(HASH_HW_DATA_BASE_ADDR + 30u * 4u, 0x00000006u);
     RegWrite(HASH_HW_DATA_BASE_ADDR + 33u * 4u, 0x80000000u);
     hash_iterate(HASH_HW_MODE_NORMAL);
@@ -142,16 +138,13 @@ void gen_matrix_hw(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transpose
     for (i = 0; i < KYBER_K; ++i) {
         for (j = 0; j < KYBER_K; ++j) {
             hash_reset();
-            DMA_Transfer_Blocking((uint32_t)(uintptr_t)seed,
-                                  HASH_HW_DATA_BASE_ADDR,
-                                  KYBER_SYMBYTES, 0);
+            DMA_Transfer_Blocking((uint32_t)(uintptr_t)seed, HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
             if (transposed) {
                 suffix = i | (j << 8);
             } else {
                 suffix = j | (i << 8);
             }
-            RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u,
-                     suffix | 0x001f0000u);
+            RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u, suffix | 0x001f0000u);
             RegWrite(HASH_HW_DATA_BASE_ADDR + 41u * 4u, 0x80000000u);
             hash_iterate(HASH_HW_MODE_REJECTION);
             hash_dma_readback(HASH_HW_DATA_BASE_ADDR, &a[i].vec[j],
@@ -171,10 +164,8 @@ void poly_getnoise_eta1_hw(poly *r,
     flush_cache_lines(seed, KYBER_SYMBYTES);
     hash_timing_start();
 
-    DMA_Transfer_Blocking((uint32_t)(uintptr_t)seed,
-                          HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
-    RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u,
-             (uint32_t)nonce | 0x00001f00u);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)seed, HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
+    RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u, (uint32_t)nonce | 0x00001f00u);
     RegWrite(HASH_HW_DATA_BASE_ADDR + 33u * 4u, 0x80000000u);
     hash_iterate(HASH_HW_MODE_CBD3);
     hash_timing_stop();
@@ -196,10 +187,8 @@ void poly_getnoise_eta2_hw(poly *r,
     flush_cache_lines(seed, KYBER_SYMBYTES);
     hash_timing_start();
 
-    DMA_Transfer_Blocking((uint32_t)(uintptr_t)seed,
-                          HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
-    RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u,
-             (uint32_t)nonce | 0x00001f00u);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)seed, HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
+    RegWrite(HASH_HW_DATA_BASE_ADDR + 8u * 4u, (uint32_t)nonce | 0x00001f00u);
     RegWrite(HASH_HW_DATA_BASE_ADDR + 33u * 4u, 0x80000000u);
     hash_iterate(HASH_HW_MODE_CBD2);
     hash_timing_stop();
@@ -222,10 +211,8 @@ void rkprf_hw(uint8_t output[KYBER_SSBYTES],
     flush_cache_lines(input, KYBER_CIPHERTEXTBYTES);
     hash_timing_start();
 
-    DMA_Transfer_Blocking((uint32_t)(uintptr_t)key,
-                          HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
-    DMA_Transfer_Blocking((uint32_t)(uintptr_t)input,
-                          HASH_HW_DATA_BASE_ADDR + KYBER_SYMBYTES, 104u, 0);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)key, HASH_HW_DATA_BASE_ADDR, KYBER_SYMBYTES, 0);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)input, HASH_HW_DATA_BASE_ADDR + KYBER_SYMBYTES, 104u, 0);
     hash_iterate(HASH_HW_MODE_NORMAL);
 
     for (block = 0; block < 4u; ++block) {
@@ -236,8 +223,7 @@ void rkprf_hw(uint8_t output[KYBER_SSBYTES],
     }
 
     input += 648u;
-    DMA_Transfer_Blocking((uint32_t)(uintptr_t)input,
-                          HASH_HW_DATA_BASE_ADDR, 120u, 0);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)input, HASH_HW_DATA_BASE_ADDR, 120u, 0);
     RegWrite(HASH_HW_DATA_BASE_ADDR + 30u * 4u, 0x0000001fu);
     RegWrite(HASH_HW_DATA_BASE_ADDR + 33u * 4u, 0x80000000u);
     hash_iterate(HASH_HW_MODE_NORMAL);

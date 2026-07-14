@@ -19,6 +19,7 @@
 #define SHA3_256_RATE           136
 #define SHA3_512_RATE           72
 #define XOF_BLOCKBYTES          SHAKE128_RATE
+#define PQEC_SESSION_KEY_MATERIAL_BYTES 80u
 
 #define KYBER_POLY_BYTES_HW     512u
 #define KYBER_POLYVEC_RESET_NUM KYBER_K - 2
@@ -45,6 +46,7 @@ void hash_h(uint8_t output[32], const uint8_t input[KYBER_PUBLICKEYBYTES]);
 void rkprf(uint8_t output[KYBER_SSBYTES],
             const uint8_t key[KYBER_SYMBYTES], 
             const uint8_t input[KYBER_CIPHERTEXTBYTES]);
+void pqec_session_kdf(uint8_t output[PQEC_SESSION_KEY_MATERIAL_BYTES], const uint8_t shared_secret[KYBER_SSBYTES]);
 
 
 

@@ -237,3 +237,24 @@ void AES_CTR_software(struct AES_ctx *ctx, uint8_t *buf, size_t length)
         buf[i] = (buf[i] ^ buffer[bi]);
     }
 }
+
+void AES_CTR_software_message(const uint8_t *key, const uint8_t nonce[8],
+                              uint32_t message_index, uint8_t *buf,
+                              size_t length)
+{
+    struct AES_ctx context;
+    uint8_t iv[AES_BLOCKLEN];
+
+    memcpy(iv, nonce, 8u);
+    iv[8] = (uint8_t)(message_index >> 24);
+    iv[9] = (uint8_t)(message_index >> 16);
+    iv[10] = (uint8_t)(message_index >> 8);
+    iv[11] = (uint8_t)message_index;
+    iv[12] = 0u;
+    iv[13] = 0u;
+    iv[14] = 0u;
+    iv[15] = 2u;
+
+    AES_init_ctx_iv_software(&context, key, iv);
+    AES_CTR_software(&context, buf, length);
+}

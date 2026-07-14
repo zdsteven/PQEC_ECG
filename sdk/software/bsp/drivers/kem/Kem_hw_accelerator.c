@@ -16,6 +16,20 @@ static void flush_cache_lines(const void *buffer, uint32_t byte_length)
     }
 }
 
+static void invalidate_cache_lines(const void *buffer, uint32_t byte_length)
+{
+    uintptr_t address;
+    uintptr_t first;
+    uintptr_t last;
+    uintptr_t line_bytes = (uintptr_t)1u << cache_offset_width;
+
+    first = (uintptr_t)buffer & ~(line_bytes - 1u);
+    last = ((uintptr_t)buffer + byte_length + line_bytes - 1u) & ~(line_bytes - 1u);
+    for (address = first; address < last; address += line_bytes) {
+        init_dcache_line((unsigned long)address);
+    }
+}
+
 static inline void hash_reset(void)
 {
     RegWrite(KYBER_CTRL_ADDR, (1u << 3));
@@ -26,6 +40,8 @@ static inline void hash_iterate(uint32_t mode)
     RegWrite(KYBER_CTRL_ADDR, (1u << 4) | (mode << 5));
     while (KYBER_HASH_IS_BUZY);
 }
+
+
 
 void hash_g_33(uint8_t output[64], const uint8_t *input)
 {
@@ -88,7 +104,7 @@ void hash_h(uint8_t output[32], const uint8_t input[KYBER_PUBLICKEYBYTES])
 
     RegWrite(KYBER_HASH_DATA_BASE_ADDR + 33u * 4u, 0x80000000u);
     hash_iterate(HASH_MODE_NORMAL);
-    
+
     DMA_Transfer_Blocking(KYBER_HASH_DATA_BASE_ADDR, (uint32_t)(uintptr_t)output, 32u, 0);
 }
 
@@ -143,4 +159,22 @@ void rkprf(uint8_t output[KYBER_SSBYTES],
     #endif
 
     DMA_Transfer_Blocking(KYBER_HASH_DATA_BASE_ADDR, (uint32_t)(uintptr_t)output, KYBER_SSBYTES, 0);
+}
+
+void pqec_session_kdf(
+    uint8_t output[PQEC_SESSION_KEY_MATERIAL_BYTES],
+    const uint8_t shared_secret[KYBER_SSBYTES])
+{
+    while (KYBER_HASH_IS_BUZY);
+    hash_reset();
+    RegWrite(KYBER_HASH_DATA_BASE_ADDR + 0u, 0x43455150u);
+    RegWrite(KYBER_HASH_DATA_BASE_ADDR + 4u, 0x4743452du);
+    flush_cache_lines(shared_secret, KYBER_SSBYTES);
+    DMA_Transfer_Blocking((uint32_t)(uintptr_t)shared_secret, KYBER_HASH_DATA_BASE_ADDR + 8u, KYBER_SSBYTES, 0u);
+    RegWrite(KYBER_HASH_DATA_BASE_ADDR + 40u, 0x0000001fu);
+    RegWrite(KYBER_HASH_DATA_BASE_ADDR + 132u, 0x80000000u);
+    hash_iterate(HASH_MODE_NORMAL);
+
+    invalidate_cache_lines(output, PQEC_SESSION_KEY_MATERIAL_BYTES);
+    DMA_Transfer_Blocking(KYBER_HASH_DATA_BASE_ADDR, (uint32_t)(uintptr_t)output, PQEC_SESSION_KEY_MATERIAL_BYTES, 0u);
 }

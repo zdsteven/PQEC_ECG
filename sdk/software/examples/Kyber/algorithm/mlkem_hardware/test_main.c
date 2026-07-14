@@ -111,6 +111,7 @@ int main(){
 	sw_cycles = get_confreg_clock_count() - start_cycles;
 	printf("Keypair generated in %lu cycles, about %lu us\n", sw_cycles, cycles_to_us(sw_cycles));
 
+
 	// print_byte_array("coins", coins, 2*KYBER_SYMBYTES);
 	// print_byte_array("m", m, KYBER_SYMBYTES);
 	// print_byte_array("ek_soft", pk, KYBER_PUBLICKEYBYTES);
@@ -123,6 +124,7 @@ int main(){
 	crypto_kem_enc_derand(ct, key_b, pk, m);
 	sw_cycles = get_confreg_clock_count() - start_cycles;
 	printf("Encapsulation done in %lu cycles, about %lu us\n", sw_cycles, cycles_to_us(sw_cycles));
+
 	// print_byte_array("ct_soft", ct, CRYPTO_CIPHERTEXTBYTES);
 	// print_byte_array("ss_soft", key_b, KYBER_SSBYTES);
 
