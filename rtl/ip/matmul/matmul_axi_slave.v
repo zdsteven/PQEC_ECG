@@ -1,3 +1,4 @@
+`include "config.h"
 // AXI register wrapper plus DMA-side request port for the matrix engine.
 // Both the CPU compatibility path and the batch DMA path use the same
 // matmul_batch_core instance, so all matrix arithmetic is owned by this IP.
@@ -199,7 +200,11 @@ assign s_axi_bresp   = 2'b00;
 assign s_axi_arready = !s_axi_rvalid;
 assign s_axi_rresp   = 2'b00;
 
+`ifdef USE_EVALUATION_UART_SRAM
 matmul_batch_core u_matmul_batch_core0 (
+`else
+matmul_batch_core_dsp u_matmul_batch_core0 (
+`endif
     .clk          (clk),
     .resetn       (resetn),
     .start        (core0_start),
@@ -212,6 +217,7 @@ matmul_batch_core u_matmul_batch_core0 (
     .result_data  (core0_result_data)
 );
 
+`ifdef USE_EVALUATION_UART_SRAM
 matmul_batch_core u_matmul_batch_core1 (
     .clk          (clk),
     .resetn       (resetn),
@@ -224,6 +230,13 @@ matmul_batch_core u_matmul_batch_core1 (
     .result_index (dma_result_index),
     .result_data  (core1_result_data)
 );
+`else
+// Generic AXI DMA reaches the multiplier through the CPU-compatible register
+// window, so a second evaluation scheduler core would be permanently idle.
+assign core1_busy = 1'b0;
+assign core1_done = 1'b0;
+assign core1_result_data = 66'd0;
+`endif
 
 integer i;
 always @(posedge clk) begin
