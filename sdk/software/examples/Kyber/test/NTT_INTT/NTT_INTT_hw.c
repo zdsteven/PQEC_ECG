@@ -45,18 +45,14 @@ static unsigned long run_hw_transform(const S16 input[KYBER_N], S16 output[KYBER
     }
 
     flush_poly_cache_lines(output);
-    DMA_Transfer_Blocking((U32)(unsigned long)output,
-                          NTT_INTT_HW_DATA_BASE_ADDR,
-                          NTT_INTT_HW_POLY_BYTES, 0);
+    DMA_Transfer_Blocking((U32)(unsigned long)output, NTT_INTT_HW_DATA_BASE_ADDR, NTT_INTT_HW_POLY_BYTES, 0);
 
     start_cycles = get_confreg_clock_count();
     RegWrite(NTT_INTT_HW_CTRL_ADDR, control);
     while (ntt_intt_is_buzy());
     hardware_cycles = get_confreg_clock_count() - start_cycles;
 
-    DMA_Transfer_Blocking(NTT_INTT_HW_DATA_BASE_ADDR,
-                          (U32)(unsigned long)output,
-                          NTT_INTT_HW_POLY_BYTES, 0);
+    DMA_Transfer_Blocking(NTT_INTT_HW_DATA_BASE_ADDR, (U32)(unsigned long)output, NTT_INTT_HW_POLY_BYTES, 0);
     for (i = 0; i < KYBER_N; ++i) {
         output[i] = modq_to_signed(output[i]);
     }

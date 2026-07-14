@@ -48,7 +48,8 @@ void AES_ctx_set_iv_software(struct AES_ctx* ctx, const uint8_t* iv);
 
 void AES_CTR_software(struct AES_ctx* ctx, uint8_t* buf, size_t length);
 void AES_CTR_software_message(const uint8_t* key, const uint8_t nonce[8],
-                            uint32_t message_index, uint8_t* buf, size_t length);
+                                uint32_t message_index, uint8_t* buf,
+                                size_t length);
 
 void AES_init_hardware(const uint8_t* key);
 void AES_set_nonce_hardware(const uint32_t nonce_key[2], uint32_t message_index);

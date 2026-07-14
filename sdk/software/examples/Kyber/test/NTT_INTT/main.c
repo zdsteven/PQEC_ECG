@@ -108,17 +108,17 @@ int main(int argc, char **argv)
     init_confreg_timer();
 
     generate_test_input(g_input);
-    print_poly("Input data:", g_input);
+    //print_poly("Input data:", g_input);
 
     copy_poly(g_sw_ntt, g_input);
     start_cycles = get_confreg_clock_count();
     ntt_ref(g_sw_ntt);
     sw_ntt_cycles = get_confreg_clock_count() - start_cycles;
-    print_poly("Software NTT:", g_sw_ntt);
+    //print_poly("Software NTT:", g_sw_ntt);
     print_perf("Software NTT", sw_ntt_cycles);
 
     hw_ntt_cycles = run_hw_ntt(g_input, g_hw_ntt);
-    print_poly("Hardware NTT:", g_hw_ntt);
+    //print_poly("Hardware NTT:", g_hw_ntt);
     print_perf("Hardware NTT", hw_ntt_cycles);
     errors += compare_poly("NTT compare", g_hw_ntt, g_sw_ntt);
 
@@ -126,11 +126,11 @@ int main(int argc, char **argv)
     start_cycles = get_confreg_clock_count();
     invntt_ref(g_sw_intt);
     sw_intt_cycles = get_confreg_clock_count() - start_cycles;
-    print_poly("Software INTT:", g_sw_intt);
+    //print_poly("Software INTT:", g_sw_intt);
     print_perf("Software INTT", sw_intt_cycles);
 
     hw_intt_cycles = run_hw_intt(g_sw_ntt, g_hw_intt);
-    print_poly("Hardware INTT:", g_hw_intt);
+    //print_poly("Hardware INTT:", g_hw_intt);
     print_perf("Hardware INTT", hw_intt_cycles);
     errors += compare_poly("INTT compare", g_hw_intt, g_sw_intt);
     errors += compare_poly("Roundtrip compare", g_hw_intt, g_input);

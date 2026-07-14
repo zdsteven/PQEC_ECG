@@ -225,8 +225,8 @@ int main(int argc, char **argv)
     hw_cycles = Hash_hw_GetCycles();
     KeccakF1600_StateRead_hw(g_hw_keccak);
     print_perf("KeccakF1600_StatePermute", "hardware start-to-done", hw_cycles);
-    print_keccak_head("Keccak software", g_sw_keccak);
-    print_keccak_head("Keccak hardware", g_hw_keccak);
+    //print_keccak_head("Keccak software", g_sw_keccak);
+    //print_keccak_head("Keccak hardware", g_hw_keccak);
     errors += compare_keccak(g_hw_keccak, g_sw_keccak);
 
     printf("\n[2] hash_g / SHA3-512 (33-byte and 64-byte inputs)\n");
@@ -240,8 +240,8 @@ int main(int argc, char **argv)
     hash_g_hw(g_hw_hash[1], g_hash_g_input_64, sizeof(g_hash_g_input_64));
     hw_cycles += Hash_hw_GetCycles();
     print_perf("hash_g x2", "hardware DMA-to-done", hw_cycles);
-    print_bytes("hash_g(33) software", g_sw_hash[0], 64u);
-    print_bytes("hash_g(33) hardware", g_hw_hash[0], 64u);
+    //print_bytes("hash_g(33) software", g_sw_hash[0], 64u);
+    //print_bytes("hash_g(33) hardware", g_hw_hash[0], 64u);
     errors += compare_bytes("hash_g(33) compare", g_hw_hash[0], g_sw_hash[0], 64u);
     errors += compare_bytes("hash_g(64) compare", g_hw_hash[1], g_sw_hash[1], 64u);
 
@@ -256,8 +256,8 @@ int main(int argc, char **argv)
     gen_matrix_hw(g_hw_matrix_t, g_seed, 1);
     hw_cycles += Hash_hw_GetCycles();
     print_perf("gen_matrix(A and AT)", "hardware DMA-to-done", hw_cycles);
-    print_poly_head("gen_matrix software A[0][0]", &g_sw_matrix[0].vec[0]);
-    print_poly_head("gen_matrix hardware A[0][0]", &g_hw_matrix[0].vec[0]);
+    //print_poly_head("gen_matrix software A[0][0]", &g_sw_matrix[0].vec[0]);
+    //print_poly_head("gen_matrix hardware A[0][0]", &g_hw_matrix[0].vec[0]);
     errors += compare_matrix("gen_matrix A compare", g_hw_matrix, g_sw_matrix);
     errors += compare_matrix("gen_matrix AT compare", g_hw_matrix_t, g_sw_matrix_t);
 
@@ -269,8 +269,8 @@ int main(int argc, char **argv)
     poly_getnoise_eta1_hw(&g_hw_poly, g_seed, 0x42u);
     hw_cycles = Hash_hw_GetCycles();
     print_perf("poly_getnoise_eta1", "hardware DMA-to-done", hw_cycles);
-    print_poly_head("eta1 software", &g_sw_poly);
-    print_poly_head("eta1 hardware", &g_hw_poly);
+    //print_poly_head("eta1 software", &g_sw_poly);
+    //print_poly_head("eta1 hardware", &g_hw_poly);
     errors += compare_poly("poly_getnoise_eta1 compare", &g_hw_poly, &g_sw_poly);
 
     printf("\n[5] poly_getnoise_eta2 / SHAKE256 + CBD eta=2\n");
@@ -281,8 +281,8 @@ int main(int argc, char **argv)
     poly_getnoise_eta2_hw(&g_hw_poly, g_seed, 0x27u);
     hw_cycles = Hash_hw_GetCycles();
     print_perf("poly_getnoise_eta2", "hardware DMA-to-done", hw_cycles);
-    print_poly_head("eta2 software", &g_sw_poly);
-    print_poly_head("eta2 hardware", &g_hw_poly);
+    //print_poly_head("eta2 software", &g_sw_poly);
+    //print_poly_head("eta2 hardware", &g_hw_poly);
     errors += compare_poly("poly_getnoise_eta2 compare", &g_hw_poly, &g_sw_poly);
 
     printf("\n[6] hash_h / SHA3-256(public key)\n");
@@ -293,8 +293,8 @@ int main(int argc, char **argv)
     hash_h_hw(g_hw_hash[0], g_hash_h_input);
     hw_cycles = Hash_hw_GetCycles();
     print_perf("hash_h", "hardware DMA-to-done", hw_cycles);
-    print_bytes("hash_h software", g_sw_hash[0], 32u);
-    print_bytes("hash_h hardware", g_hw_hash[0], 32u);
+    //print_bytes("hash_h software", g_sw_hash[0], 32u);
+    //print_bytes("hash_h hardware", g_hw_hash[0], 32u);
     errors += compare_bytes("hash_h compare", g_hw_hash[0], g_sw_hash[0], 32u);
 
     printf("\n[7] rkprf / SHAKE256(key || ciphertext)\n");
@@ -305,8 +305,8 @@ int main(int argc, char **argv)
     rkprf_hw(g_hw_hash[0], g_rkprf_key, g_rkprf_input);
     hw_cycles = Hash_hw_GetCycles();
     print_perf("rkprf", "hardware DMA-to-done", hw_cycles);
-    print_bytes("rkprf software", g_sw_hash[0], KYBER_SSBYTES);
-    print_bytes("rkprf hardware", g_hw_hash[0], KYBER_SSBYTES);
+    //print_bytes("rkprf software", g_sw_hash[0], KYBER_SSBYTES);
+    //print_bytes("rkprf hardware", g_hw_hash[0], KYBER_SSBYTES);
     errors += compare_bytes("rkprf compare", g_hw_hash[0], g_sw_hash[0], KYBER_SSBYTES);
 
     if (errors == 0u) {

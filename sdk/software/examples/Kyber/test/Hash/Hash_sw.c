@@ -424,11 +424,7 @@ static void keccak_finalize(uint64_t s[25], unsigned int pos, unsigned int r, ui
 *
 * Returns new position pos in current block
 **************************************************/
-static unsigned int keccak_squeeze(uint8_t *out,
-                                   size_t outlen,
-                                   uint64_t s[25],
-                                   unsigned int pos,
-                                   unsigned int r)
+static unsigned int keccak_squeeze(uint8_t *out, size_t outlen, uint64_t s[25], unsigned int pos, unsigned int r)
 {
   unsigned int i;
 
@@ -459,11 +455,7 @@ static unsigned int keccak_squeeze(uint8_t *out,
 *              - size_t inlen: length of input in bytes
 *              - uint8_t p: domain-separation byte for different Keccak-derived functions
 **************************************************/
-static void keccak_absorb_once(uint64_t s[25],
-                               unsigned int r,
-                               const uint8_t *in,
-                               size_t inlen,
-                               uint8_t p)
+static void keccak_absorb_once(uint64_t s[25], unsigned int r, const uint8_t *in, size_t inlen, uint8_t p)
 {
   unsigned int i;
 
@@ -498,10 +490,7 @@ static void keccak_absorb_once(uint64_t s[25],
 *              - uint64_t *s: pointer to input/output Keccak state
 *              - unsigned int r: rate in bytes (e.g., 168 for SHAKE128)
 **************************************************/
-static void keccak_squeezeblocks(uint8_t *out,
-                                 size_t nblocks,
-                                 uint64_t s[25],
-                                 unsigned int r)
+static void keccak_squeezeblocks(uint8_t *out, size_t nblocks, uint64_t s[25], unsigned int r)
 {
   unsigned int i;
 
@@ -778,10 +767,7 @@ void sha3_512(uint8_t h[64], const uint8_t *in, size_t inlen)
 
 /* ML-KEM-512 wrappers copied from the reference symmetric, CBD and IND-CPA code. */
 
-void kyber_shake128_absorb(keccak_state *state,
-                           const uint8_t seed[KYBER_SYMBYTES],
-                           uint8_t x,
-                           uint8_t y)
+void kyber_shake128_absorb(keccak_state *state, const uint8_t seed[KYBER_SYMBYTES], uint8_t x, uint8_t y)
 {
   uint8_t extseed[KYBER_SYMBYTES+2];
 

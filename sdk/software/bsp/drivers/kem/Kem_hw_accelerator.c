@@ -104,7 +104,7 @@ void hash_h(uint8_t output[32], const uint8_t input[KYBER_PUBLICKEYBYTES])
 
     RegWrite(KYBER_HASH_DATA_BASE_ADDR + 33u * 4u, 0x80000000u);
     hash_iterate(HASH_MODE_NORMAL);
-    
+
     DMA_Transfer_Blocking(KYBER_HASH_DATA_BASE_ADDR, (uint32_t)(uintptr_t)output, 32u, 0);
 }
 
