@@ -10,7 +10,7 @@ LA32R_READELF := loongarch32r-linux-gnusf-readelf
 COPY_OUTPUT ?= 1
 # Set to 1 for software-controlled UART FIFO/divisor initialization in start.S.
 # Keep 0 when the UART autonomous reporter must preserve its reset-time output.
-UART_INIT_ON_START ?= 1
+UART_INIT_ON_START ?= 0
 
 .PHONY: all
 all: $(TARGET)
