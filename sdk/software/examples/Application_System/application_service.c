@@ -6,6 +6,7 @@
 
 #include "Kem_api.h"
 #include "aes.h"
+#include "dma.h"
 #include "dvi.h"
 #include "ecg.h"
 #include "led.h"
@@ -166,15 +167,17 @@ static int decrypt_ecg(const uint8_t *ciphertext, uint32_t sequence)
     int result;
 
     memcpy(aes_ecg_buffer, ciphertext, ECG_PLAINTEXT_BYTES);
-    memset((uint8_t *)aes_ecg_buffer + ECG_PLAINTEXT_BYTES, 0, AES_DATA_BYTES - ECG_PLAINTEXT_BYTES);
     memcpy(nonce_words, session_keys.client_to_server_nonce, sizeof(nonce_words));
 
     AES_set_nonce_hardware(nonce_words, sequence);
     result = AES_CTR_hardware(aes_ecg_buffer);
-    if (result == 0) {
-        result = AES_read_result_hardware(aes_ecg_buffer);
+    if (result != 0) {
+        return result;
     }
-    return result;
+
+    while ((RegRead(AES_STATUS_ADDR) & AES_STATUS_BUSY) != 0U) {
+    }
+    return DMA_Transfer_Blocking(AES_DATA_BASE_ADDR, ECG_DATA_BASE_ADDR, AES_DATA_BYTES, 0U);
 }
 
 static void handle_ecg_data(const struct protocol_frame *frame)
@@ -203,7 +206,6 @@ static void handle_ecg_data(const struct protocol_frame *frame)
         return;
     }
 
-    ecg_load((U8 *)aes_ecg_buffer);
     ecg_start();
     store32_le(result, sequence);
     result[4] = ecg_read_result(scores);
