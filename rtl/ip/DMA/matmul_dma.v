@@ -110,6 +110,7 @@ localparam [11:0] ADDR_SRC_BASE   = 12'h008;
 localparam [11:0] ADDR_DST_BASE   = 12'h00c;
 localparam [11:0] ADDR_GROUP_NUM  = 12'h010;
 localparam [11:0] ADDR_CRC32       = 12'h020;
+localparam [11:0] ADDR_READ_GROUPS = 12'h024;
 
 localparam RD_IDLE = 1'b0;
 localparam RD_DATA = 1'b1;
@@ -347,6 +348,7 @@ always @(posedge clk) begin
                 ADDR_DST_BASE:    s_axi_rdata <= dst_base;
                 ADDR_GROUP_NUM:   s_axi_rdata <= group_num;
                 ADDR_CRC32:       s_axi_rdata <= crc_value ^ 32'hffffffff;
+                ADDR_READ_GROUPS: s_axi_rdata <= {19'd0, read_group_count};
                 default:          s_axi_rdata <= 32'd0;
             endcase
         end else if (s_axi_rvalid && s_axi_rready) begin
@@ -379,7 +381,8 @@ always @(posedge clk) begin
         crc_finish_pending   <= 1'b0;
         crc32_valid          <= 1'b0;
         crc32_final          <= 32'd0;
-        auto_start_armed     <= 1'b1;
+        // Evaluation software explicitly configures and starts the engine.
+        auto_start_armed     <= 1'b0;
         for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
             core_group[core_reset_index] = 13'd0;
             core_result_group[core_reset_index] = 13'd0;

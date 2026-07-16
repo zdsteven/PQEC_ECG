@@ -224,8 +224,9 @@ always @(posedge PCLK or negedge PRST_) begin
                     auto_tx_data  <= auto_boot_char(auto_index);
                     if (auto_index == 6'd12) begin
                         auto_index <= 6'd0;
-                        auto_state <= AUTO_WAIT;
-                        auto_delay_count <= AUTO_CRC_PREFIX_DELAY;
+                        // CPU owns CRC prefix, digits and DONE after the
+                        // autonomous START banner has been queued.
+                        auto_state <= AUTO_IDLE;
                     end else begin
                         auto_index <= auto_index + 6'd1;
                     end
@@ -292,6 +293,10 @@ always @(posedge PCLK or negedge PRST_) begin
                     auto_index <= 6'd0;
                     auto_state <= AUTO_HEX;
                 end
+            end
+            AUTO_IDLE: begin
+                // Keep the CRC sideband from restarting autonomous output.
+                auto_crc_pending <= 1'b0;
             end
             default: begin
                 if (auto_crc_valid) begin
