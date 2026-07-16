@@ -22,7 +22,6 @@
 #define MATMUL_DMA_STATUS_BUSY        0x00000001u
 #define MATMUL_DMA_STATUS_DONE        0x00000002u
 #define MATMUL_DMA_STATUS_ERROR       0x00000004u
-#define MATMUL_DMA_STATUS_REPORT_DONE 0x00000008u
 #define MATMUL_DMA_MAX_GROUPS         5000u
 
 int MATMUL_DMA_Start(U32 src_phys, U32 dst_phys, U32 groups);

@@ -40,9 +40,7 @@ module UART_TOP(
         PSEL,        PENABLE,     PADDR,       PWRITE,
         PWDATA,      URT_PRDATA,
         auto_start_valid,
-        auto_prefix_valid,
         auto_crc_valid, auto_crc32,
-        auto_crc_queued,
 
         INT, clk_carrier,
 
@@ -59,10 +57,8 @@ input   [7:0]     PADDR;
 input   [7:0]     PWDATA;
 output  [7:0]     URT_PRDATA;
 input             auto_start_valid;
-input             auto_prefix_valid;
 input             auto_crc_valid;
 input   [31:0]    auto_crc32;
-output reg        auto_crc_queued;
 
 output  INT;
 input   clk_carrier;
@@ -93,8 +89,8 @@ reg  [7:0] auto_tx_data;
 reg  [5:0] auto_index;
 reg  [31:0] auto_crc_hold;
 reg  [2:0] auto_state;
-reg  auto_prefix_pending;
 reg  auto_crc_pending;
+reg  [15:0] auto_delay_count;
 
 localparam [2:0] AUTO_ARM   = 3'd0;
 localparam [2:0] AUTO_BOOT  = 3'd1;
@@ -104,6 +100,8 @@ localparam [2:0] AUTO_DONE  = 3'd4;
 localparam [2:0] AUTO_IDLE  = 3'd5;
 localparam [2:0] AUTO_PREFIX= 3'd6;
 localparam [2:0] AUTO_CRC_WAIT = 3'd7;
+
+localparam [15:0] AUTO_CRC_PREFIX_DELAY = 16'd37500; // 0.75 ms @ 50 MHz
 
 function [7:0] auto_boot_char;
     input [5:0] index;
@@ -149,6 +147,28 @@ function [7:0] auto_prefix_char;
     end
 endfunction
 
+function [7:0] auto_done_char;
+    input [5:0] index;
+    begin
+        case (index)
+            6'd0:  auto_done_char = "\n";
+            6'd1:  auto_done_char = "M";
+            6'd2:  auto_done_char = "A";
+            6'd3:  auto_done_char = "T";
+            6'd4:  auto_done_char = "M";
+            6'd5:  auto_done_char = "U";
+            6'd6:  auto_done_char = "L";
+            6'd7:  auto_done_char = "_";
+            6'd8:  auto_done_char = "D";
+            6'd9:  auto_done_char = "O";
+            6'd10: auto_done_char = "N";
+            6'd11: auto_done_char = "E";
+            6'd12: auto_done_char = "\n";
+            default: auto_done_char = 8'h00;
+        endcase
+    end
+endfunction
+
 function [7:0] auto_hex_char;
     input [3:0] nibble;
     begin
@@ -183,14 +203,10 @@ always @(posedge PCLK or negedge PRST_) begin
         auto_index      <= 6'd0;
         auto_crc_hold   <= 32'd0;
         auto_state      <= AUTO_ARM;
-        auto_prefix_pending <= 1'b0;
         auto_crc_pending<= 1'b0;
-        auto_crc_queued <= 1'b0;
+        auto_delay_count<= 16'd0;
     end else begin
         auto_tx_valid <= 1'b0;
-        auto_crc_queued <= 1'b0;
-        if (auto_prefix_valid)
-            auto_prefix_pending <= 1'b1;
         if (auto_crc_valid) begin
             auto_crc_hold    <= auto_crc32;
             auto_crc_pending <= 1'b1;
@@ -208,17 +224,22 @@ always @(posedge PCLK or negedge PRST_) begin
                     auto_tx_data  <= auto_boot_char(auto_index);
                     if (auto_index == 6'd12) begin
                         auto_index <= 6'd0;
-                        auto_state <= AUTO_WAIT;
+                        // CPU owns CRC prefix, digits and DONE after the
+                        // autonomous START banner has been queued.
+                        auto_state <= AUTO_IDLE;
                     end else begin
                         auto_index <= auto_index + 6'd1;
                     end
                 end
             end
             AUTO_WAIT: begin
-                if (auto_prefix_pending) begin
-                    auto_prefix_pending <= 1'b0;
-                    auto_index <= 6'd0;
-                    auto_state <= AUTO_PREFIX;
+                if (tx_idle) begin
+                    if (auto_delay_count == 16'd0) begin
+                        auto_index <= 6'd0;
+                        auto_state <= AUTO_PREFIX;
+                    end else begin
+                        auto_delay_count <= auto_delay_count - 16'd1;
+                    end
                 end
             end
             AUTO_PREFIX: begin
@@ -233,6 +254,7 @@ always @(posedge PCLK or negedge PRST_) begin
                         end else begin
                             auto_index <= 6'd0;
                             auto_state <= AUTO_CRC_WAIT;
+                            auto_delay_count <= 16'd0;
                         end
                     end else begin
                         auto_index <= auto_index + 6'd1;
@@ -256,9 +278,13 @@ always @(posedge PCLK or negedge PRST_) begin
             AUTO_DONE: begin
                 if (tx_idle) begin
                     auto_tx_valid <= 1'b1;
-                    auto_tx_data  <= "\n";
-                    auto_index <= 6'd0;
-                    auto_state <= AUTO_IDLE;
+                    auto_tx_data  <= auto_done_char(auto_index);
+                    if (auto_index == 6'd12) begin
+                        auto_index <= 6'd0;
+                        auto_state <= AUTO_IDLE;
+                    end else begin
+                        auto_index <= auto_index + 6'd1;
+                    end
                 end
             end
             AUTO_CRC_WAIT: begin
@@ -270,10 +296,7 @@ always @(posedge PCLK or negedge PRST_) begin
             end
             AUTO_IDLE: begin
                 // Keep the CRC sideband from restarting autonomous output.
-                auto_prefix_pending <= 1'b0;
                 auto_crc_pending <= 1'b0;
-                if (auto_tx_valid)
-                    auto_crc_queued <= 1'b1;
             end
             default: begin
                 if (auto_crc_valid) begin
