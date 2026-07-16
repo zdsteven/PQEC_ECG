@@ -11,6 +11,7 @@ COPY_OUTPUT ?= 1
 # Set to 1 for software-controlled UART FIFO/divisor initialization in start.S.
 # Keep 0 when the UART autonomous reporter must preserve its reset-time output.
 UART_INIT_ON_START ?= 0
+EVAL_FAST_START ?= 1
 
 .PHONY: all
 all: $(TARGET)
@@ -23,6 +24,7 @@ CFLAGS += -nostartfiles -nostdlib -nostdinc -static -fno-builtin
 CFLAGS += -DCLOCKS_PER_SEC=CORE_CLOCKS_PER_SEC -D_CLOCKS_PER_SEC_=CORE_CLOCKS_PER_SEC
 CFLAGS += -DUSE_CPU_CLOCK_COUNT
 CFLAGS += -DUART_INIT_ON_START=$(UART_INIT_ON_START)
+CFLAGS += -DEVAL_FAST_START=$(EVAL_FAST_START)
 
 #若使用 newlib , 将下面的 -lsemihost 替换为 -lgloss
 LDFLAGS +=  	-T $(LINKER_SCRIPT) \

@@ -21,6 +21,7 @@ _start:
     addi.w $r29,zero,0x0; addi.w $r30,zero,0x0; addi.w $r31,zero,0x0;  
 
 #if has_cache==1
+#if !EVAL_FAST_START
     # invalid the old inst in icache and old data in dcache by index
     li.w t0,0x0
     #li.w t2,0x100
@@ -48,6 +49,7 @@ _start:
 #endif
     addi.w    t0, t0, 0x1
     bne       t0, t2, 1b
+#endif
 #else
     /* disable   cache */
     li.w    $r12,0x1
