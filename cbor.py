@@ -2,7 +2,13 @@ import cbor2
 import os
 import glob
 import re
+import sys
 from datetime import datetime
+
+DBG_FIELDS = (
+    "START", "FIRST_R", "LAST_R", "LAST_CORE", "CRC_READY",
+    "R_EMPTY", "CORE_STALL",
+)
 
 def get_latest_cbor(directory):
     """获取最新的 .cbor 文件"""
@@ -43,7 +49,7 @@ def parse_all_params(text):
     
     # 匹配所有 大写字母=十六进制数 的模式
     # 支持 X=XXXXX 以及 X=XXXXX.XXXXX 格式（多点分隔）
-    pattern = r'([A-Z])=([0-9A-F\.]+)'
+    pattern = r'(?<![A-Z0-9_])([A-Z])=([0-9A-F\.]+)'
     matches = re.findall(pattern, text, re.IGNORECASE)
     
     for key, value in matches:
@@ -70,6 +76,16 @@ def parse_all_params(text):
     crc_match = re.search(r'MATMUL_CRC32=\s*([0-9A-F]+)', text, re.IGNORECASE)
     if crc_match:
         data['CRC32'] = crc_match.group(1)
+
+    # The report capture may insert a newline in the middle of the fixed DBG
+    # record. Remove whitespace before matching all seven 32-bit fields.
+    compact = re.sub(r'\s+', '', text.upper())
+    dbg_match = re.search(
+        r'DBG=([0-9A-F]{8}(?:,[0-9A-F]{8}){6})', compact
+    )
+    if dbg_match:
+        values = [int(value, 16) for value in dbg_match.group(1).split(',')]
+        data.update(dict(zip(DBG_FIELDS, values)))
     
     return data
 
@@ -118,7 +134,10 @@ def format_time_table(data):
     print("-" * 60)
     
     # 获取所有单值参数（非列表）
-    single_params = {k: v for k, v in params.items() if not isinstance(v, list)}
+    single_params = {
+        k: v for k, v in params.items()
+        if not isinstance(v, list) and k not in DBG_FIELDS
+    }
     keys = sorted(single_params.keys())
     
     for i in range(len(keys)):
@@ -129,6 +148,22 @@ def format_time_table(data):
             ns = diff * 20
             ms = ns / 1_000_000
             print(f"  {k2} - {k1} = {diff:,} (0x{diff:X}) = {ns:,} ns = {ms:.6f} ms")
+
+    if all(field in data for field in DBG_FIELDS):
+        print()
+        print("DBG 阶段差值:")
+        print("-" * 60)
+        debug_diffs = (
+            ("FIRST_R - START", data["FIRST_R"] - data["START"]),
+            ("LAST_R - FIRST_R", data["LAST_R"] - data["FIRST_R"]),
+            ("LAST_CORE - LAST_R", data["LAST_CORE"] - data["LAST_R"]),
+            ("CRC_READY - LAST_CORE", data["CRC_READY"] - data["LAST_CORE"]),
+            ("CRC_READY - START", data["CRC_READY"] - data["START"]),
+        )
+        for label, diff in debug_diffs:
+            print(f"  {label:<25} {diff:>9,} cycles = {diff * 20 / 1_000_000:.6f} ms")
+        read_gaps = data["LAST_R"] - data["FIRST_R"] - 159999
+        print(f"  {'R span non-transfer':<25} {read_gaps:>9,} cycles = {read_gaps * 20 / 1_000_000:.6f} ms")
     
     # CRC32
     if 'CRC32' in data:
@@ -136,6 +171,8 @@ def format_time_table(data):
         print(f"CRC32: {data['CRC32']}")
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     directory = r"E:\Edge下载\Downloads"
     latest = get_latest_cbor(directory)
     

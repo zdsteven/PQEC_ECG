@@ -39,6 +39,10 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // (The Verilog preprocessor selects module definitions by symbol presence.)
 `define USE_EVALUATION_UART_SRAM
 
+// Define temporarily when an online run needs the fixed DBG timing record.
+// Formal score measurements keep the instrumentation out of the netlist.
+// `define EVAL_DEBUG_COUNTERS
+
 `define USE_CACHE
 
 `define Lawcmd 4

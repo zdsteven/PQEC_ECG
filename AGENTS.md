@@ -125,10 +125,22 @@ make gitlab
 
 1. 向用户说明已发送线上验证，以及本次需要重点观察的指标。
 2. 不自行猜测线上结果。
-3. 等待用户在平台查看结果并回传完整日志。
-4. 根据用户给出的 CRC、elapsed time、得分、WNS、lint 或串口 tail 继续诊断。
+3. 等待用户确认平台评测已经完成。
+4. 评测完成后，优先在仓库根目录使用虚拟环境运行 `.\.venv\Scripts\python.exe cbor.py`，从最新 CBOR 截取中读取 UART 尾部、CRC 和调试计数；无需等待用户手工转抄这些字段。
+5. 若 CBOR 不包含 elapsed time、得分或失败原因，再由用户补充相应平台结果。
+6. 根据 CRC、elapsed time、得分、WNS、lint、DBG 计数或串口 tail 继续诊断。
 
 用户负责判断修改是否有效，并负责在仓库中提交需要保留的更改。agent 不得为了“保存实验”而在当前仓库自行提交。
+
+### 补充：本地 HDL lint
+
+仓库 Python 虚拟环境已经安装 `lxml`、`chardet` 等依赖，MSYS2 Verilator 也已加入当前环境。RTL 修改后可以直接运行：
+
+```powershell
+.\.venv\Scripts\python.exe fpga/run-linter.py fpga/project/Loongson_Soc.xpr
+```
+
+本地 linter 中仅由 PLL/IP 仿真模型、PLL 黑盒或相关原语缺失产生的报错可以忽略，因为它们不影响线上评测；除此之外的 HDL lint、位宽、锁存、组合环和未驱动错误仍必须处理。最终仍以线上 lint 通过为准。
 
 ### 补充：本地仿真和实现分析
 
@@ -142,14 +154,9 @@ make gitlab
 - CPU 发送 CRC 前缀、读取 CRC、写 8 位 hex 和打印 DONE 的周期；
 - UART TX FIFO push/pop/count、字符状态和实际 TX 波形。
 
-当前 `fpga/project` 中的 Vivado 工程已经过期，旧工程、旧仿真配置以及旧 WNS/DSP 报告不能作为当前工作区的验证依据。进行任何本地 Vivado 仿真、综合或实现分析前，必须先在 `fpga` 目录重新创建工程：
+当前 `fpga/project/Loongson_Soc.xpr` 可以直接复用。进行本地 Vivado 仿真、综合或实现分析时，默认打开或调用现有工程，并确认工程引用的是当前 `rtl/`、`sim/` 和 `fpga/constraints` 源码；不要为了常规验证删除并重建工程。
 
-```powershell
-cd fpga
-vivado -mode batch -source create_project.tcl
-```
-
-`create_project.tcl` 会删除并重建 `fpga/project`。工程的源文件应来自当前 `rtl/`、`sim/` 和 `fpga/constraints`，不要在过期工程的 generated sources 或 run 目录中保留手工修改。工程重建成功后，才能运行本地仿真；需要重新生成 bitstream 和最新实现报告时，再回到仓库根目录运行 `make vivado`。
+只有当工程文件缺失、损坏、源文件集合明显失配，或用户明确要求重新创建时，才运行 `fpga/create_project.tcl`。现有 run 生成的 WNS/DSP 报告只有在对应源码已经重新综合实现后才能作为依据；源码改变后需要生成 bitstream 和最新实现报告时，在仓库根目录运行 `make vivado`。
 
 本地仿真用于解释线上结果，不能替代线上平台的最终速度和串口可靠性验证。若仓库没有覆盖目标路径的现成 testbench，可以添加范围明确的仿真 testbench，但不要把仅用于诊断的计数器或大段调试逻辑留在评测网表中。
 
@@ -194,14 +201,15 @@ MATMUL_DONE
 
 ```powershell
 make wsl
-# 首次本地 Vivado 验证前先重新运行 fpga/create_project.tcl
+.\.venv\Scripts\python.exe fpga/run-linter.py fpga/project/Loongson_Soc.xpr
 make vivado
 make checks
 ```
 
 - `make wsl` 构建 `user-sample.bin`；必须核对构建参数确实对应 5000 组和当前 UART 调度。
-- `make vivado` 只能在工程重新创建后使用，用于生成 bitstream 和当前实现报告。
-- `make checks` 只能检查最新一次重新实现产生的 DSP/WNS 报告；Windows 本地流程会跳过 HDL linter，linter 仍需通过 GitLab CI。
+- `make vivado` 默认复用 `fpga/project/Loongson_Soc.xpr`，用于生成 bitstream 和当前实现报告；不要在每次编译前删除工程。
+- `make checks` 只能检查最新一次重新实现产生的 DSP/WNS 报告。
+- 本地 linter 已可运行；PLL 相关模型或黑盒报错可忽略，其他错误必须修复，线上 lint 仍是最终判据。
 
 ## 评测任务配置
 
@@ -330,9 +338,10 @@ ARLEN=255, ARSIZE=2, ARBURST=INCR
 | `fpga/check_dsp.py` | DSP=0 检查 |
 | `fpga/check_timing.py` | WNS>0 检查 |
 | `fpga/run-linter.py` | CI HDL lint |
-| `fpga/create_project.tcl` | 本地仿真、综合或实现前重新创建已过期的 Vivado 工程 |
+| `fpga/create_project.tcl` | 仅在现有 Vivado 工程缺失、损坏或源文件集合失配时重建工程 |
 | `tools/generate_matmul_testdata.py` | A 后 B 布局的测试数据生成 |
 | `Makefile`、`sync_gitlab.bat` | 首选线上验证入口和同步流程 |
+| `cbor.py` | 线上评测完成后读取最新 CBOR 截取中的 UART、CRC 和 DBG 信息 |
 
 ## 优化分析顺序
 
