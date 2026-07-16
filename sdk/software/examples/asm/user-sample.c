@@ -12,7 +12,6 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define EXTRAM_PHYS_BASE       0x1c400000u
 #define MATMUL_INPUT_BYTES     0x0009c400u
 #define MATMUL_RESULT_BASE     (EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES)
-#define CRC_PREFIX_GROUP       3410u
 
 #define UART_TX_ADDR           (UART_BASE + 0u)
 #define UART_LSR_ADDR          (UART_BASE + 5u)
@@ -28,13 +27,13 @@ static U8 uart_line_status(void)
     return *((volatile U8 *)UART_LSR_ADDR);
 }
 
+#if EVAL_DEBUG_COUNTERS
 static U8 hex_char(U32 nibble)
 {
     return (nibble < 10u) ? (U8)('0' + nibble) :
                             (U8)('A' + nibble - 10u);
 }
 
-#if EVAL_DEBUG_COUNTERS
 static void append_hex32(U8 *buffer, U32 *length, U32 value)
 {
     U32 index;
@@ -43,7 +42,7 @@ static void append_hex32(U8 *buffer, U32 *length, U32 value)
         buffer[(*length)++] = hex_char((value >> (28u - index * 4u)) & 0x0fu);
 }
 
-static void uart_write_crc_debug_and_done(U32 crc)
+static void uart_write_debug_and_done(void)
 {
     static U8 debug_tail[80];
     static const U32 debug_addr[7] = {
@@ -63,15 +62,6 @@ static void uart_write_crc_debug_and_done(U32 crc)
     U32 field;
     U32 length = 0u;
     U32 chunk_end;
-
-    /* Preserve the scored protocol join first.  The nine queued bytes give
-     * software enough time to read and format counters before the newline is
-     * retired, without delaying the first CRC digit after '='. */
-    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
-    }
-    for (index = 0u; index < 8u; ++index)
-        uart_write_byte(hex_char((crc >> (28u - index * 4u)) & 0x0fu));
-    uart_write_byte('\n');
 
     debug_tail[length++] = 'D';
     debug_tail[length++] = 'B';
@@ -96,28 +86,17 @@ static void uart_write_crc_debug_and_done(U32 crc)
     }
 }
 #else
-static void uart_write_crc_and_done(U32 crc)
+static void uart_write_done(void)
 {
-    static const U8 done_line[13] = {
-        '\n', 'M', 'A', 'T', 'M', 'U', 'L', '_',
+    static const U8 done_line[12] = {
+        'M', 'A', 'T', 'M', 'U', 'L', '_',
         'D', 'O', 'N', 'E', '\n'
     };
     U32 index;
 
-    /* '=' has been popped into the transmitter.  Fill all sixteen FIFO
-     * entries before that character completes on the wire. */
-    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
-    }
-    for (index = 0u; index < 8u; ++index)
-        uart_write_byte(hex_char((crc >> (28u - index * 4u)) & 0x0fu));
-    for (index = 0u; index < 8u; ++index)
-        uart_write_byte(done_line[index]);
-
-    /* TFE rises when the last byte of this batch is popped, leaving one
-     * complete character time in which to append the remaining five bytes. */
-    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
-    }
-    for (index = 8u; index < 13u; ++index)
+    /* The autonomous reporter has just queued its terminating newline.  The
+     * twelve-byte DONE line fits behind it in the sixteen-entry TX FIFO. */
+    for (index = 0u; index < 12u; ++index)
         uart_write_byte(done_line[index]);
 }
 #endif
@@ -126,13 +105,6 @@ int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
-
-    static const U8 crc_prefix[13] = {
-        'M', 'A', 'T', 'M', 'U', 'L', '_',
-        'C', 'R', 'C', '3', '2', '='
-    };
-    U32 index;
-    U32 crc;
 
 #if EVAL_FAST_DMA_START
     /* The evaluation-only reset defaults already fix SRC, DST and 5000
@@ -147,20 +119,16 @@ int main(int argc, char **argv)
     }
 #endif
 
-    while (MATMUL_DMA_Get_Read_Groups() < CRC_PREFIX_GROUP) {
-    }
-    for (index = 0u; index < 13u; ++index)
-        uart_write_byte(crc_prefix[index]);
-
     if (MATMUL_DMA_Wait(0u) != 0) {
         while (1) {
         }
     }
-    crc = MATMUL_DMA_Get_CRC32();
+    while ((MATMUL_DMA_Get_Status() & MATMUL_DMA_STATUS_REPORT_DONE) == 0u) {
+    }
 #if EVAL_DEBUG_COUNTERS
-    uart_write_crc_debug_and_done(crc);
+    uart_write_debug_and_done();
 #else
-    uart_write_crc_and_done(crc);
+    uart_write_done();
 #endif
 
     while (1) {

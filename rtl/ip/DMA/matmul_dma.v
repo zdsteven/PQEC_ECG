@@ -97,9 +97,11 @@ module matmul_dma #(
     output reg [3:0]  matmul_result_index,
     input      [65:0] matmul_result_data0,
     input      [65:0] matmul_result_data1,
+    input             report_done_valid,
 
     output            finish,
     output reg        start_banner_valid,
+    output reg        crc_prefix_valid,
     output reg        crc32_valid,
     output reg [31:0] crc32_final
 );
@@ -140,6 +142,7 @@ reg        clear_status_pulse;
 reg        busy;
 reg        done;
 reg        error;
+reg        report_done;
 reg [12:0] read_group_count;
 reg [12:0] calc_group_count;
 
@@ -365,7 +368,7 @@ always @(posedge clk) begin
             s_axi_rvalid <= 1'b1;
             case (read_offset)
                 ADDR_CTRL:        s_axi_rdata <= 32'd0;
-                ADDR_STATUS:      s_axi_rdata <= {29'd0, error, done, busy};
+                ADDR_STATUS:      s_axi_rdata <= {28'd0, report_done, error, done, busy};
                 ADDR_SRC_BASE:    s_axi_rdata <= src_base;
                 ADDR_DST_BASE:    s_axi_rdata <= dst_base;
                 ADDR_GROUP_NUM:   s_axi_rdata <= group_num;
@@ -394,6 +397,7 @@ always @(posedge clk) begin
         busy                <= 1'b0;
         done                <= 1'b0;
         error               <= 1'b0;
+        report_done         <= 1'b0;
         read_group_count    <= 13'd0;
         calc_group_count    <= 13'd0;
         read_beat           <= 8'd0;
@@ -407,6 +411,7 @@ always @(posedge clk) begin
         core_result_pending <= 2'b00;
         crc_value            <= 32'hffffffff;
         start_banner_valid   <= 1'b0;
+        crc_prefix_valid     <= 1'b0;
         crc_result_data      <= 66'd0;
         crc_result_valid     <= 1'b0;
         crc_finish_pending   <= 1'b0;
@@ -432,6 +437,7 @@ always @(posedge clk) begin
         end
     end else begin
         start_banner_valid <= 1'b0;
+        crc_prefix_valid   <= 1'b0;
         crc32_valid  <= 1'b0;
 `ifdef EVAL_DEBUG_COUNTERS
         dbg_cycle <= dbg_cycle + 32'd1;
@@ -441,11 +447,14 @@ always @(posedge clk) begin
             done  <= 1'b0;
             error <= 1'b0;
         end
+        if (report_done_valid)
+            report_done <= 1'b1;
 
         if (auto_start_armed || start_pulse) begin
             auto_start_armed <= 1'b0;
             start_banner_valid <= 1'b1;
             done <= 1'b0;
+            report_done <= 1'b0;
             if ((group_num == 32'd0) || (group_num > MAX_GROUPS) ||
                 (src_base[1:0] != 2'b00) || (dst_base[1:0] != 2'b00)) begin
                 busy  <= 1'b0;
@@ -527,6 +536,8 @@ always @(posedge clk) begin
                     error <= 1'b1;
 
                 if (read_beat[4:0] == 5'd31) begin
+                    if ((read_group_count + 13'd1) == 13'd3410)
+                        crc_prefix_valid <= 1'b1;
                     read_group_count <= read_group_count + 13'd1;
                     if (m_axi_rlast) begin
                         read_beat  <= 8'd0;

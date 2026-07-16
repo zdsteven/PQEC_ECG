@@ -404,8 +404,10 @@ wire        dma_s_bready ;
 wire        dma_finish   ;
 
 wire        dma_start_banner_valid;
+wire        dma_crc_prefix_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
+wire        uart_crc_queued;
 wire        dma_matmul_active;
 wire        dma_matmul_stream_valid;
 wire [3:0]  dma_matmul_stream_start;
@@ -709,8 +711,10 @@ u_dma (
     .matmul_result_index (dma_matmul_result_index),
     .matmul_result_data0 (dma_matmul_result_data0),
     .matmul_result_data1 (dma_matmul_result_data1),
+    .report_done_valid(uart_crc_queued),
     .finish         (dma_finish),
     .start_banner_valid(dma_start_banner_valid),
+    .crc_prefix_valid(dma_crc_prefix_valid),
     .crc32_valid    (dma_crc32_valid),
     .crc32_final    (dma_crc32_final)
 `else
@@ -721,6 +725,7 @@ u_dma (
 `ifndef USE_EVALUATION_UART_SRAM
 // Generic DMA mode has no private Matmul or autonomous-UART sideband link.
 assign dma_start_banner_valid  = 1'b0;
+assign dma_crc_prefix_valid    = 1'b0;
 assign dma_crc32_valid         = 1'b0;
 assign dma_crc32_final         = 32'd0;
 assign dma_matmul_active       = 1'b0;
@@ -1494,8 +1499,10 @@ axi_uart_controller u_axi_uart_controller
 `ifdef USE_EVALUATION_UART_SRAM
     .uart0_int (uart0_int ),
     .auto_start_valid (dma_start_banner_valid ),
+    .auto_prefix_valid (dma_crc_prefix_valid ),
     .auto_crc_valid (dma_crc32_valid ),
-    .auto_crc32 (dma_crc32_final )
+    .auto_crc32 (dma_crc32_final ),
+    .auto_crc_queued (uart_crc_queued )
 `else
     .uart0_int (uart0_int )
 `endif
