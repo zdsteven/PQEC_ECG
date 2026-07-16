@@ -1,158 +1,276 @@
-import cbor2
-import os
+import argparse
 import glob
+import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 
+import cbor2
+
+
+DEFAULT_DIRECTORY = Path(r"E:\Edge下载\Downloads")
+MAX_TEXT_BYTES = 16 * 1024
 DBG_FIELDS = (
-    "START", "FIRST_R", "LAST_R", "LAST_CORE", "CRC_READY",
-    "R_EMPTY", "CORE_STALL",
+    "START",
+    "FIRST_R",
+    "LAST_R",
+    "LAST_CORE",
+    "CRC_READY",
+    "R_EMPTY",
+    "CORE_STALL",
 )
 
-def get_latest_cbor(directory):
-    """获取最新的 .cbor 文件"""
-    pattern = os.path.join(directory, "*.cbor")
-    files = glob.glob(pattern)
+# These names are descriptive hints derived from the observed trace shape.
+# The raw opcode/kind pair is always printed so an unknown record is not hidden
+# behind an over-confident interpretation.
+EVENT_HINTS = {
+    (90, 8): "TRACE_BEGIN",
+    (90, 9): "TRACE_END",
+    (91, 2): "SPAN_BEGIN",
+    (91, 1): "SPAN_END",
+    (20, 3): "BINARY_BLOCK_20",
+    (21, 3): "BINARY_BLOCK_21",
+    (16, 7): "SERIAL_CONFIG",
+    (16, 4): "SERIAL_DATA",
+    (92, 7): "WAIT_CONDITION",
+    (1, 5): "TIMER_MARK",
+    (8, 3): "CONTROL_8",
+    (9, 3): "CONTROL_9",
+}
+
+
+def get_latest_cbor(directory: Path):
+    files = glob.glob(str(directory / "*.cbor"))
     if not files:
         return None
-    return max(files, key=os.path.getmtime)
+    return Path(max(files, key=os.path.getmtime))
 
-def extract_matmul_strings(filepath):
-    """提取 MATMUL 相关的字符串"""
-    with open(filepath, 'rb') as f:
-        data = cbor2.load(f)
-    
-    def find_matmul(obj):
-        results = []
-        if isinstance(obj, bytes):
-            try:
-                decoded = obj.decode('utf-8')
-                # 包含 MATMUL 或参数行
-                if 'MATMUL' in decoded.upper() or re.search(r'[A-Z]=[0-9A-F]+', decoded):
-                    results.append(decoded.strip())
-            except:
-                pass
-        elif isinstance(obj, list):
-            for item in obj:
-                results.extend(find_matmul(item))
-        elif isinstance(obj, dict):
-            for value in obj.values():
-                results.extend(find_matmul(value))
-        return results
-    
-    return find_matmul(data)
+
+def load_cbor(path: Path):
+    with path.open("rb") as stream:
+        return cbor2.load(stream)
+
+
+def decode_text(blob):
+    if isinstance(blob, str):
+        return blob
+    if not isinstance(blob, bytes) or len(blob) > MAX_TEXT_BYTES:
+        return None
+    try:
+        text = blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not text:
+        return ""
+    printable = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
+    if printable < int(len(text) * 0.9):
+        return None
+    return text
+
+
+def iter_text_values(obj):
+    text = decode_text(obj)
+    if text is not None:
+        yield text
+        return
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            yield from iter_text_values(key)
+            yield from iter_text_values(value)
+    elif isinstance(obj, (list, tuple)):
+        for value in obj:
+            yield from iter_text_values(value)
+    elif isinstance(obj, cbor2.CBORTag):
+        yield from iter_text_values(obj.value)
+
+
+def is_trace_record(value):
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) >= 3
+        and all(isinstance(value[index], int) for index in range(3))
+    )
+
+
+def iter_trace_records(obj):
+    if isinstance(obj, (list, tuple)):
+        for index, value in enumerate(obj):
+            if is_trace_record(value):
+                yield index, value
+
+
+def format_trace_arg(value):
+    if isinstance(value, bytes):
+        text = decode_text(value)
+        if text is not None:
+            return "text=" + repr(text)
+        return f"binary[{len(value):,} bytes]"
+    if isinstance(value, str):
+        return "text=" + repr(value)
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return "null"
+    if isinstance(value, (list, tuple, dict)):
+        return f"<{type(value).__name__} {len(value)} items>"
+    return f"<{type(value).__name__}>"
+
+
+def describe_event(opcode, kind, args):
+    if (opcode, kind) == (16, 7) and len(args) >= 4:
+        return (
+            f"baud={args[0]} parity={args[1]} "
+            f"data_bits={args[2]} stop_bits={args[3]}"
+        )
+    if (opcode, kind) == (92, 7) and len(args) >= 2:
+        return f"timeout={args[0]} condition={format_trace_arg(args[1])}"
+    return " ".join(format_trace_arg(value) for value in args) or "-"
+
+
+def print_timeline(obj):
+    records = list(iter_trace_records(obj))
+    if not records:
+        print("未识别到顶层追踪事件记录。")
+        return
+
+    print()
+    print("=" * 100)
+    print("CBOR 测试流程时间线")
+    print("=" * 100)
+    print("事件名是基于当前样本的提示；opcode/kind 原值始终保留。大块二进制仅显示长度。")
+    print()
+    print(f"{'#':>3} {'时间(ms)':>10} {'间隔(ms)':>10} {'opcode/kind':>12} {'事件':<18} 详情")
+    print("-" * 100)
+
+    previous_tick = None
+    first_tick = None
+    last_tick = None
+    binary_blocks = 0
+    binary_bytes = 0
+    start_ticks = []
+    done_ticks = []
+
+    for index, record in records:
+        opcode, kind, tick = record[:3]
+        args = list(record[3:])
+        if first_tick is None:
+            first_tick = tick
+        last_tick = tick
+        delta = 0 if previous_tick is None else tick - previous_tick
+        previous_tick = tick
+        name = EVENT_HINTS.get((opcode, kind), "UNKNOWN")
+        detail = describe_event(opcode, kind, args)
+        print(
+            f"{index:>3} {tick:>10,} {delta:>10,} "
+            f"{opcode:>5}/{kind:<6} {name:<18} {detail}"
+        )
+
+        for value in args:
+            if isinstance(value, bytes):
+                text = decode_text(value)
+                if text is None:
+                    binary_blocks += 1
+                    binary_bytes += len(value)
+                else:
+                    upper = text.upper()
+                    if "MATMUL_START" in upper:
+                        start_ticks.append(tick)
+                    if "MATMUL_DONE" in upper:
+                        done_ticks.append(tick)
+
+    print("-" * 100)
+    if first_tick is not None:
+        print(
+            f"追踪范围: {first_tick:,} -> {last_tick:,} ms, "
+            f"跨度 {last_tick - first_tick:,} ms"
+        )
+    print(f"跳过二进制块: {binary_blocks} 个，共 {binary_bytes:,} bytes")
+    if start_ticks and done_ticks:
+        coarse = done_ticks[-1] - start_ticks[-1]
+        print(
+            f"串口记录粗粒度 START->DONE 窗口: {coarse} ms；"
+            "该整数毫秒时间线不能替代平台精确 elapsed time。"
+        )
+
+
+def extract_latest_matmul_text(obj):
+    combined = "\n".join(iter_text_values(obj))
+    upper = combined.upper()
+    start = upper.rfind("MATMUL_START")
+    if start < 0:
+        return ""
+    done = upper.find("MATMUL_DONE", start)
+    if done < 0:
+        return combined[start:].strip()
+    return combined[start : done + len("MATMUL_DONE")].strip()
+
 
 def parse_all_params(text):
-    """解析所有 A=XXXXX 格式的参数"""
     data = {}
-    
-    # 匹配所有 大写字母=十六进制数 的模式
-    # 支持 X=XXXXX 以及 X=XXXXX.XXXXX 格式（多点分隔）
-    pattern = r'(?<![A-Z0-9_])([A-Z])=([0-9A-F\.]+)'
-    matches = re.findall(pattern, text, re.IGNORECASE)
-    
-    for key, value in matches:
+
+    pattern = r"(?<![A-Z0-9_])([A-Z])=([0-9A-F\.]+)"
+    for key, value in re.findall(pattern, text, re.IGNORECASE):
         key = key.upper()
-        # 处理可能的多点分隔值
-        if '.' in value:
-            parts = value.split('.')
+        if "." in value:
             values = []
-            for p in parts:
-                if p.strip():
-                    try:
-                        values.append(int(p.strip(), 16))
-                    except:
-                        pass
+            for part in value.split("."):
+                try:
+                    values.append(int(part, 16))
+                except ValueError:
+                    pass
             if values:
                 data[key] = values if len(values) > 1 else values[0]
         else:
             try:
                 data[key] = int(value, 16)
-            except:
+            except ValueError:
                 pass
-    
-    # 查找 CRC32
-    crc_match = re.search(r'MATMUL_CRC32=\s*([0-9A-F]+)', text, re.IGNORECASE)
-    if crc_match:
-        data['CRC32'] = crc_match.group(1)
 
-    # The report capture may insert a newline in the middle of the fixed DBG
-    # record. Remove whitespace before matching all seven 32-bit fields.
-    compact = re.sub(r'\s+', '', text.upper())
-    dbg_match = re.search(
-        r'DBG=([0-9A-F]{8}(?:,[0-9A-F]{8}){6})', compact
-    )
+    crc_match = re.search(r"MATMUL_CRC32=\s*([0-9A-F]+)", text, re.IGNORECASE)
+    if crc_match:
+        data["CRC32"] = crc_match.group(1).upper()
+
+    compact = re.sub(r"\s+", "", text.upper())
+    dbg_match = re.search(r"DBG=([0-9A-F]{8}(?:,[0-9A-F]{8}){6})", compact)
     if dbg_match:
-        values = [int(value, 16) for value in dbg_match.group(1).split(',')]
+        values = [int(value, 16) for value in dbg_match.group(1).split(",")]
         data.update(dict(zip(DBG_FIELDS, values)))
-    
     return data
 
-def format_time_table(data):
-    """生成时间表格"""
+
+def print_matmul_analysis(text):
     print()
-    print("=" * 80)
-    print("MATMUL 参数时间分析")
-    print("=" * 80)
-    print()
-    
-    # 收集所有参数（排除 CRC32）
-    params = {k: v for k, v in data.items() if k != 'CRC32'}
-    
-    if not params:
-        print("未找到参数数据")
+    print("=" * 100)
+    print("最新 MATMUL 串口记录")
+    print("=" * 100)
+    if not text:
+        print("未找到 MATMUL_START。")
         return
-    
-    # 打印表头
-    print(f"{'参数':<6} {'十六进制':<16} {'十进制':<14} {'时间 (20ns)':<18} {'时间 (ms)':<14}")
-    print("-" * 80)
-    
-    # 遍历所有参数
-    for key in sorted(params.keys()):
-        value = params[key]
-        
-        # 处理列表（多个值）
-        if isinstance(value, list):
-            for i, v in enumerate(value):
-                label = f"{key}{i+1}" if i > 0 else key
-                ns = v * 20
-                ms = ns / 1_000_000
-                hex_str = f"0x{v:08X}"
-                print(f"{label:<6} {hex_str:<16} {v:<14,} {ns:<18,} {ms:<14.6f}")
-        else:
-            ns = value * 20
-            ms = ns / 1_000_000
-            hex_str = f"0x{value:08X}"
-            print(f"{key:<6} {hex_str:<16} {value:<14,} {ns:<18,} {ms:<14.6f}")
-    
-    print("-" * 80)
-    
-    # 计算差值（如果有多个参数）
+    print(text)
+
+    data = parse_all_params(text)
+    if "CRC32" in data:
+        print(f"\nCRC32: {data['CRC32']}")
+
+    params = {key: value for key, value in data.items() if key != "CRC32"}
+    if not params:
+        return
+
     print()
-    print("参数差值分析:")
-    print("-" * 60)
-    
-    # 获取所有单值参数（非列表）
-    single_params = {
-        k: v for k, v in params.items()
-        if not isinstance(v, list) and k not in DBG_FIELDS
-    }
-    keys = sorted(single_params.keys())
-    
-    for i in range(len(keys)):
-        for j in range(i + 1, len(keys)):
-            k1, k2 = keys[i], keys[j]
-            v1, v2 = single_params[k1], single_params[k2]
-            diff = v2 - v1
-            ns = diff * 20
-            ms = ns / 1_000_000
-            print(f"  {k2} - {k1} = {diff:,} (0x{diff:X}) = {ns:,} ns = {ms:.6f} ms")
+    print(f"{'参数':<12} {'十六进制':<12} {'十进制':>12} {'时间(ms, 20ns/cycle)':>22}")
+    print("-" * 64)
+    for key in DBG_FIELDS:
+        if key not in params:
+            continue
+        value = params[key]
+        print(f"{key:<12} 0x{value:08X} {value:>12,} {value * 20 / 1_000_000:>22.6f}")
 
     if all(field in data for field in DBG_FIELDS):
         print()
         print("DBG 阶段差值:")
-        print("-" * 60)
         debug_diffs = (
             ("FIRST_R - START", data["FIRST_R"] - data["START"]),
             ("LAST_R - FIRST_R", data["LAST_R"] - data["FIRST_R"]),
@@ -160,67 +278,70 @@ def format_time_table(data):
             ("CRC_READY - LAST_CORE", data["CRC_READY"] - data["LAST_CORE"]),
             ("CRC_READY - START", data["CRC_READY"] - data["START"]),
         )
-        for label, diff in debug_diffs:
-            print(f"  {label:<25} {diff:>9,} cycles = {diff * 20 / 1_000_000:.6f} ms")
+        for label, cycles in debug_diffs:
+            print(f"  {label:<25} {cycles:>9,} cycles = {cycles * 20 / 1_000_000:.6f} ms")
         read_gaps = data["LAST_R"] - data["FIRST_R"] - 159999
-        print(f"  {'R span non-transfer':<25} {read_gaps:>9,} cycles = {read_gaps * 20 / 1_000_000:.6f} ms")
-    
-    # CRC32
-    if 'CRC32' in data:
-        print()
-        print(f"CRC32: {data['CRC32']}")
+        print(
+            f"  {'R span non-transfer':<25} {read_gaps:>9,} cycles = "
+            f"{read_gaps * 20 / 1_000_000:.6f} ms"
+        )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="解析线上评测 CBOR 的流程时间线、串口文本和 MATMUL 调试字段。"
+    )
+    parser.add_argument(
+        "file",
+        nargs="?",
+        type=Path,
+        help="指定 .cbor 文件；省略时读取下载目录中最新文件。",
+    )
+    parser.add_argument(
+        "--directory",
+        type=Path,
+        default=DEFAULT_DIRECTORY,
+        help=f"自动查找目录（默认: {DEFAULT_DIRECTORY}）。",
+    )
+    parser.add_argument(
+        "--no-timeline",
+        action="store_true",
+        help="只显示 MATMUL 串口与 DBG，不显示完整事件时间线。",
+    )
+    return parser.parse_args()
+
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    directory = r"E:\Edge下载\Downloads"
-    latest = get_latest_cbor(directory)
-    
-    if not latest:
-        print("未找到 .cbor 文件")
-        return
-    
-    print(f"文件: {os.path.basename(latest)}")
-    print(f"时间: {datetime.fromtimestamp(os.path.getmtime(latest)).strftime('%Y-%m-%d %H:%M:%S')}")
-    print("-" * 80)
-    
-    # 提取 MATMUL 字符串
-    strings = extract_matmul_strings(latest)
-    
-    # 只取最新的 MATMUL_DONE 相关数据
-    last_matmul = []
-    found_done = False
-    for s in reversed(strings):
-        if 'MATMUL_DONE' in s.upper():
-            found_done = True
-            last_matmul.append(s)
-        elif found_done and 'MATMUL_START' in s.upper():
-            last_matmul.append(s)
-            break
-        elif found_done:
-            last_matmul.append(s)
-    
-    last_matmul.reverse()
-    
-    if not last_matmul:
-        print("未找到 MATMUL 数据")
-        return
-    
-    print("最新的 MATMUL 数据:")
-    print("-" * 60)
-    all_text = ""
-    for s in last_matmul:
-        print(s)
-        all_text += s + "\n"
-    
-    # 解析所有参数
-    data = parse_all_params(all_text)
-    
-    print()
-    print(f"解析到的参数: {', '.join([k for k in data.keys() if k != 'CRC32'])}")
-    
-    # 显示时间表格
-    format_time_table(data)
+    args = parse_args()
+    path = args.file or get_latest_cbor(args.directory)
+    if path is None:
+        print(f"未在 {args.directory} 找到 .cbor 文件。", file=sys.stderr)
+        return 1
+    path = path.resolve()
+    if not path.is_file():
+        print(f"CBOR 文件不存在: {path}", file=sys.stderr)
+        return 2
+
+    obj = load_cbor(path)
+    print(f"文件: {path.name}")
+    print(f"路径: {path}")
+    print(f"大小: {path.stat().st_size:,} bytes")
+    print(
+        "修改时间: "
+        + datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    )
+    if isinstance(obj, dict) and "version" in obj:
+        print(f"CBOR version: {obj['version']}")
+    elif isinstance(obj, list) and obj and isinstance(obj[0], dict):
+        print(f"CBOR metadata: {obj[0]}")
+
+    if not args.no_timeline:
+        print_timeline(obj)
+    print_matmul_analysis(extract_latest_matmul_text(obj))
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

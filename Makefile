@@ -2,10 +2,10 @@
 # Makefile - 同步脚本管理器 (PowerShell 兼容版)
 # ============================================================
 
-.PHONY: help gitlab wsl vivado checks all clean status
+.PHONY: help gitlab wsl vivado check checks all clean status
 
 help:
-	powershell -Command "Write-Host '============================================'; Write-Host 'Available targets:'; Write-Host '  make gitlab    - Sync to GitLab repository'; Write-Host '  make wsl       - Sync to WSL and build'; Write-Host '  make vivado    - Generate Vivado bitstream'; Write-Host '  make checks    - Run lint, DSP and timing checks'; Write-Host '  make all       - Run all tasks'; Write-Host '  make clean     - Clean build artifacts'; Write-Host '  make status    - Check script status'; Write-Host '  make help      - Show this help'; Write-Host '============================================'"
+	powershell -Command "Write-Host '============================================'; Write-Host 'Available targets:'; Write-Host '  make gitlab    - Sync to GitLab repository'; Write-Host '  make wsl       - Sync to WSL and build'; Write-Host '  make vivado    - Generate Vivado bitstream'; Write-Host '  make check     - Run lint, DSP and timing checks'; Write-Host '  make checks    - Alias of make check'; Write-Host '  make all       - Run all tasks'; Write-Host '  make clean     - Clean build artifacts'; Write-Host '  make status    - Check script status'; Write-Host '  make help      - Show this help'; Write-Host '============================================'"
 
 gitlab:
 	powershell -Command "& '.\sync_gitlab.bat'"
@@ -16,8 +16,10 @@ wsl:
 vivado:
 	powershell -Command "& '.\sync_vivado.bat'"
 
-checks:
+check:
 	powershell -Command "& '.\run_checks.bat'"
+
+checks: check
 
 all:
 	powershell -Command "& '.\sync_gitlab.bat'; Write-Host ''; & '.\sync_wsl.bat'; Write-Host ''; & '.\sync_vivado.bat'; Write-Host ''; & '.\run_checks.bat'; Write-Host ''; Write-Host '============================================'; Write-Host 'All tasks completed!'; Write-Host '============================================'"

@@ -107,7 +107,7 @@ matmul_dma 读调度器
                                    ▼
                                UART_TX
 
-CPU ──► DMA 配置/start ──► 读取进度、done、CRC32
+CPU ──► DMA CTRL.start ──► 读取进度、done、CRC32
  └──────────────────────► UART TX FIFO（CRC 前缀、数字和 DONE）
 ```
 
@@ -130,7 +130,7 @@ CPU ──► DMA 配置/start ──► 读取进度、done、CRC32
 
 系统复位释放条件是 `pll_locked & ~reset`，因此各状态机只在 PLL 已锁定且平台释放复位后运行。
 
-### 4.2 评测 cache 冷启动与 CPU 显式启动 DMA
+### 4.2 评测 cache 冷启动与 CPU 快速启动 DMA
 
 `matmul_dma` 的复位默认参数已经固定为评测数据：
 
@@ -142,13 +142,14 @@ GROUP_NUM = 5000
 
 评测网表将 I-cache 和 D-cache 的 tag/valid BRAM 初始化为全 0。软件使用 `EVAL_FAST_START=1`，因此复位释放后不再重复执行 256 个索引、两个 cache、两个 way 的 1024 次 `cacop`，但仍保留地址模式、data/bss、cache enable、异常入口和栈初始化。
 
-DMA 复位时 `auto_start_armed=0`。CPU 进入 `main` 后通过 `MATMUL_DMA_Start` 写入固定评测参数并显式写 CTRL.start：
+DMA 复位时 `auto_start_armed=0`。CPU 进入 `main` 后不再读取状态或重复写入 SRC/DST/GROUP/STATUS，只写一次 CTRL.start。DMA 接受该写入后：
 
-- 配置源地址、保留的结果地址和 5000 组数量；
 - 清空组计数、core 调度状态和 CRC 状态；
 - 置 `busy`；
 - 同拍产生一次 `start_banner_valid`；
 - 随即发起第一笔 ExtRAM AXI 读请求。
+
+完整配置式 `MATMUL_DMA_Start` 仍保留在关闭 `EVAL_FAST_DMA_START` 时使用；正式评测默认 `EVAL_FAST_DMA_START=1`。
 
 DMA 接受 CPU start 时触发 START 字符串；DMA 状态机、CPU 调度和 UART 发送随后并行推进。
 
@@ -287,7 +288,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 ### 6.1 控制路径
 
 - 评测 tag/valid BRAM 使用冷启动无效初值，软件跳过重复 `cacop`；
-- CPU 用固定评测参数显式启动 DMA；
+- CPU 依赖固定评测复位参数，仅用一次 CTRL.start 写显式启动 DMA；
 - START 在 DMA 启动时由硬件触发；
 - 软件按读取组数提前安排 CRC 前缀，等待 done 后读取 CRC；
 - 评测程序不包含 `printf`、软件 CRC、CPU 逐组搬运和结果读取；

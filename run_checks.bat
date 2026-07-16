@@ -2,12 +2,13 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================
-:: run_checks.bat - Run DSP and timing checks (skip linter)
+:: run_checks.bat - Run HDL lint, DSP and timing checks
 :: ============================================================
 
 set "SCRIPT_DIR=%~dp0"
 set "FPGA_DIR=%SCRIPT_DIR%fpga"
 set "PROJECT_DIR=%FPGA_DIR%\project"
+set "PROJECT_XPR=%PROJECT_DIR%\Loongson_Soc.xpr"
 set "PYTHON_EXE=%SCRIPT_DIR%.venv\Scripts\python.exe"
 set "DSP_REPORT=%PROJECT_DIR%\dsp_utilization.rpt"
 set "TIMING_REPORT=%PROJECT_DIR%\Loongson_Soc.runs\impl_1\timing_summary.rpt"
@@ -32,15 +33,24 @@ if not exist "%PYTHON_EXE%" (
 )
 
 :: ============================================================
-:: Step 1: Skip Linter (verilator not available on Windows)
+:: Step 1: Run HDL linter
 :: ============================================================
 echo.
 echo ============================================
-echo Step 1: Skipping HDL linter (verilator not available on Windows)
+echo Step 1: Running HDL linter...
 echo ============================================
-echo [INFO] Linter is skipped for local Windows build.
-echo [INFO] Linter will run in GitLab CI where verilator is available.
-echo.
+
+if not exist "%PROJECT_XPR%" (
+    echo [ERROR] Vivado project not found: %PROJECT_XPR%
+    exit /b 1
+)
+
+"%PYTHON_EXE%" "%FPGA_DIR%\run-linter.py" "%PROJECT_XPR%"
+if errorlevel 1 (
+    echo [ERROR] HDL lint check failed!
+    exit /b 1
+)
+echo [SUCCESS] HDL lint check passed.
 
 :: ============================================================
 :: Step 2: Run DSP utilization check
@@ -53,18 +63,13 @@ echo ============================================
 cd /d "%FPGA_DIR%"
 
 if not exist "%DSP_REPORT%" (
-    echo [WARNING] DSP report not found: %DSP_REPORT%
-    echo [INFO] Please run implementation first
-    set /p CONTINUE="Continue without DSP check? (y/n): "
-    if /i not "!CONTINUE!"=="y" (
-        pause
-        exit /b 1
-    )
+    echo [ERROR] DSP report not found: %DSP_REPORT%
+    echo [INFO] Run make vivado first to generate current implementation reports.
+    exit /b 1
 ) else (
     "%PYTHON_EXE%" check_dsp.py "%DSP_REPORT%" %DSP_MAX%
     if errorlevel 1 (
         echo [ERROR] DSP utilization check failed!
-        pause
         exit /b 1
     )
     echo [SUCCESS] DSP utilization check passed.
@@ -79,13 +84,9 @@ echo Step 3: Running timing check...
 echo ============================================
 
 if not exist "%TIMING_REPORT%" (
-    echo [WARNING] Timing report not found: %TIMING_REPORT%
-    echo [INFO] Please run implementation first
-    set /p CONTINUE="Continue without timing check? (y/n): "
-    if /i not "!CONTINUE!"=="y" (
-        pause
-        exit /b 1
-    )
+    echo [ERROR] Timing report not found: %TIMING_REPORT%
+    echo [INFO] Run make vivado first to generate current implementation reports.
+    exit /b 1
 ) else (
     "%PYTHON_EXE%" check_timing.py "%TIMING_REPORT%"
     if errorlevel 1 (

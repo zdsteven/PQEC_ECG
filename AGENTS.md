@@ -201,15 +201,14 @@ MATMUL_DONE
 
 ```powershell
 make wsl
-.\.venv\Scripts\python.exe fpga/run-linter.py fpga/project/Loongson_Soc.xpr
 make vivado
-make checks
+make check
 ```
 
 - `make wsl` 构建 `user-sample.bin`；必须核对构建参数确实对应 5000 组和当前 UART 调度。
 - `make vivado` 默认复用 `fpga/project/Loongson_Soc.xpr`，用于生成 bitstream 和当前实现报告；不要在每次编译前删除工程。
-- `make checks` 只能检查最新一次重新实现产生的 DSP/WNS 报告。
-- 本地 linter 已可运行；PLL 相关模型或黑盒报错可忽略，其他错误必须修复，线上 lint 仍是最终判据。
+- `make check`（兼容别名 `make checks`）统一运行本地 HDL lint、DSP=0 和 WNS>0 检查；DSP/WNS 只对最新一次重新实现产生的报告有效，报告缺失时会提示先运行 `make vivado` 并返回失败。
+- 本地 linter 也可单独运行；PLL 相关模型或黑盒报错可忽略，其他错误必须修复，线上 lint 仍是最终判据。
 
 ## 评测任务配置
 
@@ -337,11 +336,12 @@ ARLEN=255, ARSIZE=2, ARBURST=INCR
 | `doc/矩阵乘法DMA加速器工作流程说明.md` | 当前硬件数据通路说明 |
 | `fpga/check_dsp.py` | DSP=0 检查 |
 | `fpga/check_timing.py` | WNS>0 检查 |
-| `fpga/run-linter.py` | CI HDL lint |
+| `fpga/run-linter.py` | 本地与 CI HDL lint |
+| `run_checks.bat` | `make check` / `make checks` 调用的本地 lint、DSP 和 WNS 统一检查入口 |
 | `fpga/create_project.tcl` | 仅在现有 Vivado 工程缺失、损坏或源文件集合失配时重建工程 |
 | `tools/generate_matmul_testdata.py` | A 后 B 布局的测试数据生成 |
 | `Makefile`、`sync_gitlab.bat` | 首选线上验证入口和同步流程 |
-| `cbor.py` | 线上评测完成后读取最新 CBOR 截取中的 UART、CRC 和 DBG 信息 |
+| `cbor.py` | 线上评测完成后读取 CBOR 流程时间线、UART、CRC 和 DBG 信息，并跳过大块二进制内容 |
 
 ## 优化分析顺序
 
