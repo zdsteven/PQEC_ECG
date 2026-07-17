@@ -34,7 +34,7 @@ static U8 hex_char(U32 nibble)
                             (U8)('A' + nibble - 10u);
 }
 
-#if EVAL_DEBUG_COUNTERS
+#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
 static void append_hex32(U8 *buffer, U32 *length, U32 value)
 {
     U32 index;
@@ -42,6 +42,51 @@ static void append_hex32(U8 *buffer, U32 *length, U32 value)
     for (index = 0u; index < 8u; ++index)
         buffer[(*length)++] = hex_char((value >> (28u - index * 4u)) & 0x0fu);
 }
+#endif
+
+#if EVAL_DEBUG_CAPTURE
+static void uart_write_crc_capture_and_done(U32 crc)
+{
+    static U8 debug_tail[96];
+    static const U8 done_line[12] = {
+        'M', 'A', 'T', 'M', 'U', 'L', '_',
+        'D', 'O', 'N', 'E', '\n'
+    };
+    U32 index;
+    U32 length = 0u;
+    U32 chunk_end;
+
+    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
+    }
+    for (index = 0u; index < 8u; ++index)
+        uart_write_byte(hex_char((crc >> (28u - index * 4u)) & 0x0fu));
+    uart_write_byte('\n');
+
+    debug_tail[length++] = 'R';
+    debug_tail[length++] = 'A';
+    debug_tail[length++] = 'W';
+    debug_tail[length++] = '1';
+    debug_tail[length++] = '=';
+    for (index = 0u; index < 8u; ++index) {
+        append_hex32(debug_tail, &length,
+                     RegRead(MATMUL_DMA_DBG_INPUT_BASE_ADDR + index * 4u));
+        debug_tail[length++] = (index == 7u) ? '\n' : ',';
+    }
+    for (index = 0u; index < 12u; ++index)
+        debug_tail[length++] = done_line[index];
+
+    index = 0u;
+    while (index < length) {
+        while ((uart_line_status() & UART_LSR_TFE) == 0u) {
+        }
+        chunk_end = index + 16u;
+        if (chunk_end > length)
+            chunk_end = length;
+        while (index < chunk_end)
+            uart_write_byte(debug_tail[index++]);
+    }
+}
+#elif EVAL_DEBUG_COUNTERS
 
 static void uart_write_crc_debug_and_done(U32 crc)
 {
@@ -157,7 +202,9 @@ int main(int argc, char **argv)
         }
     }
     crc = MATMUL_DMA_Get_CRC32();
-#if EVAL_DEBUG_COUNTERS
+#if EVAL_DEBUG_CAPTURE
+    uart_write_crc_capture_and_done(crc);
+#elif EVAL_DEBUG_COUNTERS
     uart_write_crc_debug_and_done(crc);
 #else
     uart_write_crc_and_done(crc);

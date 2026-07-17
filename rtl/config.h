@@ -43,6 +43,10 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Formal score measurements keep the instrumentation out of the netlist.
 // `define EVAL_DEBUG_COUNTERS
 
+// Temporary online diagnostic: expose selected words from the first non-zero
+// input group so DDR capture alignment can be compared with the CBOR image.
+// `define EVAL_DEBUG_CAPTURE
+
 `define USE_CACHE
 
 `define Lawcmd 4

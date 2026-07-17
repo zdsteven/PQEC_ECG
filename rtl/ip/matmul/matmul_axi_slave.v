@@ -49,6 +49,9 @@ module matmul_axi_slave (
     input      [3:0]  dma_stream_core,
     input      [4:0]  dma_stream_index,
     input      [31:0] dma_stream_data,
+    input             dma_stream_valid1,
+    input      [4:0]  dma_stream_index1,
+    input      [31:0] dma_stream_data1,
     output     [3:0]  dma_ready,
     output     [3:0]  dma_done,
     input      [3:0]  dma_result_index,
@@ -112,8 +115,16 @@ wire dma_accept1  = dma_stream_start[1] && dma_ready[1];
 wire cpu_accept   = start_write && !dma_active && !busy_status;
 wire core0_start  = dma_accept0 || cpu_accept;
 
+`ifdef USE_EVALUATION_UART_SRAM
+// A completed snapshot remains stable while the core accepts the next group.
+// Allow the DMA to reuse a core in the cycle where its one-cycle done pulse is
+// still high, eliminating the otherwise recurring pair-stream bubble.
+assign dma_ready[0]       = dma_active && !core0_busy && !capture_active;
+assign dma_ready[1]       = dma_active && !core1_busy;
+`else
 assign dma_ready[0]       = dma_active && !core0_busy && !core0_done && !capture_active;
 assign dma_ready[1]       = dma_active && !core1_busy && !core1_done;
+`endif
 assign dma_ready[2]       = 1'b0;
 assign dma_ready[3]       = 1'b0;
 assign dma_done[0]        = core0_done && owner_dma;
@@ -155,6 +166,7 @@ wire core0_stream_valid = dma_active ?
                           (cpu_input_write && core0_busy && !capture_active);
 wire [4:0] core0_stream_index = dma_active ? dma_stream_index : cpu_stream_index;
 wire [31:0] core0_stream_data = dma_active ? dma_stream_data : cpu_stream_data;
+wire core0_stream_valid1 = dma_active && dma_stream_valid1 && dma_stream_core[0];
 
 function [31:0] c_read_word;
     input [5:0] word_number;
@@ -202,9 +214,22 @@ assign s_axi_rresp   = 2'b00;
 
 `ifdef USE_EVALUATION_UART_SRAM
 matmul_batch_core u_matmul_batch_core0 (
+    .clk          (clk),
+    .resetn       (resetn),
+    .start        (core0_start),
+    .stream_valid (core0_stream_valid),
+    .stream_index (core0_stream_index),
+    .stream_data  (core0_stream_data),
+    .stream_valid1(core0_stream_valid1),
+    .stream_index1(dma_stream_index1),
+    .stream_data1 (dma_stream_data1),
+    .busy         (core0_busy),
+    .done         (core0_done),
+    .result_index (core0_result_index),
+    .result_data  (core0_result_data)
+);
 `else
 matmul_batch_core_dsp u_matmul_batch_core0 (
-`endif
     .clk          (clk),
     .resetn       (resetn),
     .start        (core0_start),
@@ -216,6 +241,7 @@ matmul_batch_core_dsp u_matmul_batch_core0 (
     .result_index (core0_result_index),
     .result_data  (core0_result_data)
 );
+`endif
 
 `ifdef USE_EVALUATION_UART_SRAM
 matmul_batch_core u_matmul_batch_core1 (
@@ -225,6 +251,9 @@ matmul_batch_core u_matmul_batch_core1 (
     .stream_valid (dma_stream_valid && dma_stream_core[1]),
     .stream_index (dma_stream_index),
     .stream_data  (dma_stream_data),
+    .stream_valid1(dma_stream_valid1 && dma_stream_core[1]),
+    .stream_index1(dma_stream_index1),
+    .stream_data1 (dma_stream_data1),
     .busy         (core1_busy),
     .done         (core1_done),
     .result_index (dma_result_index),

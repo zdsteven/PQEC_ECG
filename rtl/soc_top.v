@@ -412,6 +412,9 @@ wire [3:0]  dma_matmul_stream_start;
 wire [3:0]  dma_matmul_stream_core;
 wire [4:0]  dma_matmul_stream_index;
 wire [31:0] dma_matmul_stream_data;
+wire        dma_matmul_stream_valid1;
+wire [4:0]  dma_matmul_stream_index1;
+wire [31:0] dma_matmul_stream_data1;
 wire [3:0]  dma_matmul_ready;
 wire [3:0]  dma_matmul_done;
 wire [3:0]  dma_matmul_result_index;
@@ -419,6 +422,13 @@ wire [65:0] dma_matmul_result_data0;
 wire [65:0] dma_matmul_result_data1;
 wire [65:0] dma_matmul_result_data2;
 wire [65:0] dma_matmul_result_data3;
+wire        dma_fast_read_active;
+wire [19:0] dma_fast_read_base_word;
+wire [16:0] dma_fast_read_pair_count;
+wire        dma_fast_pair_valid;
+wire [31:0] dma_fast_pair_data0;
+wire [31:0] dma_fast_pair_data1;
+wire        dma_fast_pair_ready;
 
 
 //axi dvi
@@ -698,12 +708,22 @@ u_dma (
     .m_axi_rvalid   (dma_m_rvalid),
     .m_axi_rready   (dma_m_rready),
 `ifdef USE_EVALUATION_UART_SRAM
+    .fast_read_active(dma_fast_read_active),
+    .fast_read_base_word(dma_fast_read_base_word),
+    .fast_read_pair_count(dma_fast_read_pair_count),
+    .fast_pair_valid(dma_fast_pair_valid),
+    .fast_pair_data0(dma_fast_pair_data0),
+    .fast_pair_data1(dma_fast_pair_data1),
+    .fast_pair_ready(dma_fast_pair_ready),
     .matmul_active  (dma_matmul_active),
     .matmul_stream_valid(dma_matmul_stream_valid),
     .matmul_stream_start(dma_matmul_stream_start),
     .matmul_stream_core (dma_matmul_stream_core),
     .matmul_stream_index(dma_matmul_stream_index),
     .matmul_stream_data (dma_matmul_stream_data),
+    .matmul_stream_valid1(dma_matmul_stream_valid1),
+    .matmul_stream_index1(dma_matmul_stream_index1),
+    .matmul_stream_data1(dma_matmul_stream_data1),
     .matmul_ready   (dma_matmul_ready),
     .matmul_done    (dma_matmul_done),
     .matmul_result_index (dma_matmul_result_index),
@@ -729,7 +749,14 @@ assign dma_matmul_stream_start = 4'd0;
 assign dma_matmul_stream_core  = 4'd0;
 assign dma_matmul_stream_index = 5'd0;
 assign dma_matmul_stream_data  = 32'd0;
+assign dma_matmul_stream_valid1 = 1'b0;
+assign dma_matmul_stream_index1 = 5'd0;
+assign dma_matmul_stream_data1  = 32'd0;
 assign dma_matmul_result_index = 4'd0;
+assign dma_fast_read_active     = 1'b0;
+assign dma_fast_read_base_word  = 20'd0;
+assign dma_fast_read_pair_count = 17'd0;
+assign dma_fast_pair_ready      = 1'b0;
 `endif
 
 matmul_axi_slave u_matmul (
@@ -783,6 +810,9 @@ matmul_axi_slave u_matmul (
     .dma_stream_core (dma_matmul_stream_core),
     .dma_stream_index(dma_matmul_stream_index),
     .dma_stream_data (dma_matmul_stream_data),
+    .dma_stream_valid1(dma_matmul_stream_valid1),
+    .dma_stream_index1(dma_matmul_stream_index1),
+    .dma_stream_data1(dma_matmul_stream_data1),
     .dma_ready      ( dma_matmul_ready  ),
     .dma_done       ( dma_matmul_done   ),
     .dma_result_index ( dma_matmul_result_index ),
@@ -1406,6 +1436,14 @@ axi_wrap_ram_sp_external u_axi_ram (
     .axi_bresp ( ram_bresp ),
     .axi_bvalid ( ram_bvalid ),
     .axi_bready ( ram_bready ),
+
+    .fast_read_active    ( dma_fast_read_active     ),
+    .fast_read_base_word ( dma_fast_read_base_word  ),
+    .fast_read_pair_count( dma_fast_read_pair_count ),
+    .fast_pair_valid     ( dma_fast_pair_valid      ),
+    .fast_pair_data0     ( dma_fast_pair_data0      ),
+    .fast_pair_data1     ( dma_fast_pair_data1      ),
+    .fast_pair_ready     ( dma_fast_pair_ready      ),
 
     .base_ram_addr ( base_ram_addr ),
     .base_ram_be_n ( base_ram_be_n ),
