@@ -1567,6 +1567,7 @@ axi_uart_controller u_axi_uart_controller
     // UART_TOP consumes this level only in AUTO_ARM, so the later DMA pulse
     // cannot restart or duplicate the banner.
     .auto_start_valid (sys_resetn ),
+    .auto_dma_start_valid (dma_start_banner_valid ),
     .auto_crc_valid (dma_crc32_valid ),
     .auto_crc32 (dma_crc32_final )
 `else
