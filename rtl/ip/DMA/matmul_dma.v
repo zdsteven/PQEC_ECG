@@ -10,6 +10,7 @@ module matmul_dma #(
 ) (
     input             clk,
     input             resetn,
+    input      [31:0] dbg_reset_release_cycles,
 
     // CPU-facing AXI slave register interface (0x1f30_0000).
     input      [4:0]  s_axi_awid,
@@ -133,6 +134,7 @@ localparam [11:0] ADDR_DBG_LAST_CORE   = 12'h034;
 localparam [11:0] ADDR_DBG_CRC         = 12'h038;
 localparam [11:0] ADDR_DBG_R_EMPTY     = 12'h03c;
 localparam [11:0] ADDR_DBG_CORE_STALL  = 12'h040;
+localparam [11:0] ADDR_DBG_RESET_RELEASE = 12'h044;
 `endif
 `ifdef EVAL_DEBUG_CAPTURE
 localparam [11:0] ADDR_DBG_INPUT_BASE  = 12'h080;
@@ -393,6 +395,7 @@ always @(posedge clk) begin
                 ADDR_DBG_CRC:        s_axi_rdata <= dbg_crc_cycle;
                 ADDR_DBG_R_EMPTY:    s_axi_rdata <= dbg_r_empty_cycles;
                 ADDR_DBG_CORE_STALL: s_axi_rdata <= dbg_core_stall_cycles;
+                ADDR_DBG_RESET_RELEASE: s_axi_rdata <= dbg_reset_release_cycles;
 `endif
                 default: begin
 `ifdef EVAL_DEBUG_CAPTURE

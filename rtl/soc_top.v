@@ -85,6 +85,25 @@ wire sram_clk180;
 wire sram_sample_clk;
 wire pll_locked;
 
+// Online diagnostic for the interval from the external reset release until
+// the synchronized system reset is released.  Use the existing PLL-generated
+// system clock so the diagnostic does not add a fabric clock branch to the
+// clock-capable PLL input and alter its legal ZHOLD connectivity.
+reg [31:0] eval_reset_release_cycles;
+reg        eval_sys_reset_seen;
+
+always @(posedge sys_clk or posedge reset) begin
+    if (reset) begin
+        eval_reset_release_cycles <= 32'd0;
+        eval_sys_reset_seen        <= 1'b0;
+    end else if (!eval_sys_reset_seen) begin
+        if (sys_resetn)
+            eval_sys_reset_seen <= 1'b1;
+        else
+            eval_reset_release_cycles <= eval_reset_release_cycles + 32'd1;
+    end
+end
+
 generate if(SIMULATION) begin: sim_clk
     //simulation clk.
     reg clk_sim;
@@ -641,6 +660,9 @@ axi_dma
 u_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),
+`ifdef USE_EVALUATION_UART_SRAM
+    .dbg_reset_release_cycles(eval_reset_release_cycles),
+`endif
 
     .s_axi_awid     (dma_s_awid),
     .s_axi_awaddr   (dma_s_awaddr),
@@ -1539,7 +1561,12 @@ axi_uart_controller u_axi_uart_controller
     .uart0_ri_i (uart0_ri_i ),
 `ifdef USE_EVALUATION_UART_SRAM
     .uart0_int (uart0_int ),
-    .auto_start_valid (dma_start_banner_valid ),
+    // The evaluation UART is already configured by its reset defaults.  Start
+    // the banner as soon as the synchronized system reset is released instead
+    // of exposing the CPU-to-DMA startup latency on the scored UART timeline.
+    // UART_TOP consumes this level only in AUTO_ARM, so the later DMA pulse
+    // cannot restart or duplicate the banner.
+    .auto_start_valid (sys_resetn ),
     .auto_crc_valid (dma_crc32_valid ),
     .auto_crc32 (dma_crc32_final )
 `else

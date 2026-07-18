@@ -19,6 +19,17 @@ DBG_FIELDS = (
     "CRC_READY",
     "R_EMPTY",
     "CORE_STALL",
+    "RESET_RELEASE",
+)
+CDBG_FIELDS = (
+    "CPU_MAIN",
+    "CPU_DMA_START",
+    "CPU_PREFIX_READY",
+    "CPU_PREFIX_DONE",
+    "CPU_DMA_DONE",
+    "CPU_WRITER",
+    "CPU_CRC_TFE",
+    "CPU_CRC_LINE_POP",
 )
 
 # These names are descriptive hints derived from the observed trace shape.
@@ -234,10 +245,14 @@ def parse_all_params(text):
         data["CRC32"] = crc_match.group(1).upper()
 
     compact = re.sub(r"\s+", "", text.upper())
-    dbg_match = re.search(r"DBG=([0-9A-F]{8}(?:,[0-9A-F]{8}){6})", compact)
+    dbg_match = re.search(r"DBG=([0-9A-F]{8}(?:,[0-9A-F]{8}){7})", compact)
     if dbg_match:
         values = [int(value, 16) for value in dbg_match.group(1).split(",")]
         data.update(dict(zip(DBG_FIELDS, values)))
+    cdbg_match = re.search(r"CDBG=([0-9A-F]{8}(?:,[0-9A-F]{8}){7})", compact)
+    if cdbg_match:
+        values = [int(value, 16) for value in cdbg_match.group(1).split(",")]
+        data.update(dict(zip(CDBG_FIELDS, values)))
     return data
 
 
@@ -268,6 +283,19 @@ def print_matmul_analysis(text):
         value = params[key]
         print(f"{key:<12} 0x{value:08X} {value:>12,} {value * 20 / 1_000_000:>22.6f}")
 
+    if any(field in params for field in CDBG_FIELDS):
+        print()
+        print(f"{'CPU参数':<18} {'十六进制':<12} {'十进制':>12} {'时间(ms, 32.97872MHz)':>24}")
+        print("-" * 72)
+        for key in CDBG_FIELDS:
+            if key not in params:
+                continue
+            value = params[key]
+            print(
+                f"{key:<18} 0x{value:08X} {value:>12,} "
+                f"{value / 32978.72:>24.6f}"
+            )
+
     if all(field in data for field in DBG_FIELDS):
         print()
         print("DBG 阶段差值:")
@@ -285,6 +313,23 @@ def print_matmul_analysis(text):
             f"  {'R span non-transfer':<25} {read_gaps:>9,} cycles = "
             f"{read_gaps * 20 / 1_000_000:.6f} ms"
         )
+
+    if all(field in data for field in CDBG_FIELDS):
+        print()
+        print("CDBG 阶段差值:")
+        cpu_diffs = (
+            ("DMA start - main", data["CPU_DMA_START"] - data["CPU_MAIN"]),
+            ("prefix ready - DMA start", data["CPU_PREFIX_READY"] - data["CPU_DMA_START"]),
+            ("prefix write", data["CPU_PREFIX_DONE"] - data["CPU_PREFIX_READY"]),
+            ("DMA done - prefix done", data["CPU_DMA_DONE"] - data["CPU_PREFIX_DONE"]),
+            ("CRC TFE wait", data["CPU_CRC_TFE"] - data["CPU_WRITER"]),
+            ("CRC line pop", data["CPU_CRC_LINE_POP"] - data["CPU_CRC_TFE"]),
+        )
+        for label, cycles in cpu_diffs:
+            print(
+                f"  {label:<27} {cycles:>9,} cycles = "
+                f"{cycles / 32978.72:.6f} ms"
+            )
 
 
 def parse_args():
