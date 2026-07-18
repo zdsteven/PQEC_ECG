@@ -12,11 +12,12 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define EXTRAM_PHYS_BASE       0x1c400000u
 #define MATMUL_INPUT_BYTES     0x0009c400u
 #define MATMUL_RESULT_BASE     (EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES)
+#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
 #define CRC_PREFIX_GROUP       3100u
-
 #define UART_TX_ADDR           (UART_BASE + 0u)
 #define UART_LSR_ADDR          (UART_BASE + 5u)
 #define UART_LSR_TFE           0x20u
+#endif
 
 #if EVAL_DEBUG_COUNTERS
 static U32 sw_main_cycle;
@@ -34,6 +35,7 @@ static inline U32 eval_cpu_cycle(void)
 }
 #endif
 
+#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
 static void uart_write_byte(U8 value)
 {
     *((volatile U8 *)UART_TX_ADDR) = value;
@@ -49,6 +51,7 @@ static U8 hex_char(U32 nibble)
     return (nibble < 10u) ? (U8)('0' + nibble) :
                             (U8)('A' + nibble - 10u);
 }
+#endif
 
 #if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
 static void append_hex32(U8 *buffer, U32 *length, U32 value)
@@ -191,31 +194,6 @@ static void uart_write_crc_debug_and_done(U32 crc)
             uart_write_byte(debug_tail[index++]);
     }
 }
-#else
-static void uart_write_crc_and_done(U32 crc)
-{
-    static const U8 done_line[13] = {
-        '\n', 'M', 'A', 'T', 'M', 'U', 'L', '_',
-        'D', 'O', 'N', 'E', '\n'
-    };
-    U32 index;
-
-    /* '=' has been popped into the transmitter.  Fill all sixteen FIFO
-     * entries before that character completes on the wire. */
-    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
-    }
-    for (index = 0u; index < 8u; ++index)
-        uart_write_byte(hex_char((crc >> (28u - index * 4u)) & 0x0fu));
-    for (index = 0u; index < 8u; ++index)
-        uart_write_byte(done_line[index]);
-
-    /* TFE rises when the last byte of this batch is popped, leaving one
-     * complete character time in which to append the remaining five bytes. */
-    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
-    }
-    for (index = 8u; index < 13u; ++index)
-        uart_write_byte(done_line[index]);
-}
 #endif
 
 int main(int argc, char **argv)
@@ -223,12 +201,14 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
+#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
     static const U8 crc_prefix[13] = {
         'M', 'A', 'T', 'M', 'U', 'L', '_',
         'C', 'R', 'C', '3', '2', '='
     };
     U32 index;
     U32 crc;
+#endif
 
 #if EVAL_DEBUG_COUNTERS
     sw_main_cycle = eval_cpu_cycle();
@@ -250,6 +230,10 @@ int main(int argc, char **argv)
     }
 #endif
 
+#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
+    /* Diagnostic builds keep the former CPU-scheduled output so their extra
+     * lines can remain before DONE.  Formal builds leave the complete scored
+     * stream to the autonomous UART state machine. */
     while (MATMUL_DMA_Get_Read_Groups() < CRC_PREFIX_GROUP) {
     }
 #if EVAL_DEBUG_COUNTERS
@@ -273,8 +257,7 @@ int main(int argc, char **argv)
     uart_write_crc_capture_and_done(crc);
 #elif EVAL_DEBUG_COUNTERS
     uart_write_crc_debug_and_done(crc);
-#else
-    uart_write_crc_and_done(crc);
+#endif
 #endif
 
     while (1) {
