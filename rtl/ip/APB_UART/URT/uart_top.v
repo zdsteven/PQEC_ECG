@@ -40,7 +40,6 @@ module UART_TOP(
         PSEL,        PENABLE,     PADDR,       PWRITE,
         PWDATA,      URT_PRDATA,
         auto_start_valid,
-        auto_dma_start_valid,
         auto_crc_valid, auto_crc32,
 
         INT, clk_carrier,
@@ -58,7 +57,6 @@ input   [7:0]     PADDR;
 input   [7:0]     PWDATA;
 output  [7:0]     URT_PRDATA;
 input             auto_start_valid;
-input             auto_dma_start_valid;
 input             auto_crc_valid;
 input   [31:0]    auto_crc32;
 
@@ -86,7 +84,6 @@ wire tx2rx_en;
 wire isomode;
 wire auto_tx_ready;
 wire tx_idle;
-wire tx_complete;
 reg  auto_tx_valid;
 reg  [7:0] auto_tx_data;
 reg  [5:0] auto_index;
@@ -94,7 +91,6 @@ reg  [31:0] auto_crc_hold;
 reg  [2:0] auto_state;
 reg  auto_crc_pending;
 reg  [15:0] auto_delay_count;
-reg  auto_dma_start_seen;
 
 localparam [2:0] AUTO_ARM   = 3'd0;
 localparam [2:0] AUTO_BOOT  = 3'd1;
@@ -105,9 +101,7 @@ localparam [2:0] AUTO_IDLE  = 3'd5;
 localparam [2:0] AUTO_PREFIX= 3'd6;
 localparam [2:0] AUTO_CRC_WAIT = 3'd7;
 
-// START must finish before DMA starts.  Delay the 13-byte prefix so its '='
-// reaches the wire just as the 1.6007 ms DMA/CRC path completes.
-localparam [15:0] AUTO_CRC_PREFIX_DELAY = 16'd25000; // 0.50 ms @ 50 MHz
+localparam [15:0] AUTO_CRC_PREFIX_DELAY = 16'd37500; // 0.75 ms @ 50 MHz
 
 function [7:0] auto_boot_char;
     input [5:0] index;
@@ -211,7 +205,6 @@ always @(posedge PCLK or negedge PRST_) begin
         auto_state      <= AUTO_ARM;
         auto_crc_pending<= 1'b0;
         auto_delay_count<= 16'd0;
-        auto_dma_start_seen <= 1'b0;
     end else begin
         auto_tx_valid <= 1'b0;
         if (auto_crc_valid) begin
@@ -231,34 +224,17 @@ always @(posedge PCLK or negedge PRST_) begin
                     auto_tx_data  <= auto_boot_char(auto_index);
                     if (auto_index == 6'd12) begin
                         auto_index <= 6'd0;
-                        // Do not start the prefix merely when the newline is
-                        // popped.  Wait for its final stop bit so CPU can use
-                        // LSR.TE as the strict ExtRAM/DMA start barrier.
-                        auto_state <= AUTO_WAIT;
+                        // Only START is hardware-generated.  CPU waits for
+                        // transmitter empty, starts DMA, and owns the rest.
+                        auto_state <= AUTO_IDLE;
                     end else begin
                         auto_index <= auto_index + 6'd1;
                     end
                 end
             end
             AUTO_WAIT: begin
-                // Hold the line idle after START until software has observed
-                // TE and its DMA CTRL write has been accepted.  The DMA start
-                // pulse then launches the prefix on the same system timeline.
-                if (tx_complete && auto_dma_start_valid) begin
-                    auto_index <= 6'd0;
-`ifdef EVAL_DEBUG_COUNTERS
-                    auto_state <= AUTO_IDLE;
-`elsif EVAL_DEBUG_CAPTURE
-                    auto_state <= AUTO_IDLE;
-`else
-                    // Formal evaluation delays the prefix just enough for its
-                    // final '=' to meet CRC ready without a visible gap.
-                    auto_dma_start_seen <= 1'b1;
-                    auto_delay_count <= AUTO_CRC_PREFIX_DELAY;
-`endif
-                end else if (auto_dma_start_seen) begin
+                if (tx_idle) begin
                     if (auto_delay_count == 16'd0) begin
-                        auto_dma_start_seen <= 1'b0;
                         auto_index <= 6'd0;
                         auto_state <= AUTO_PREFIX;
                     end else begin
@@ -348,7 +324,6 @@ uart_regs	regs(
     .auto_tx_data (auto_tx_data ),
     .auto_tx_ready(auto_tx_ready),
     .tx_idle      (tx_idle      ),
-    .tx_complete  (tx_complete  ),
 
     .modem_inputs({ CTS, DSR, RI, DCD }	),
     .rts_pad_o   (RTS      ),

@@ -12,7 +12,7 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define EXTRAM_PHYS_BASE       0x1c400000u
 #define MATMUL_INPUT_BYTES     0x0009c400u
 #define MATMUL_RESULT_BASE     (EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES)
-#define CRC_PREFIX_GROUP       3100u
+#define CRC_PREFIX_GROUP       1650u
 
 #define UART_TX_ADDR           (UART_BASE + 0u)
 #define UART_LSR_ADDR          (UART_BASE + 5u)
@@ -192,6 +192,29 @@ static void uart_write_crc_debug_and_done(U32 crc)
             uart_write_byte(debug_tail[index++]);
     }
 }
+#else
+static void uart_write_crc_and_done(U32 crc)
+{
+    static const U8 done_line[13] = {
+        '\n', 'M', 'A', 'T', 'M', 'U', 'L', '_',
+        'D', 'O', 'N', 'E', '\n'
+    };
+    U32 index;
+
+    /* '=' is now in the transmitter.  Fill the FIFO before that character's
+     * stop bit completes, preserving a gapless prefix/CRC/DONE stream. */
+    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
+    }
+    for (index = 0u; index < 8u; ++index)
+        uart_write_byte(hex_char((crc >> (28u - index * 4u)) & 0x0fu));
+    for (index = 0u; index < 8u; ++index)
+        uart_write_byte(done_line[index]);
+
+    while ((uart_line_status() & UART_LSR_TFE) == 0u) {
+    }
+    for (index = 8u; index < 13u; ++index)
+        uart_write_byte(done_line[index]);
+}
 #endif
 
 int main(int argc, char **argv)
@@ -199,14 +222,12 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
-#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
     static const U8 crc_prefix[13] = {
         'M', 'A', 'T', 'M', 'U', 'L', '_',
         'C', 'R', 'C', '3', '2', '='
     };
     U32 index;
     U32 crc;
-#endif
 
 #if EVAL_DEBUG_COUNTERS
     sw_main_cycle = eval_cpu_cycle();
@@ -235,9 +256,6 @@ int main(int argc, char **argv)
     }
 #endif
 
-#if EVAL_DEBUG_COUNTERS || EVAL_DEBUG_CAPTURE
-    /* Diagnostic builds retain CPU ownership so their counters can be
-     * inserted before DONE.  Formal output is fully autonomous in UART. */
     while (MATMUL_DMA_Get_Read_Groups() < CRC_PREFIX_GROUP) {
     }
 #if EVAL_DEBUG_COUNTERS
@@ -261,7 +279,8 @@ int main(int argc, char **argv)
     uart_write_crc_capture_and_done(crc);
 #elif EVAL_DEBUG_COUNTERS
     uart_write_crc_debug_and_done(crc);
-#endif
+#else
+    uart_write_crc_and_done(crc);
 #endif
 
     while (1) {
