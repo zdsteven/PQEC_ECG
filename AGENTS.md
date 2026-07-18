@@ -131,6 +131,7 @@ make gitlab
 - `fpga/` 下的工程、检查脚本和报告只用于本地诊断，不能把这些文件的修改当作线上修复；
 - 需要在线上生效的功能、时序结构和 lint 修复必须落在平台接收的 `rtl/` 或 `sdk/` 中；
 - 本地 `.xdc` 或工程调整得到的结果可以辅助分析，但不得据此宣称线上结果已经改善，仍须以 `make gitlab` 返回的线上 lint、DSP、WNS、协议和 elapsed time 为准。
+- 修改 `rtl/ip/PLL_2019_2` 时，线上只上传 `clk_pll.xci`。不得上传该目录中的 `.vhdl`，也不要上传生成的 Verilog stub、仿真网表、DCP 或其他 output products；线上 lint 脚本会把 `.vhdl` 错误加入 Verilog 输入列表，从而在功能验证前直接报错。
 
 运行 `make gitlab` 后：
 

@@ -81,6 +81,8 @@ wire cpu_clk;
 wire cpu_resetn;
 wire sys_clk;
 wire sys_resetn;
+wire sram_clk180;
+wire sram_sample_clk;
 wire pll_locked;
 
 generate if(SIMULATION) begin: sim_clk
@@ -93,6 +95,8 @@ generate if(SIMULATION) begin: sim_clk
 
     assign cpu_clk = clk_sim;
     assign sys_clk = clk;
+    assign sram_clk180 = ~clk;
+    assign sram_sample_clk = ~clk;
     rst_sync u_rst_sys(
         .clk(sys_clk),
         .rst_n_in(~reset),
@@ -108,6 +112,8 @@ else begin: pll_clk
     clk_pll u_clk_pll(
         .cpu_clk    (cpu_clk),
         .sys_clk    (sys_clk),
+        .sram_clk180(sram_clk180),
+        .sram_sample_clk(sram_sample_clk),
         // Keep the PLL running while the platform holds CPU/SoC reset.
         // Its lock time is then paid before the timed reset release.
         .resetn     (1'b1),
@@ -1396,6 +1402,8 @@ Axi_CDC u_Axi_CDC (
 axi_wrap_ram_sp_external u_axi_ram (
     .aclk ( sys_clk ),
     .aresetn ( sys_resetn ),
+    .fast_clk180 ( sram_clk180 ),
+    .fast_sample_clk ( sram_sample_clk ),
     //ar
     .axi_arid ( ram_arid ),
     .axi_araddr ( ram_araddr ),
@@ -1757,4 +1765,3 @@ assign Crypto_rlast   = 1'b0;
 
 
 endmodule
-

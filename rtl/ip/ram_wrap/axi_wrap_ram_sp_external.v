@@ -34,6 +34,8 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 module axi_wrap_ram_sp_external (
     input         aclk,
     input         aresetn,
+    input         fast_clk180,
+    input         fast_sample_clk,
     //ar
     input  [4 :0] axi_arid   ,
     input  [31:0] axi_araddr ,
@@ -309,6 +311,8 @@ assign ext_ram_we_n = fast_ext_we_n;
 
 eval_ext_sram_ddr_phy u_eval_ext_sram_ddr_phy (
     .clk                  (aclk),
+    .clk_180              (fast_clk180),
+    .sample_clk           (fast_sample_clk),
     .resetn               (aresetn),
     .fast_read_active     (fast_read_active),
     .fast_read_base_word  (fast_read_base_word),
@@ -344,16 +348,16 @@ assign fast_ext_bus_active = 1'b0;
 
 endmodule
 
-// Evaluation-only dual-edge asynchronous ExtRAM reader.
+// Evaluation-only phase-split dual-edge asynchronous ExtRAM reader.
 //
-// An ODDR launches the even/earlier address on sys_clk's rising edge and the
-// odd/later address on its falling edge.  IDDR SAME_EDGE returns the falling
-// sample in Q2 and the following rising sample in Q1.  The fabric registers
-// therefore store {Q1,Q2}, making FIFO[31:0] the earlier word and FIFO[63:32]
-// the later word.  All FIFO state remains in the positive-edge clock domain;
-// no fabric register or inferred RAM is driven from both clock edges.
+// A 50 MHz clock shifted 180 degrees drives the address ODDR.  A separate
+// 50 MHz/150-degree clock samples the input before the next address transition,
+// avoiding the zero-hold-margin boundary exposed by the 180-degree IDDR clock.
+// The unshifted 50 MHz system clock retains all control/FIFO state.
 module eval_ext_sram_ddr_phy (
     input         clk,
+    input         clk_180,
+    input         sample_clk,
     input         resetn,
     input         fast_read_active,
     input  [19:0] fast_read_base_word,
@@ -380,8 +384,7 @@ reg [19:0] issue_addr_q;
 reg [17:0] words_remaining_q;
 reg capture_valid_d1_q;
 reg capture_valid_d2_q;
-reg half_word_valid_q;
-reg [31:0] half_word_q;
+reg [31:0] even_word_q;
 
 reg [63:0] pair_fifo [0:FIFO_DEPTH-1];
 reg [FIFO_ADDR_WIDTH-1:0] fifo_wr_ptr_q;
@@ -389,19 +392,19 @@ reg [FIFO_ADDR_WIDTH-1:0] fifo_rd_ptr_q;
 reg [FIFO_ADDR_WIDTH:0] fifo_count_q;
 
 wire fifo_pop = (fifo_count_q != 0) && fast_pair_ready;
-// Online capture proved that the falling-edge sample is a bitwise mixture of
-// two adjacent SRAM words, while the rising-edge sample is stable.  Assemble
-// one 64-bit pair from two consecutive rising-edge samples.  This keeps the
-// private low-overhead reader but uses a safe 20 ns address cycle.
-wire fifo_push = capture_valid_d2_q && half_word_valid_q;
+// With the IDDR also clocked at 180 degrees, the earlier/later samples become
+// visible on adjacent sys_clk observations.  Save Q1, then pair it with Q2 on
+// the following cycle.
+wire fifo_push = capture_valid_d2_q;
 // At most two launched pairs have not yet reached the FIFO.  Stop launching
 // with three free entries so already in-flight IDDR samples cannot overflow.
 wire fifo_has_issue_space = (fifo_count_q <= (FIFO_DEPTH - 3));
-wire issue_word = issuing_q && (words_remaining_q != 0) &&
+wire issue_pair = issuing_q && (words_remaining_q >= 2) &&
                   fifo_has_issue_space;
 
 wire [31:0] read_data_rise;
 wire [31:0] read_data_fall;
+wire [19:0] issue_addr_plus1 = issue_addr_q + 20'd1;
 wire [63:0] fifo_head = pair_fifo[fifo_rd_ptr_q];
 
 assign fast_pair_valid = (fifo_count_q != 0);
@@ -423,10 +426,7 @@ for (ddr_bit = 0; ddr_bit < 20; ddr_bit = ddr_bit + 1) begin: gen_addr_oddr
 `ifdef VERILATOR
     reg addr_rise_q;
     reg addr_fall_q;
-    // The lint tool defines VERILATOR but does not support a process
-    // that mixes level activity with an asynchronous edge.  Capture both ODDR
-    // inputs on the rising edge and use the clock only as a behavioural output
-    // selector.  Synthesis/XSim use the ODDR primitive in the branch below.
+    // Lint-only behavioural equivalent.  XSim/synthesis use the ODDR below.
     always @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             addr_rise_q <= 1'b0;
@@ -434,11 +434,11 @@ for (ddr_bit = 0; ddr_bit < 20; ddr_bit = ddr_bit + 1) begin: gen_addr_oddr
         end else begin
             if (sram_bus_active_o) begin
                 addr_rise_q <= issue_addr_q[ddr_bit];
-                addr_fall_q <= issue_addr_q[ddr_bit];
+                addr_fall_q <= issue_addr_plus1[ddr_bit];
             end
         end
     end
-    assign sram_addr_o[ddr_bit] = clk ? addr_rise_q : addr_fall_q;
+    assign sram_addr_o[ddr_bit] = clk_180 ? addr_rise_q : addr_fall_q;
 `else
     ODDR #(
         .DDR_CLK_EDGE ("SAME_EDGE"),
@@ -446,12 +446,12 @@ for (ddr_bit = 0; ddr_bit < 20; ddr_bit = ddr_bit + 1) begin: gen_addr_oddr
         .SRTYPE       ("ASYNC")
     ) u_addr_oddr (
         .Q  (sram_addr_o[ddr_bit]),
-        .C  (clk),
-        // Present the same address on both halves of the cycle.  The IDDR Q1
-        // sample therefore sees a full 20 ns SRAM address interval.
+        .C  (clk_180),
+        // SAME_EDGE captures both addresses on clk_180's rising edge, then
+        // emits the earlier/later words on its rising/falling halves.
         .CE (sram_bus_active_o),
         .D1 (issue_addr_q[ddr_bit]),
-        .D2 (issue_addr_q[ddr_bit]),
+        .D2 (issue_addr_plus1[ddr_bit]),
         .R  (~resetn),
         .S  (1'b0)
     );
@@ -463,13 +463,13 @@ for (ddr_bit = 0; ddr_bit < 32; ddr_bit = ddr_bit + 1) begin: gen_data_iddr
     reg fall_sample_q;
     reg rise_out_q;
     reg fall_out_q;
-    always @(negedge clk or negedge resetn) begin
+    always @(negedge sample_clk or negedge resetn) begin
         if (!resetn)
             fall_sample_q <= 1'b0;
         else
             fall_sample_q <= sram_data_i[ddr_bit];
     end
-    always @(posedge clk or negedge resetn) begin
+    always @(posedge sample_clk or negedge resetn) begin
         if (!resetn) begin
             rise_out_q <= 1'b0;
             fall_out_q <= 1'b0;
@@ -489,7 +489,7 @@ for (ddr_bit = 0; ddr_bit < 32; ddr_bit = ddr_bit + 1) begin: gen_data_iddr
     ) u_data_iddr (
         .Q1 (read_data_rise[ddr_bit]),
         .Q2 (read_data_fall[ddr_bit]),
-        .C  (clk),
+        .C  (sample_clk),
         .CE (1'b1),
         .D  (sram_data_i[ddr_bit]),
         .R  (~resetn),
@@ -507,8 +507,7 @@ always @(posedge clk or negedge resetn) begin
         words_remaining_q   <= 18'd0;
         capture_valid_d1_q  <= 1'b0;
         capture_valid_d2_q  <= 1'b0;
-        half_word_valid_q   <= 1'b0;
-        half_word_q         <= 32'd0;
+        even_word_q         <= 32'd0;
         fifo_wr_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
         fifo_rd_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
         fifo_count_q        <= {(FIFO_ADDR_WIDTH+1){1'b0}};
@@ -519,8 +518,7 @@ always @(posedge clk or negedge resetn) begin
         words_remaining_q   <= 18'd0;
         capture_valid_d1_q  <= 1'b0;
         capture_valid_d2_q  <= 1'b0;
-        half_word_valid_q   <= 1'b0;
-        half_word_q         <= 32'd0;
+        even_word_q         <= 32'd0;
         fifo_wr_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
         fifo_rd_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
         fifo_count_q        <= {(FIFO_ADDR_WIDTH+1){1'b0}};
@@ -532,28 +530,21 @@ always @(posedge clk or negedge resetn) begin
             words_remaining_q   <= {fast_read_pair_count, 1'b0};
             capture_valid_d1_q  <= 1'b0;
             capture_valid_d2_q  <= 1'b0;
-            half_word_valid_q   <= 1'b0;
-            half_word_q         <= 32'd0;
+            even_word_q         <= 32'd0;
             fifo_wr_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
             fifo_rd_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
             fifo_count_q        <= {(FIFO_ADDR_WIDTH+1){1'b0}};
         end else begin
-            capture_valid_d1_q <= issue_word;
+            capture_valid_d1_q <= issue_pair;
             capture_valid_d2_q <= capture_valid_d1_q;
 
-            if (capture_valid_d2_q) begin
-                if (half_word_valid_q)
-                    half_word_valid_q <= 1'b0;
-                else begin
-                    half_word_valid_q <= 1'b1;
-                    half_word_q       <= read_data_rise;
-                end
-            end
+            if (capture_valid_d1_q)
+                even_word_q <= read_data_rise;
 
-            if (issue_word) begin
-                issue_addr_q      <= issue_addr_q + 20'd1;
-                words_remaining_q <= words_remaining_q - 18'd1;
-                if (words_remaining_q == 18'd1)
+            if (issue_pair) begin
+                issue_addr_q      <= issue_addr_q + 20'd2;
+                words_remaining_q <= words_remaining_q - 18'd2;
+                if (words_remaining_q == 18'd2)
                     issuing_q <= 1'b0;
             end
 
@@ -581,7 +572,7 @@ end
 // validity source, so uninitialised entries are never observed after reset.
 always @(posedge clk) begin
     if (fifo_push)
-        pair_fifo[fifo_wr_ptr_q] <= {read_data_rise, half_word_q};
+        pair_fifo[fifo_wr_ptr_q] <= {read_data_fall, even_word_q};
 end
 
 endmodule
