@@ -224,18 +224,9 @@ always @(posedge PCLK or negedge PRST_) begin
                     auto_tx_data  <= auto_boot_char(auto_index);
                     if (auto_index == 6'd12) begin
                         auto_index <= 6'd0;
-`ifdef EVAL_DEBUG_COUNTERS
-                        // Diagnostic builds retain CPU ownership so counters
-                        // can be printed before DONE.
+                        // CPU owns CRC prefix, digits and DONE after the
+                        // autonomous START banner has been queued.
                         auto_state <= AUTO_IDLE;
-`elsif EVAL_DEBUG_CAPTURE
-                        auto_state <= AUTO_IDLE;
-`else
-                        // At 10 ns/word the DMA CRC is ready before this
-                        // prefix finishes.  Keep the complete scored stream
-                        // in one UART state machine and remove CPU/FIFO races.
-                        auto_state <= AUTO_PREFIX;
-`endif
                     end else begin
                         auto_index <= auto_index + 6'd1;
                     end
