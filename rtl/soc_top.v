@@ -85,25 +85,6 @@ wire sram_clk180;
 wire sram_sample_clk;
 wire pll_locked;
 
-// Online diagnostic for the interval from the external reset release until
-// the synchronized system reset is released.  Use the existing PLL-generated
-// system clock so the diagnostic does not add a fabric clock branch to the
-// clock-capable PLL input and alter its legal ZHOLD connectivity.
-reg [31:0] eval_reset_release_cycles;
-reg        eval_sys_reset_seen;
-
-always @(posedge sys_clk or posedge reset) begin
-    if (reset) begin
-        eval_reset_release_cycles <= 32'd0;
-        eval_sys_reset_seen        <= 1'b0;
-    end else if (!eval_sys_reset_seen) begin
-        if (sys_resetn)
-            eval_sys_reset_seen <= 1'b1;
-        else
-            eval_reset_release_cycles <= eval_reset_release_cycles + 32'd1;
-    end
-end
-
 generate if(SIMULATION) begin: sim_clk
     //simulation clk.
     reg clk_sim;
@@ -662,7 +643,6 @@ u_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),
 `ifdef USE_EVALUATION_UART_SRAM
-    .dbg_reset_release_cycles(eval_reset_release_cycles),
     .eval_read_enable(uart_start_banner_done),
 `endif
 

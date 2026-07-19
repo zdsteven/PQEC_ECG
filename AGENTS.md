@@ -280,27 +280,20 @@ CRC 为 reflected IEEE CRC-32：
 
 ## 当前硬件热路径
 
-### ExtRAM 和 AXI R
+### ExtRAM 快速读取
 
-`matmul_dma.v` 当前以 AXI4 INCR burst 读取输入：
-
-```text
-8 group × 32 word = 256 beat
-ARLEN=255, ARSIZE=2, ARBURST=INCR
-```
-
-- burst 起点按 1024 byte 对齐，不跨 4 KiB。
-- `read_chain_offer` 在当前 burst 最后 32 beat 期间保持下一 AR 请求。
-- RLAST 退休时，桥可同拍接受下一 AR。
-- 只有一组第一个 word 到来且两个 core 都不 ready 时，DMA 才允许 R 通道停顿。
-- 评测版 `axi2sram_sp_external.v` 使用 256-entry R FIFO 解耦 SRAM 地址发射和 AXI R 退休。
+- 必须等硬件完整发送 `MATMUL_START\n` 后，评测 DMA 才允许读取 ExtRAM。
+- `axi_wrap_ram_sp_external.v` 的评测路径用相差 180° 的两个 50 MHz 相位发射相邻 word 地址，并用 IDDR 分别采样两个返回 word。
+- 桥以 `fast_pair_valid/ready` 每个系统时钟向 DMA 交付一对连续 word；5000 组共 80000 对。
+- DMA 仅在组首且两个 core 都未就绪时反压，反压期间必须保持 pair 数据和地址进度不变。
+- 原 CPU/通用 AXI 主读接口仍保留端口兼容性，但评测输入不经过 AXI R burst/FIFO 热路径。
 
 ### 双核流式乘法
 
 - 评测路径使用 core0/core1。
 - 一组第一个 A00 与 stream start 同拍进入选中的 core。
-- A[0..15] 到达时缓存；每个 B[k][j] 到达时发射四个 `A[i][k] × B[k][j]`。
-- 每个评测 core 使用四条 16 级 radix-4 shift/add lane。
+- A[0..15] 和 B[0..15] 到达时分别缓存。
+- 每个评测 core 使用 16 个固定对应 C 元素的无 DSP 累加引擎，按 16 个 radix-4 digit plane 迭代计算；不展开 16 级乘法器流水线。
 - 评测 core 乘法数据通路不使用 Verilog `*`，评测网表不允许 DSP。
 - DMA 必须保持同组 32 word 绑定同一 core。
 
@@ -328,11 +321,10 @@ ARLEN=255, ARSIZE=2, ARBURST=INCR
 | 文件 | 评测提速时需要关注的内容 |
 |---|---|
 | `rtl/soc_top.v` | PLL/复位、DMA、Matmul stream、UART 和 ExtRAM 连接 |
-| `rtl/ip/DMA/matmul_dma.v` | CPU start、AXI 读、双核调度、结果排序、CRC32 和完成状态 |
+| `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取、双核调度、结果排序、CRC32 和完成状态 |
 | `rtl/ip/matmul/matmul_axi_slave.v` | 两个评测 core 的例化和 DMA stream 接口 |
 | `rtl/ip/matmul/matmul_batch_core.v` | 无 DSP 流式矩阵计算 core |
-| `rtl/ip/Bus_interconnects/axi2sram_sp_external.v` | 评测 SRAM 地址流水和 R FIFO |
-| `rtl/ip/ram_wrap/axi_wrap_ram_sp_external.v` | ExtRAM AXI 桥与外部 SRAM 引脚接口 |
+| `rtl/ip/ram_wrap/axi_wrap_ram_sp_external.v` | ExtRAM 双相位地址、IDDR 采样和 fast pair 接口 |
 | `rtl/ip/APB_UART/axi_uart_controller.v` | UART AXI/APB 封装和自动 START 连接 |
 | `rtl/ip/APB_UART/URT/uart_top.v` | 硬化 START、CPU 字节流与自动发送控制 |
 | `rtl/ip/APB_UART/URT/uart_regs.v` | TX FIFO 写入、状态位、复位默认值 |
@@ -371,7 +363,7 @@ ARLEN=255, ARSIZE=2, ARBURST=INCR
 
 - 复位释放到 CPU 写 DMA start 的软件周期；
 - DMA start 到 START 首字节、START 完整行的 UART 周期；
-- 625 个 256-beat burst 的边界和 R 通道退休；
+- 80000 个 fast pair 的发射、返回、退休以及反压周期；
 - 组首是否因两个 core 都不 ready 而停顿；
 - 最后一组输入、乘法流水、结果排序和 CRC 的尾部；
 - CPU 发送 CRC 前缀的提前量；

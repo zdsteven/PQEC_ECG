@@ -10,7 +10,6 @@ module matmul_dma #(
 ) (
     input             clk,
     input             resetn,
-    input      [31:0] dbg_reset_release_cycles,
     input             eval_read_enable,
 
     // CPU-facing AXI slave register interface (0x1f30_0000).
@@ -127,19 +126,6 @@ localparam [11:0] ADDR_DST_BASE   = 12'h00c;
 localparam [11:0] ADDR_GROUP_NUM  = 12'h010;
 localparam [11:0] ADDR_CRC32       = 12'h020;
 localparam [11:0] ADDR_READ_GROUPS = 12'h024;
-`ifdef EVAL_DEBUG_COUNTERS
-localparam [11:0] ADDR_DBG_START       = 12'h028;
-localparam [11:0] ADDR_DBG_FIRST_R     = 12'h02c;
-localparam [11:0] ADDR_DBG_LAST_R      = 12'h030;
-localparam [11:0] ADDR_DBG_LAST_CORE   = 12'h034;
-localparam [11:0] ADDR_DBG_CRC         = 12'h038;
-localparam [11:0] ADDR_DBG_R_EMPTY     = 12'h03c;
-localparam [11:0] ADDR_DBG_CORE_STALL  = 12'h040;
-localparam [11:0] ADDR_DBG_RESET_RELEASE = 12'h044;
-`endif
-`ifdef EVAL_DEBUG_CAPTURE
-localparam [11:0] ADDR_DBG_INPUT_BASE  = 12'h080;
-`endif
 
 reg [31:0] src_base;
 reg [31:0] dst_base;
@@ -177,22 +163,6 @@ reg [65:0] crc_result_data;
 reg        crc_result_valid;
 reg        crc_finish_pending;
 reg        auto_start_armed;
-
-`ifdef EVAL_DEBUG_COUNTERS
-reg [31:0] dbg_cycle;
-reg [31:0] dbg_start_cycle;
-reg [31:0] dbg_first_r_cycle;
-reg [31:0] dbg_last_r_cycle;
-reg [31:0] dbg_last_core_cycle;
-reg [31:0] dbg_crc_cycle;
-reg [31:0] dbg_r_empty_cycles;
-reg [31:0] dbg_core_stall_cycles;
-reg        dbg_first_r_seen;
-reg        dbg_last_r_seen;
-`endif
-`ifdef EVAL_DEBUG_CAPTURE
-reg [31:0] dbg_input_word [0:7];
-`endif
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
@@ -390,26 +360,7 @@ always @(posedge clk) begin
                 ADDR_GROUP_NUM:   s_axi_rdata <= group_num;
                 ADDR_CRC32:       s_axi_rdata <= crc_value ^ 32'hffffffff;
                 ADDR_READ_GROUPS: s_axi_rdata <= {19'd0, read_group_count};
-`ifdef EVAL_DEBUG_COUNTERS
-                ADDR_DBG_START:      s_axi_rdata <= dbg_start_cycle;
-                ADDR_DBG_FIRST_R:    s_axi_rdata <= dbg_first_r_cycle;
-                ADDR_DBG_LAST_R:     s_axi_rdata <= dbg_last_r_cycle;
-                ADDR_DBG_LAST_CORE:  s_axi_rdata <= dbg_last_core_cycle;
-                ADDR_DBG_CRC:        s_axi_rdata <= dbg_crc_cycle;
-                ADDR_DBG_R_EMPTY:    s_axi_rdata <= dbg_r_empty_cycles;
-                ADDR_DBG_CORE_STALL: s_axi_rdata <= dbg_core_stall_cycles;
-                ADDR_DBG_RESET_RELEASE: s_axi_rdata <= dbg_reset_release_cycles;
-`endif
-                default: begin
-`ifdef EVAL_DEBUG_CAPTURE
-                    if ((read_offset >= ADDR_DBG_INPUT_BASE) &&
-                        (read_offset <= (ADDR_DBG_INPUT_BASE + 12'h01c)) &&
-                        (read_offset[1:0] == 2'b00))
-                        s_axi_rdata <= dbg_input_word[read_offset[4:2]];
-                    else
-`endif
-                        s_axi_rdata <= 32'd0;
-                end
+                default:          s_axi_rdata <= 32'd0;
             endcase
         end else if (s_axi_rvalid && s_axi_rready) begin
             s_axi_rvalid <= 1'b0;
@@ -442,18 +393,6 @@ always @(posedge clk) begin
         crc32_final          <= 32'd0;
         // Evaluation software explicitly configures and starts the engine.
         auto_start_armed     <= 1'b0;
-`ifdef EVAL_DEBUG_COUNTERS
-        dbg_cycle             <= 32'd0;
-        dbg_start_cycle       <= 32'd0;
-        dbg_first_r_cycle     <= 32'd0;
-        dbg_last_r_cycle      <= 32'd0;
-        dbg_last_core_cycle   <= 32'd0;
-        dbg_crc_cycle         <= 32'd0;
-        dbg_r_empty_cycles    <= 32'd0;
-        dbg_core_stall_cycles <= 32'd0;
-        dbg_first_r_seen      <= 1'b0;
-        dbg_last_r_seen       <= 1'b0;
-`endif
         for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
             core_group[core_reset_index] = 13'd0;
             core_result_group[core_reset_index] = 13'd0;
@@ -461,9 +400,6 @@ always @(posedge clk) begin
     end else begin
         start_banner_valid <= 1'b0;
         crc32_valid  <= 1'b0;
-`ifdef EVAL_DEBUG_COUNTERS
-        dbg_cycle <= dbg_cycle + 32'd1;
-`endif
 
         if (clear_status_pulse) begin
             done  <= 1'b0;
@@ -496,76 +432,15 @@ always @(posedge clk) begin
                 crc_result_valid     <= 1'b0;
                 crc_finish_pending   <= 1'b0;
                 crc32_final          <= 32'd0;
-`ifdef EVAL_DEBUG_COUNTERS
-                dbg_start_cycle       <= dbg_cycle;
-                dbg_first_r_cycle     <= 32'd0;
-                dbg_last_r_cycle      <= 32'd0;
-                dbg_last_core_cycle   <= 32'd0;
-                dbg_crc_cycle         <= 32'd0;
-                dbg_r_empty_cycles    <= 32'd0;
-                dbg_core_stall_cycles <= 32'd0;
-                dbg_first_r_seen      <= 1'b0;
-                dbg_last_r_seen       <= 1'b0;
-`endif
                 for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
                 end
             end
         end else if (busy) begin
-`ifdef EVAL_DEBUG_COUNTERS
-            if (!dbg_first_r_seen && fast_pair_valid && fast_pair_ready) begin
-                dbg_first_r_seen  <= 1'b1;
-                dbg_first_r_cycle <= dbg_cycle;
-            end
-            if (dbg_first_r_seen && !dbg_last_r_seen) begin
-                if (fast_pair_ready && !fast_pair_valid)
-                    dbg_r_empty_cycles <= dbg_r_empty_cycles + 32'd1;
-                if (fast_pair_valid && !fast_pair_ready)
-                    dbg_core_stall_cycles <= dbg_core_stall_cycles + 32'd1;
-            end
-            if (fast_pair_valid && fast_pair_ready &&
-                (read_pair == 4'd15) &&
-                ((read_group_count + 13'd1) == group_num[12:0])) begin
-                dbg_last_r_seen  <= 1'b1;
-                dbg_last_r_cycle <= dbg_cycle;
-            end
-            if ((matmul_done[0] &&
-                 (core_group[0] == (group_num[12:0] - 13'd1))) ||
-                (matmul_done[1] &&
-                 (core_group[1] == (group_num[12:0] - 13'd1))))
-                dbg_last_core_cycle <= dbg_cycle;
-`endif
             // Two consecutive SRAM words arrive together.  Start a core on
             // A00/A01 and keep all sixteen pairs of the group on that core.
             if (fast_pair_valid && fast_pair_ready) begin
-`ifdef EVAL_DEBUG_CAPTURE
-                // Group zero is intentionally all zero.  Capture selected
-                // positions from group one: words 0..3, 14..17.  This spans
-                // the A start and the A/B boundary with only eight registers.
-                if (read_group_count == 13'd1) begin
-                    case (read_pair)
-                        4'd0: begin
-                            dbg_input_word[0] <= fast_pair_data0;
-                            dbg_input_word[1] <= fast_pair_data1;
-                        end
-                        4'd1: begin
-                            dbg_input_word[2] <= fast_pair_data0;
-                            dbg_input_word[3] <= fast_pair_data1;
-                        end
-                        4'd7: begin
-                            dbg_input_word[4] <= fast_pair_data0;
-                            dbg_input_word[5] <= fast_pair_data1;
-                        end
-                        4'd8: begin
-                            dbg_input_word[6] <= fast_pair_data0;
-                            dbg_input_word[7] <= fast_pair_data1;
-                        end
-                        default: begin
-                        end
-                    endcase
-                end
-`endif
                 if (read_pair == 4'd0) begin
                     stream_core <= selected_launch_core;
                     core_group[selected_launch_core] <= read_group_count;
@@ -641,9 +516,6 @@ always @(posedge clk) begin
                     crc32_valid <= 1'b1;
                     crc32_final <= crc32_update_result(crc_value, crc_result_data)
                                    ^ 32'hffffffff;
-`ifdef EVAL_DEBUG_COUNTERS
-                    dbg_crc_cycle <= dbg_cycle;
-`endif
                 end
             end
         end

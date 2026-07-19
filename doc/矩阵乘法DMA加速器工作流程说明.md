@@ -89,10 +89,10 @@ CRC 使用 8 位大写十六进制。线上平台收到完整的 `MATMUL_START` 
 
 ```text
 ExtRAM
-  │  256-beat AXI4 INCR burst
+  │  下降沿/上升沿连续给出相邻 word 地址
   ▼
-评测版 axi2sram_sp_external（连续地址发射 + 256-entry R FIFO）
-  │
+eval_ext_sram_ddr_phy（每个 50 MHz 周期返回两个 word）
+  │  fast_pair_valid/data0/data1/ready
   ▼
 matmul_dma 读调度器
   ├────────► matmul_batch_core 0 ──┐
@@ -114,7 +114,7 @@ CPU ──► DMA CTRL.start ──► 读取进度、done、CRC32
 这条路径有四个重要特点：
 
 1. DMA 只负责数据搬运、core 调度、结果排序和 CRC，不在 DMA 内做矩阵乘法；
-2. AXI R 握手的数据直接旁路到矩阵 core，不先写大型输入 block；
+2. ExtRAM 返回的两个相邻 word 直接流入矩阵 core，不先写大型输入 block；
 3. 计算结果不写回 ExtRAM，也不进入大型结果 block；
 4. CPU 不参与 5000 组循环或 CRC 计算，但负责启动 DMA、安排 CRC 前缀并格式化最终 CRC/DONE。
 
@@ -147,15 +147,15 @@ DMA 复位时 `auto_start_armed=0`。CPU 进入 `main` 后不再读取状态或�
 - 清空组计数、core 调度状态和 CRC 状态；
 - 置 `busy`；
 - 同拍产生一次 `start_banner_valid`；
-- 随即发起第一笔 ExtRAM AXI 读请求。
+- 等待硬件确认完整 `MATMUL_START\n` 已离开串口后，才解除 ExtRAM 读取门控。
 
 完整配置式 `MATMUL_DMA_Start` 仍保留在关闭 `EVAL_FAST_DMA_START` 时使用；正式评测默认 `EVAL_FAST_DMA_START=1`。
 
-DMA 接受 CPU start 时触发 START 字符串；DMA 状态机、CPU 调度和 UART 发送随后并行推进。
+DMA 接受 CPU start 时触发 START 字符串并预置读取状态；START 完整发送前 `eval_read_enable` 保持为低，满足评测规则。门控解除后 DMA、双 core 和 CRC 流水并行推进。
 
 ### 4.3 UART 无需等待 CPU 初始化
 
-评测版 UART 的复位分频低字节为 `0x1B`，线路格式为 8N1，用于平台约定的 115200-baud 串口。它在收到 `start_banner_valid` 后自动发送 `MATMUL_START\n`。
+评测版 UART 的复位整数分频为 26、分数部分为 240/256，平均每个 16× tick 为 26.9375 个 50 MHz 周期，实际约 116.01 kbaud。线路数据格式为 8N1，transmitter 使用已在线上验证的 13-tick stop 区间。分数累加器在 TX 完全空闲时归零，使硬件 START 和后续 CPU 字节流都从确定相位开始。UART 收到 `start_banner_valid` 后自动发送 `MATMUL_START\n`。
 
 当前启动汇编不执行 UART 重新初始化，因此 CPU 不清空 TX FIFO，也不重写自动 UART 的分频器。
 
@@ -163,30 +163,14 @@ CPU 不执行 printf、不启动逐组运算，也不计算 CRC。`user-sample.c
 
 ### 4.4 ExtRAM 连续读入
 
-每组输入 32 word，DMA 将 8 组组合成一个 AXI4 最大长度 burst：
+每组输入 32 word。当前评测路径直接控制 ExtRAM 引脚，在一个 50 MHz 周期内读取相邻两个 word：
 
 ```text
-8 group × 32 word = 256 beat = 1024 byte
-ARLEN = 255, ARSIZE = 2, ARBURST = INCR
+16 pair/group × 5000 group = 80000 pair
+每 pair = data0、data1 两个连续 32-bit word
 ```
 
-CPU 启动的 5000 组任务使用 625 个 1024-byte burst；这些 burst 的起始地址按组布局对齐，不跨越 AXI4 的 4 KiB 边界。
-
-评测版 ExtRAM 桥将“SRAM 地址发射”和“AXI R 数据退休”解耦：
-
-- READ 状态中只要本 burst 仍有地址，就每拍置 `req_o` 并推进地址；
-- 地址发射不受上一拍 `RVALID/RREADY` 或单级 `rd_valid` 反向 gating；
-- SRAM 返回数据写入 256-entry R FIFO，FIFO 可容纳一个完整最大 burst；
-- AXI R 通道从 FIFO 独立握手，背压不会立即切断 SRAM 地址流水；
-- 弹出当前 burst 的 RLAST 时可同拍接受下一笔 AR，并采集下一 burst 的第一个 word。
-
-DMA 在当前 burst 最后 32 beat 期间持续预告下一笔 AR：
-
-```text
-read_chain_offer = read_state==RD_DATA && read_beat[7:5]==3'b111
-```
-
-桥只在当前 burst 的 RLAST 退休时接收这笔请求；DMA 的 ARVALID 由提前保持的 `read_chain_offer` 产生，不由当拍 RLAST 组合产生。
+`fast_read_base_word` 给出首 word 地址，`fast_read_pair_count` 固定为 `group_num×16`。物理层在两个半周期发出相邻地址，经 SRAM 采样后以 `fast_pair_valid` 同拍返回 `data0/data1`。DMA 只在 `fast_pair_valid && fast_pair_ready` 时推进 pair 和 group 计数；仅组首且两个 core 都不 ready 时允许反压。当前正式路径的 AXI master 读写 VALID 均固定为 0，不参与评测数据搬运。
 
 ### 4.5 双 core 交替调度
 
@@ -226,14 +210,14 @@ A[3][k] × B[k][j] → C[3][j]
 
 | 指标 | 原 16 级全流水基线 | 当前固定 C 引擎实现 |
 |---|---:|---:|
-| 整体布局 LUT | 63,415 | 42,498 |
+| 整体布局 LUT | 63,415 | 42,559 |
 | 整体布局 FF | 43,295 | 21,953 |
 | 两个计算 core 的综合 LUT | 48,518 | 28,029 |
 | 两个计算 core 的综合 FF | 33,195 | 11,897 |
 | DSP | 0 | 0 |
-| 本地实现 WNS | +0.908 ns | +0.321 ns |
+| 本地实现 WNS | +0.908 ns | +0.366 ns |
 
-5000 组全系统仿真中 `core-stall=0`、结果 word mismatch 为 0；线上随机 seed 评测 CRC 正确。资源数字用于描述该次本地实现结果，后续 RTL 或实现策略改变后应重新生成报告。
+5000 组全系统仿真中 `core-stall=0`、结果 word mismatch 为 0。当前选定的清理前功能等价版本在线上随机 seed `0x2ce1acc5` 下得到 CRC `0x3b5cddfc`，CRC 匹配，elapsed time 为 5.023355 ms，得分 99.95；完整成绩日志也表示线上 lint、DSP=0 与 WNS>0 均通过。表中资源和 WNS 是删除评测 DEBUG 逻辑后重新实现所得；清理版仍需以新一轮线上结果确认最终 elapsed time。
 
 ### 4.7 结果有序收集与 CRC
 
@@ -251,7 +235,7 @@ core 的结果快照在下一组计算完成前保持不变，因此 DMA 收集�
 
 ### 4.8 CPU 安排 CRC 前缀、CRC 数字和 DONE
 
-DMA 提供只读的 `READ_GROUPS` 寄存器。当前软件的 `CRC_PREFIX_GROUP` 为 1574；CPU 观察到已读取 1574 组后，向 UART TX FIFO 写入：
+DMA 提供只读的 `READ_GROUPS` 寄存器。当前软件的 `CRC_PREFIX_GROUP` 为 1582；CPU 观察到已读取 1582 组后，向 UART TX FIFO 写入：
 
 ```text
 MATMUL_CRC32=
@@ -281,7 +265,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 ├─ START 完整离开 TX ─► 硬件解除读取门控 ─► ExtRAM 读取、core 计算      │
 │                                                                    │
 ├─ 后续 ExtRAM 读取 + 双 core 计算 + 已完成结果收集/CRC                │
-├─ read_groups=1574 ─► CPU 提前发送 MATMUL_CRC32=                     │
+├─ read_groups=1582 ─► CPU 提前发送 MATMUL_CRC32=                     │
 │                                                                    │
 └─ CRC ready ─► CPU 读 CRC ─► 8 hex + DONE ─► 平台停止计时 ◄────────┘
 ```
@@ -305,18 +289,17 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 - START 在 DMA 启动时由硬件触发；
 - 软件按读取组数提前安排 CRC 前缀，等待 done 后读取 CRC；
 - 评测程序不包含 `printf`、软件 CRC、CPU 逐组搬运和结果读取；
-- UART 使用复位默认 115200 8N1，评测时禁止启动代码清 TX FIFO；
+- UART 使用确定相位的 26+240/256 分数分频和 13-tick stop，评测时禁止启动代码清 TX FIFO；
 - PLL 在外部复位期间保持运行，并在锁定后允许系统复位释放。
 
-### 6.2 ExtRAM/AXI 读路径
+### 6.2 ExtRAM 双沿读路径
 
-- 每次读取 256 beat、覆盖 8 组输入；
-- burst 地址按 1024 byte 对齐，遵守 AXI4 4 KiB 边界；
-- DMA 在最后 32 beat 提前保持下一 AR 请求；
-- 桥在当前 RLAST 退休时同拍接受新 AR；
-- SRAM 地址 issue 与 R data accept 解耦；
-- 使用可容纳完整 burst 的 256-entry R FIFO；
-- 地址由寄存器保存并按 `+4` 推进。
+- 每个 50 MHz 周期读取两个连续 32-bit word；
+- 16 个 pair 组成一组，5000 组共 80000 pair；
+- START 完整发送后才拉起 `fast_read_active`；
+- 物理层用独立的 180° 地址相位和采样时钟完成两个半周期读取；
+- DMA 只按 `fast_pair_valid && fast_pair_ready` 推进；
+- 全系统仿真中读取空泡和组首 core stall 均为 0。
 
 ### 6.3 矩阵计算路径
 
@@ -343,7 +326,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 
 - START 由硬件状态机发送；
 - CRC 前缀、CRC 数字和 DONE 由 CPU 写 TX FIFO；
-- CRC 前缀在 `read_group_count>=1574` 时提前发送；
+- CRC 前缀在 `read_group_count>=1582` 时提前发送；
 - CPU 使用 TFE 的“最后一个 FIFO 字节已被 transmitter 取走”语义及时补入下一批；
 - TX FIFO 提前准备下一字节；
 - stop bit 状态结束且 FIFO 非空时直接装载下一字符。
@@ -351,8 +334,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 ### 6.6 时序与结构精简
 
 - CRC 输入前有一级 `crc_result_data/crc_result_valid` 寄存器；
-- burst 链式请求在最后 32 beat 期间给出；
-- ExtRAM 地址用递增寄存器生成；
+- ExtRAM pair 地址由物理层连续生成；
 - 当前评测分支例化两个 core；
 - 使用固定 case 选择 16 个结果；
 - 评测数据通路只保留输入读取、core 调度、结果排序和 CRC 所需状态；
@@ -360,14 +342,13 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 
 ## 7. 协议与完成条件
 
-### 7.1 AXI4 读通道
+### 7.1 ExtRAM 快速读握手
 
-- ARLEN 最大 255，符合 AXI4 最大 256 beat；
-- burst 不跨 4 KiB；
-- RVALID、RDATA、RID、RLAST 由 FIFO 头部产生，在 RREADY 为低时保持稳定；
-- RLAST 只标记 burst 的最后一个 beat；
-- 下一 AR 只在桥可接受时握手，持续预告不等于重复提交；
-- DMA 仅在 `RVALID && RREADY` 时推进 `read_beat` 和 stream 输入。
+- `fast_pair_valid` 有效时 `data0/data1` 对应相邻地址且只处理一次；
+- `fast_pair_ready` 为低时物理层不得覆盖尚未接收的 pair；
+- DMA 仅在 `fast_pair_valid && fast_pair_ready` 时推进 `read_pair`；
+- 每组 16 个 pair 固定绑定同一 core；
+- 当前评测分支保持未使用的 AXI master VALID 为低。
 
 ### 7.2 core 调度和结果顺序
 
@@ -417,14 +398,14 @@ make MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
 | 文件 | 评测相关职责 |
 |---|---|
 | `rtl/soc_top.v` | PLL/复位、评测 DMA、Matmul、UART 和 ExtRAM 桥连接 |
-| `rtl/ip/DMA/matmul_dma.v` | CPU start、读取进度、256-beat 读、双 core 调度、有序结果收集、CRC32 |
+| `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取进度、双 core 调度、有序结果收集、CRC32 |
 | `rtl/ip/matmul/matmul_axi_slave.v` | 两个评测 core 的例化和 DMA stream 接口 |
 | `rtl/ip/matmul/matmul_batch_core.v` | 评测分支例化的无 `*` 流式 4×4 矩阵乘法 core |
-| `rtl/ip/Bus_interconnects/axi2sram_sp_external.v` | 连续 SRAM 地址发射、R FIFO、burst 链接 |
+| `rtl/ip/ram_wrap/axi_wrap_ram_sp_external.v` | 双相位 SRAM 地址、IDDR 数据采样和 fast pair 返回 |
 | `rtl/ip/APB_UART/URT/uart_top.v` | 自动 START 状态机和 CPU TX 数据仲裁 |
 | `rtl/ip/APB_UART/URT/uart_regs.v` | UART 复位分频默认值、自动 TX FIFO 注入 |
 | `rtl/ip/APB_UART/URT/uart_transmitter.v` | 字符位状态和相邻字符衔接 |
 | `rtl/ip/ram_wrap/cache_sram.v` | 评测 cache tag/valid 的确定性冷启动无效初值 |
 | `sdk/software/bsp/env/start.S` | 评测快速启动、可关闭的 UART 软件初始化 |
 | `sdk/software/examples/asm/user-sample.c` | DMA start、提前前缀、读取 CRC、发送 CRC/DONE |
-| `fpga/create_project.tcl` | 本地验证前重新创建已过期的 Vivado 工程 |
+| `fpga/create_project.tcl` | 仅在工程缺失、损坏或源文件集合失配时重建本地 Vivado 工程 |
