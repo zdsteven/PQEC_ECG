@@ -74,6 +74,27 @@ _start:
     li.w	    $r13,0x18
     csrxchg	$r12,$r13,0x0
 
+#if EVAL_CPU_START_BANNER
+    /* The evaluation protocol now requires START to be CPU-driven.  Queue
+     * the complete line at the earliest point where the uncached UART DMW is
+     * available, overlapping its physical transmission with the remaining
+     * C runtime setup.  The 16-entry FIFO can hold all thirteen bytes. */
+    li.w        t0, 0xbf000000
+    li.w        t1, 'M'; st.b t1, t0, 0
+    li.w        t1, 'A'; st.b t1, t0, 0
+    li.w        t1, 'T'; st.b t1, t0, 0
+    li.w        t1, 'M'; st.b t1, t0, 0
+    li.w        t1, 'U'; st.b t1, t0, 0
+    li.w        t1, 'L'; st.b t1, t0, 0
+    li.w        t1, '_'; st.b t1, t0, 0
+    li.w        t1, 'S'; st.b t1, t0, 0
+    li.w        t1, 'T'; st.b t1, t0, 0
+    li.w        t1, 'A'; st.b t1, t0, 0
+    li.w        t1, 'R'; st.b t1, t0, 0
+    li.w        t1, 'T'; st.b t1, t0, 0
+    li.w        t1, 10;  st.b t1, t0, 0
+#endif
+
     /* load data section */
 	la.local t0, _data_lma
 	la.local t1, _data

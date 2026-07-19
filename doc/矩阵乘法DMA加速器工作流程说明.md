@@ -100,15 +100,10 @@ matmul_dma 读调度器
                                    ▼
                          有序结果收集 + 硬件 CRC32
                                    │
-                          start 专用触发信号
-                                   ▼
-                      UART 自动发送 START 状态机
-                                   │
-                                   ▼
-                               UART_TX
-
-CPU ──► DMA CTRL.start ──► 读取进度、done、CRC32
- └──────────────────────► UART TX FIFO（CRC 前缀、数字和 DONE）
+CPU ──► UART TX FIFO（START、CRC 前缀、数字和 DONE）──► UART_TX
+ │
+ ├─ 等待 START 最后一个 stop bit 完成
+ └─► DMA CTRL.start ──► 读取进度、done、CRC32
 ```
 
 这条路径有四个重要特点：
@@ -116,7 +111,7 @@ CPU ──► DMA CTRL.start ──► 读取进度、done、CRC32
 1. DMA 只负责数据搬运、core 调度、结果排序和 CRC，不在 DMA 内做矩阵乘法；
 2. ExtRAM 返回的两个相邻 word 直接流入矩阵 core，不先写大型输入 block；
 3. 计算结果不写回 ExtRAM，也不进入大型结果 block；
-4. CPU 不参与 5000 组循环或 CRC 计算，但负责启动 DMA、安排 CRC 前缀并格式化最终 CRC/DONE。
+4. CPU 不参与 5000 组循环或 CRC 计算，但负责发送 START、在 START 完整发送后启动 DMA、安排 CRC 前缀并格式化最终 CRC/DONE。
 
 ## 4. 从 FPGA 复位到评测完成的全过程
 
@@ -130,7 +125,7 @@ CPU ──► DMA CTRL.start ──► 读取进度、done、CRC32
 
 系统复位释放条件是 `pll_locked & ~reset`，因此各状态机只在 PLL 已锁定且平台释放复位后运行。
 
-### 4.2 评测 cache 冷启动与 CPU 快速启动 DMA
+### 4.2 评测 cache 冷启动与 CPU 提前发送 START
 
 `matmul_dma` 的复位默认参数已经固定为评测数据：
 
@@ -142,24 +137,25 @@ GROUP_NUM = 5000
 
 评测网表将 I-cache 和 D-cache 的 tag/valid BRAM 初始化为全 0。软件使用 `EVAL_FAST_START=1`，因此复位释放后不再重复执行 256 个索引、两个 cache、两个 way 的 1024 次 `cacop`，但仍保留地址模式、data/bss、cache enable、异常入口和栈初始化。
 
-DMA 复位时 `auto_start_armed=0`。CPU 进入 `main` 后不再读取状态或重复写入 SRC/DST/GROUP/STATUS，只写一次 CTRL.start。DMA 接受该写入后：
+启动汇编使用 `EVAL_CPU_START_BANNER=1`。在 DMW 建立、CPU 可以访问未缓存 UART 地址后，CPU 立即用 13 次 byte MMIO 写把 `MATMUL_START\n` 放入 16-entry TX FIFO。发送与后续 data/bss、cache、异常入口和栈初始化重叠。
+
+CPU 进入 `main` 后轮询 UART TE；只有最后一个 START stop bit 已在线路上完成，才写一次 CTRL.start。DMA 接受该写入后：
 
 - 清空组计数、core 调度状态和 CRC 状态；
 - 置 `busy`；
-- 同拍产生一次 `start_banner_valid`；
-- 等待硬件确认完整 `MATMUL_START\n` 已离开串口后，才解除 ExtRAM 读取门控。
+- 随即发起第一笔 ExtRAM AXI 读请求。
 
 完整配置式 `MATMUL_DMA_Start` 仍保留在关闭 `EVAL_FAST_DMA_START` 时使用；正式评测默认 `EVAL_FAST_DMA_START=1`。
 
-DMA 接受 CPU start 时触发 START 字符串并预置读取状态；START 完整发送前 `eval_read_enable` 保持为低，满足评测规则。门控解除后 DMA、双 core 和 CRC 流水并行推进。
+评测 RTL 已删除硬件自动 START/CRC/DONE 状态机和 DMA-to-UART sideband，只保留 CPU 写 TX FIFO 的发送路径。DMA 的 `eval_read_enable` 固定允许，顺序正确性由 CPU 的“先等待 TE、后写 DMA start”保证。
 
-### 4.3 UART 无需等待 CPU 初始化
+### 4.3 CPU 驱动 UART 与分数分频
 
-评测版 UART 的复位整数分频为 26、分数部分为 240/256，平均每个 16× tick 为 26.9375 个 50 MHz 周期，实际约 116.01 kbaud。线路数据格式为 8N1，transmitter 使用已在线上验证的 13-tick stop 区间。分数累加器在 TX 完全空闲时归零，使硬件 START 和后续 CPU 字节流都从确定相位开始。UART 收到 `start_banner_valid` 后自动发送 `MATMUL_START\n`。
+平台串口按 115200 baud、8N1 接收。评测版 UART 的复位整数分频低字节为 `0x1A`，分数部分为 `0xF0`，平均 16x tick 分频为 `26 + 240/256 = 26.9375`，50 MHz 下实际发送速率约为 116.01 kbaud。transmitter 仍使用已验证的 13-tick stop interval。
 
-当前启动汇编不执行 UART 重新初始化，因此 CPU 不清空 TX FIFO，也不重写自动 UART 的分频器。
+分数累加器在 transmitter 完全空闲时固定为相位 0，使 START 和后续 CPU 字节 burst 都从确定的 tick 序列开始，避免空闲期间自由运行造成前缀乱码。
 
-CPU 不执行 printf、不启动逐组运算，也不计算 CRC。`user-sample.c` 显式启动 DMA，随后通过只读进度寄存器安排 CRC 前缀；启动代码仍保持 `UART_INIT_ON_START=0`，不会清空自动 START 使用的 TX FIFO。
+当前启动汇编不执行 UART 重新初始化，因此 CPU 不清空 TX FIFO，也不覆盖复位分频。CPU 不执行 printf、不启动逐组运算，也不计算 CRC；START、CRC 前缀、CRC 数字和 DONE 均通过 CPU MMIO 写 TX FIFO。
 
 ### 4.4 ExtRAM 连续读入
 
@@ -210,14 +206,14 @@ A[3][k] × B[k][j] → C[3][j]
 
 | 指标 | 原 16 级全流水基线 | 当前固定 C 引擎实现 |
 |---|---:|---:|
-| 整体布局 LUT | 63,415 | 42,559 |
-| 整体布局 FF | 43,295 | 21,953 |
+| 整体布局 LUT | 63,415 | 42,537 |
+| 整体布局 FF | 43,295 | 21,939 |
 | 两个计算 core 的综合 LUT | 48,518 | 28,029 |
 | 两个计算 core 的综合 FF | 33,195 | 11,897 |
 | DSP | 0 | 0 |
-| 本地实现 WNS | +0.908 ns | +0.366 ns |
+| 本地实现 WNS | +0.908 ns | +0.118 ns |
 
-5000 组全系统仿真中 `core-stall=0`、结果 word mismatch 为 0。当前选定的清理前功能等价版本在线上随机 seed `0x2ce1acc5` 下得到 CRC `0x3b5cddfc`，CRC 匹配，elapsed time 为 5.023355 ms，得分 99.95；完整成绩日志也表示线上 lint、DSP=0 与 WNS>0 均通过。表中资源和 WNS 是删除评测 DEBUG 逻辑后重新实现所得；清理版仍需以新一轮线上结果确认最终 elapsed time。
+5000 组全系统仿真中 `core-stall=0`、结果 word mismatch 为 0。当前清理前的 CPU-START 版本在线上随机 seed `0xd1245467` 下得到 CRC `0x056bb209`，CRC 匹配，elapsed time 为 5.039490 ms，得分 99.92；完整成绩日志也表示线上 lint、DSP=0 与 WNS>0 均通过。表中资源和 WNS 来自删除评测调试端口及硬件自动串口死逻辑后的本地重新实现；清理版仍需以新一轮线上结果确认最终 elapsed time。
 
 ### 4.7 结果有序收集与 CRC
 
@@ -249,9 +245,7 @@ MATMUL_CRC32=
 MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 ```
 
-DMA 与 UART 之间当前只用 `start_banner_valid` 触发自动 START。UART 自动状态机在 START 入队完成后进入 IDLE，忽略 CRC sideband；CRC 数字和 DONE 均由 CPU 写 TX FIFO。
-
-UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit 状态结束时，如果 FIFO 已有下一字节，则直接装载该字节并进入下一字符的 start bit。
+评测 UART 不再包含自主输出状态机或 DMA 的 START/CRC sideband。transmitter 在 stop bit 状态结束时，如果 FIFO 已有下一字节，则直接装载该字节并进入下一字符的 start bit。
 
 ## 5. 评测计时边界和并行关系
 
@@ -260,9 +254,9 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 ```text
 平台释放 reset
 │
-├─ CPU 快速启动、预置 DMA start ─────────────────────────────────────┐
-├─ UART 自动发送 MATMUL_START\n ──► 平台开始计时                     │
-├─ START 完整离开 TX ─► 硬件解除读取门控 ─► ExtRAM 读取、core 计算      │
+├─ CPU 在 start.S 提前写 MATMUL_START\n ──► 平台开始计时             │
+├─ CPU 继续运行时初始化，与 START 物理发送重叠                         │
+├─ UART TE=1 ─► CPU 写 DMA start ─► ExtRAM 读取、core 计算             │
 │                                                                    │
 ├─ 后续 ExtRAM 读取 + 双 core 计算 + 已完成结果收集/CRC                │
 ├─ read_groups=1582 ─► CPU 提前发送 MATMUL_CRC32=                     │
@@ -273,12 +267,14 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 代码中的并行关系为：
 
 - 平台保持 SoC 复位时，PLL 仍保持运行；
-- CPU 可以提前写 DMA start，但评测读取门控保证 START 完整发送前不读取 ExtRAM；
-- CPU 快速启动后显式启动 DMA，DMA start 与 START 串行发送并行；
+- CPU 在启动汇编中尽早发送 START，使物理发送与剩余初始化重叠；
+- CPU 必须观察到 TE 后才写 DMA start，因此 START 完成前不会读取 ExtRAM；
 - ExtRAM 读取与两个 core 的计算并行推进；
 - DMA 读取已完成结果并更新 CRC 时，core 可处理后续输入；
 - CPU 发送 CRC 前缀时 DMA、core 和 CRC 继续运行；
 - CPU 的 done 轮询不参与矩阵计算或硬件 CRC 更新。
+
+当前 CPU 驱动 START 版本已通过线上随机 seed 完整评测：seed `0xD1245467`，CRC32 `0x056BB209` 匹配，elapsed time `5.039490 ms`，得分 `99.92%`。按平台日志约定，该次评测同时表示 HDL lint、DSP=0 和 WNS>0 检查通过。elapsed time 会受单次平台波动影响，后续性能比较仍应保存并对照新的线上结果。
 
 ## 6. 面向评测时间的当前设计
 
@@ -286,10 +282,10 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 
 - 评测 tag/valid BRAM 使用冷启动无效初值，软件跳过重复 `cacop`；
 - CPU 依赖固定评测复位参数，仅用一次 CTRL.start 写显式启动 DMA；
-- START 在 DMA 启动时由硬件触发；
+- START 由 CPU 在启动汇编中写入 UART FIFO，硬件自动 START 已禁用；
 - 软件按读取组数提前安排 CRC 前缀，等待 done 后读取 CRC；
 - 评测程序不包含 `printf`、软件 CRC、CPU 逐组搬运和结果读取；
-- UART 使用确定相位的 26+240/256 分数分频和 13-tick stop，评测时禁止启动代码清 TX FIFO；
+- 平台按 115200 8N1 接收；UART 使用平均分频 26.9375 和 13-tick stop，评测时禁止启动代码清 TX FIFO；
 - PLL 在外部复位期间保持运行，并在锁定后允许系统复位释放。
 
 ### 6.2 ExtRAM 双沿读路径
@@ -324,8 +320,8 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 
 ### 6.5 UART 尾部
 
-- START 由硬件状态机发送；
-- CRC 前缀、CRC 数字和 DONE 由 CPU 写 TX FIFO；
+- START、CRC 前缀、CRC 数字和 DONE 均由 CPU 写 TX FIFO；
+- START 完整发送且 TE 置位后，CPU 才启动 DMA；
 - CRC 前缀在 `read_group_count>=1582` 时提前发送；
 - CPU 使用 TFE 的“最后一个 FIFO 字节已被 transmitter 取走”语义及时补入下一批；
 - TX FIFO 提前准备下一字节；
@@ -370,7 +366,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 
 - 评测时不得由启动代码复位正在工作的 TX FIFO；
 - UART transmitter 按 start/data/stop 状态发送字符；
-- 自动发送状态机只负责 START；CPU 写入必须排在 START 之后，并保持 CRC 前缀、数字和 DONE 的顺序。
+- 评测 UART 只有 CPU TX FIFO 写入口；CPU 必须保持 START、CRC 前缀、数字和 DONE 的顺序。
 
 ## 8. 线上评测构建与检查清单
 
@@ -401,11 +397,11 @@ make MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
 | `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取进度、双 core 调度、有序结果收集、CRC32 |
 | `rtl/ip/matmul/matmul_axi_slave.v` | 两个评测 core 的例化和 DMA stream 接口 |
 | `rtl/ip/matmul/matmul_batch_core.v` | 评测分支例化的无 `*` 流式 4×4 矩阵乘法 core |
-| `rtl/ip/ram_wrap/axi_wrap_ram_sp_external.v` | 双相位 SRAM 地址、IDDR 数据采样和 fast pair 返回 |
-| `rtl/ip/APB_UART/URT/uart_top.v` | 自动 START 状态机和 CPU TX 数据仲裁 |
-| `rtl/ip/APB_UART/URT/uart_regs.v` | UART 复位分频默认值、自动 TX FIFO 注入 |
+| `rtl/ip/Bus_interconnects/axi2sram_sp_external.v` | 连续 SRAM 地址发射、R FIFO、burst 链接 |
+| `rtl/ip/APB_UART/URT/uart_top.v` | CPU 驱动的 UART TX 数据通路 |
+| `rtl/ip/APB_UART/URT/uart_regs.v` | UART 整数/分数复位分频、空闲相位复位和 CPU TX FIFO 写入 |
 | `rtl/ip/APB_UART/URT/uart_transmitter.v` | 字符位状态和相邻字符衔接 |
 | `rtl/ip/ram_wrap/cache_sram.v` | 评测 cache tag/valid 的确定性冷启动无效初值 |
-| `sdk/software/bsp/env/start.S` | 评测快速启动、可关闭的 UART 软件初始化 |
-| `sdk/software/examples/asm/user-sample.c` | DMA start、提前前缀、读取 CRC、发送 CRC/DONE |
-| `fpga/create_project.tcl` | 仅在工程缺失、损坏或源文件集合失配时重建本地 Vivado 工程 |
+| `sdk/software/bsp/env/start.S` | CPU 尽早写入 START、评测快速启动和可关闭的 UART 软件初始化 |
+| `sdk/software/examples/asm/user-sample.c` | 等待 START TE、DMA start、提前前缀、读取 CRC、发送 CRC/DONE |
+| `fpga/create_project.tcl` | 本地验证前重新创建已过期的 Vivado 工程 |

@@ -71,8 +71,10 @@ int main(int argc, char **argv)
     U32 crc;
 
 #if EVAL_FAST_DMA_START
-    /* Pre-arm immediately.  Hardware gates the ExtRAM read path until the
-     * complete MATMUL_START line has left the UART transmitter. */
+    /* START was queued by the CPU in start.S.  Do not permit the first
+     * ExtRAM read until its final stop bit has physically completed. */
+    while ((uart_line_status() & UART_LSR_TE) == 0u) {
+    }
     RegWrite(MATMUL_DMA_CTRL_ADDR, 1u);
 #else
     if (MATMUL_DMA_Start(EXTRAM_PHYS_BASE, MATMUL_RESULT_BASE,

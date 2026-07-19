@@ -409,10 +409,6 @@ wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
 
-wire        dma_start_banner_valid;
-wire        dma_crc32_valid;
-wire [31:0] dma_crc32_final;
-wire        uart_start_banner_done;
 wire        dma_matmul_active;
 wire        dma_matmul_stream_valid;
 wire [3:0]  dma_matmul_stream_start;
@@ -643,7 +639,8 @@ u_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),
 `ifdef USE_EVALUATION_UART_SRAM
-    .eval_read_enable(uart_start_banner_done),
+    // CPU now starts DMA only after polling UART TE for its START line.
+    .eval_read_enable(1'b1),
 `endif
 
     .s_axi_awid     (dma_s_awid),
@@ -739,10 +736,7 @@ u_dma (
     .matmul_result_index (dma_matmul_result_index),
     .matmul_result_data0 (dma_matmul_result_data0),
     .matmul_result_data1 (dma_matmul_result_data1),
-    .finish         (dma_finish),
-    .start_banner_valid(dma_start_banner_valid),
-    .crc32_valid    (dma_crc32_valid),
-    .crc32_final    (dma_crc32_final)
+    .finish         (dma_finish)
 `else
     .finish         (dma_finish)
 `endif
@@ -750,9 +744,6 @@ u_dma (
 
 `ifndef USE_EVALUATION_UART_SRAM
 // Generic DMA mode has no private Matmul or autonomous-UART sideband link.
-assign dma_start_banner_valid  = 1'b0;
-assign dma_crc32_valid         = 1'b0;
-assign dma_crc32_final         = 32'd0;
 assign dma_matmul_active       = 1'b0;
 assign dma_matmul_stream_valid = 1'b0;
 assign dma_matmul_stream_start = 4'd0;
@@ -1542,16 +1533,7 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
 `ifdef USE_EVALUATION_UART_SRAM
-    .uart0_int (uart0_int ),
-    // The evaluation UART is already configured by its reset defaults.  Start
-    // the banner as soon as the synchronized system reset is released instead
-    // of exposing the CPU-to-DMA startup latency on the scored UART timeline.
-    // UART_TOP consumes this level only in AUTO_ARM, so the later DMA pulse
-    // cannot restart or duplicate the banner.
-    .auto_start_valid (sys_resetn ),
-    .auto_crc_valid (dma_crc32_valid ),
-    .auto_crc32 (dma_crc32_final ),
-    .auto_banner_done (uart_start_banner_done )
+    .uart0_int (uart0_int )
 `else
     .uart0_int (uart0_int )
 `endif
