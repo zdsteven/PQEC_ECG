@@ -41,6 +41,7 @@ module UART_TOP(
         PWDATA,      URT_PRDATA,
         auto_start_valid,
         auto_crc_valid, auto_crc32,
+        auto_banner_done,
 
         INT, clk_carrier,
 
@@ -59,6 +60,7 @@ output  [7:0]     URT_PRDATA;
 input             auto_start_valid;
 input             auto_crc_valid;
 input   [31:0]    auto_crc32;
+output reg        auto_banner_done;
 
 output  INT;
 input   clk_carrier;
@@ -84,6 +86,7 @@ wire tx2rx_en;
 wire isomode;
 wire auto_tx_ready;
 wire tx_idle;
+wire tx_complete;
 reg  auto_tx_valid;
 reg  [7:0] auto_tx_data;
 reg  [5:0] auto_index;
@@ -205,8 +208,11 @@ always @(posedge PCLK or negedge PRST_) begin
         auto_state      <= AUTO_ARM;
         auto_crc_pending<= 1'b0;
         auto_delay_count<= 16'd0;
+        auto_banner_done <= 1'b0;
     end else begin
         auto_tx_valid <= 1'b0;
+        if ((auto_state == AUTO_IDLE) && tx_complete)
+            auto_banner_done <= 1'b1;
         if (auto_crc_valid) begin
             auto_crc_hold    <= auto_crc32;
             auto_crc_pending <= 1'b1;
@@ -324,6 +330,7 @@ uart_regs	regs(
     .auto_tx_data (auto_tx_data ),
     .auto_tx_ready(auto_tx_ready),
     .tx_idle      (tx_idle      ),
+    .tx_complete  (tx_complete  ),
 
     .modem_inputs({ CTS, DSR, RI, DCD }	),
     .rts_pad_o   (RTS      ),

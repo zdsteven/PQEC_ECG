@@ -11,6 +11,7 @@ module matmul_dma #(
     input             clk,
     input             resetn,
     input      [31:0] dbg_reset_release_cycles,
+    input             eval_read_enable,
 
     // CPU-facing AXI slave register interface (0x1f30_0000).
     input      [4:0]  s_axi_awid,
@@ -266,7 +267,9 @@ assign s_axi_rlast   = 1'b1;
 
 assign finish = done;
 assign matmul_active = busy;
-assign fast_read_active = busy;
+// CPU may pre-arm the engine, but ExtRAM remains untouched until the complete
+// hardware START line, including its final stop bit, is on the wire.
+assign fast_read_active = busy && eval_read_enable;
 assign fast_read_base_word = src_base[21:2];
 assign fast_read_pair_count = {group_num[12:0], 4'b0000};
 assign fast_pair_ready = busy && ((read_pair != 4'd0) || any_core_sched_ready);

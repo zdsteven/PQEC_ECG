@@ -106,7 +106,8 @@ uart0_ri_i,
 uart0_int,
 auto_start_valid,
 auto_crc_valid,
-auto_crc32
+auto_crc32,
+auto_banner_done
 );
 
 parameter ADDR_APB = 20,
@@ -182,6 +183,7 @@ output uart0_int;
 input  auto_start_valid;
 input  auto_crc_valid;
 input  [31:0] auto_crc32;
+output auto_banner_done;
 
 assign  dma_req_o      = 1'b0;
 assign  nand_dma_ack_i = dma_ack_i;
@@ -348,6 +350,7 @@ UART_TOP uart0
 .auto_start_valid  (auto_start_valid ),
 .auto_crc_valid    (auto_crc_valid   ),
 .auto_crc32        (auto_crc32       ),
+.auto_banner_done  (auto_banner_done ),
 .INT               (uart0_int         ),
 .TXD_o             (uart0_txd_o       ),
 .TXD_i             (uart0_txd_i       ),

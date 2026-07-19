@@ -233,17 +233,9 @@ int main(int argc, char **argv)
     sw_main_cycle = eval_cpu_cycle();
 #endif
 
-    /* Competition protocol requires the complete MATMUL_START line to be on
-     * the wire before the first ExtRAM read.  TE is stricter than TFE: it is
-     * asserted only after the TX FIFO is empty and the transmitter has
-     * returned to idle after the final stop bit. */
-    while ((uart_line_status() & UART_LSR_TE) == 0u) {
-    }
-
 #if EVAL_FAST_DMA_START
-    /* The evaluation-only reset defaults already fix SRC, DST and 5000
-     * groups. Avoid a status read and four redundant configuration writes so
-     * the sole CTRL write starts DMA immediately after entering main. */
+    /* Pre-arm immediately.  Hardware gates the ExtRAM read path until the
+     * complete MATMUL_START line has left the UART transmitter. */
     RegWrite(MATMUL_DMA_CTRL_ADDR, 1u);
 #if EVAL_DEBUG_COUNTERS
     sw_dma_start_cycle = eval_cpu_cycle();

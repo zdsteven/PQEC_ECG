@@ -44,6 +44,7 @@ module uart_regs (clk, rst, clk_carrier,
     auto_tx_data,
     auto_tx_ready,
     tx_idle,
+    tx_complete,
 
     modem_inputs,
     rts_pad_o, dtr_pad_o,
@@ -65,6 +66,7 @@ input        auto_tx_valid;
 input  [7:0] auto_tx_data;
 output       auto_tx_ready;
 output       tx_idle;
+output       tx_complete;
 
 output       stx_pad_o;
 input        srx_pad_i;
@@ -403,6 +405,7 @@ assign tx_data_in = auto_tx_valid ? auto_tx_data : dat_i;
 assign tf_push = (we & addr==`UART_REG_TR & !dlab) | auto_tx_valid;
 assign auto_tx_ready = (tf_count != `UART_FIFO_DEPTH);
 assign tx_idle = lsr5;
+assign tx_complete = lsr6;
 always @(posedge clk )
   if (rst)
   begin

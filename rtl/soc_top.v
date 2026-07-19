@@ -431,6 +431,7 @@ wire        dma_finish   ;
 wire        dma_start_banner_valid;
 wire        dma_crc32_valid;
 wire [31:0] dma_crc32_final;
+wire        uart_start_banner_done;
 wire        dma_matmul_active;
 wire        dma_matmul_stream_valid;
 wire [3:0]  dma_matmul_stream_start;
@@ -662,6 +663,7 @@ u_dma (
     .resetn         (sys_resetn),
 `ifdef USE_EVALUATION_UART_SRAM
     .dbg_reset_release_cycles(eval_reset_release_cycles),
+    .eval_read_enable(uart_start_banner_done),
 `endif
 
     .s_axi_awid     (dma_s_awid),
@@ -1568,7 +1570,8 @@ axi_uart_controller u_axi_uart_controller
     // cannot restart or duplicate the banner.
     .auto_start_valid (sys_resetn ),
     .auto_crc_valid (dma_crc32_valid ),
-    .auto_crc32 (dma_crc32_final )
+    .auto_crc32 (dma_crc32_final ),
+    .auto_banner_done (uart_start_banner_done )
 `else
     .uart0_int (uart0_int )
 `endif
