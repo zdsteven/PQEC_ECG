@@ -200,15 +200,16 @@ read_chain_offer = read_state==RD_DATA && read_beat[7:5]==3'b111
 
 只有在一组第一个 word 到来而两个 core 都不 ready 时，DMA 才拉低 `m_axi_rready`。组内其余 31 word 不产生调度背压。
 
-一组输入占 32 个数据拍；B33 进入后，无 DSP radix-4 乘法流水继续推进。下一组可送入另一个 ready core，使两个 core 的输入和流水尾段交叠。
+评测读路径每个系统周期向 core 提供相邻的两个 word，因此一组 32 word 占 16 个输入周期。B32/B33 进入后，选中 core 还需 15 个 radix-4 digit 周期形成结果；下一组先送入另一个 ready core。相邻两次选择同一 core 的间隔为 32 周期，当前结构无需为计算主动插入输入停顿。
 
-### 4.6 边输入边计算
+### 4.6 十六个固定 C 引擎
 
-评测 core 使用流式结构，不需要完整的 1024-bit A/B block 输入端口。当前输入布局为先 A 后 B：
+评测 core 使用流式输入和 16 个固定 C 引擎，不需要完整的 1024-bit A/B block 输入端口。当前输入布局仍为先 A 后 B：
 
-1. A00～A33 到达时写入 16 个 A 寄存器并置 valid；
-2. 每个 B[k][j] 到达时，立即读取已到达的 `A[0..3][k]`；
-3. 同拍向四条乘法 lane 发射：
+1. A00～A33 到达时写入 16 个 A 寄存器，A00 可与 `start` 同拍旁路接收；
+2. B00/B01 到达时，把各行 A 操作数复制到对应 C 引擎的局部 radix-4 状态，并预先形成 `A` 和 `3A`；
+3. B00～B33 写入输入暂存；B32/B33 到达的同拍，通过直接旁路处理所有 16 个 C 的 digit 0；
+4. 随后 15 个周期依次处理 digit 1～15。每个 C 引擎固定计算：
 
 ```text
 A[0][k] × B[k][j] → C[0][j]
@@ -217,11 +218,22 @@ A[2][k] × B[k][j] → C[2][j]
 A[3][k] × B[k][j] → C[3][j]
 ```
 
-4. lane 携带目标 C 下标 tag，通过 16 级 radix-4 流水后累加到对应的 66-bit accumulator；
-5. 最后一个 B33 的四个乘积到达流水尾部时，对 C03/C13/C23/C33 做末次加法旁路，并一次性形成 16 个稳定快照；
-6. core 拉低 busy、脉冲输出 done。
+每个 digit 周期，各引擎根据四个 B 的 2-bit digit 在 `0/A/2A/3A` 中选择四项，经平衡加法树加入自己的 66-bit accumulator。第 15 个 digit 同拍写入 16 个稳定的 `result_snapshot`，随后 core 拉低 busy 并脉冲输出 done。
 
-四条乘法 lane 每拍可接受一个 B word 对应的四个乘积。评测宏下例化的是 `matmul_batch_core`，其乘法数据通路使用 radix-4 shift/add，不使用 Verilog `*` 运算符。
+这种结构以 16 个迭代 C 引擎替代原先四条、16 级完全展开且每条包含双通道的乘法流水。A/B 移位状态按 C 引擎局部复制，避免共享状态形成跨行列高扇出布线；首 digit 与后续 digit 共用同一套加法树。评测宏下例化的是 `matmul_batch_core`，数据通路使用 radix-4 shift/add，不使用 Verilog `*` 运算符，DSP 使用量为 0。
+
+当前版本的本地完整实现及线上功能验证结果如下：
+
+| 指标 | 原 16 级全流水基线 | 当前固定 C 引擎实现 |
+|---|---:|---:|
+| 整体布局 LUT | 63,415 | 42,498 |
+| 整体布局 FF | 43,295 | 21,953 |
+| 两个计算 core 的综合 LUT | 48,518 | 28,029 |
+| 两个计算 core 的综合 FF | 33,195 | 11,897 |
+| DSP | 0 | 0 |
+| 本地实现 WNS | +0.908 ns | +0.321 ns |
+
+5000 组全系统仿真中 `core-stall=0`、结果 word mismatch 为 0；线上随机 seed 评测 CRC 正确。资源数字用于描述该次本地实现结果，后续 RTL 或实现策略改变后应重新生成报告。
 
 ### 4.7 结果有序收集与 CRC
 
@@ -239,7 +251,7 @@ core 的结果快照在下一组计算完成前保持不变，因此 DMA 收集�
 
 ### 4.8 CPU 安排 CRC 前缀、CRC 数字和 DONE
 
-DMA 提供只读的 `READ_GROUPS` 寄存器。CPU 观察到已读取 3410 组后，向 UART TX FIFO 写入：
+DMA 提供只读的 `READ_GROUPS` 寄存器。当前软件的 `CRC_PREFIX_GROUP` 为 1574；CPU 观察到已读取 1574 组后，向 UART TX FIFO 写入：
 
 ```text
 MATMUL_CRC32=
@@ -264,12 +276,12 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 ```text
 平台释放 reset
 │
-├─ CPU 快速启动、写 DMA start ───────────────────────────────────────┐
-├─ DMA 首个 AR、ExtRAM 读取、core 计算                              │
+├─ CPU 快速启动、预置 DMA start ─────────────────────────────────────┐
 ├─ UART 自动发送 MATMUL_START\n ──► 平台开始计时                     │
+├─ START 完整离开 TX ─► 硬件解除读取门控 ─► ExtRAM 读取、core 计算      │
 │                                                                    │
 ├─ 后续 ExtRAM 读取 + 双 core 计算 + 已完成结果收集/CRC                │
-├─ read_groups=3410 ─► CPU 提前发送 MATMUL_CRC32=                     │
+├─ read_groups=1574 ─► CPU 提前发送 MATMUL_CRC32=                     │
 │                                                                    │
 └─ CRC ready ─► CPU 读 CRC ─► 8 hex + DONE ─► 平台停止计时 ◄────────┘
 ```
@@ -277,6 +289,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 代码中的并行关系为：
 
 - 平台保持 SoC 复位时，PLL 仍保持运行；
+- CPU 可以提前写 DMA start，但评测读取门控保证 START 完整发送前不读取 ExtRAM；
 - CPU 快速启动后显式启动 DMA，DMA start 与 START 串行发送并行；
 - ExtRAM 读取与两个 core 的计算并行推进；
 - DMA 读取已完成结果并更新 CRC 时，core 可处理后续输入；
@@ -308,11 +321,12 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 ### 6.3 矩阵计算路径
 
 - 乘法运算保留在独立矩阵 IP 内，DMA 不复制计算资源；
-- core 缓存 A，B 到达即发射四路乘积；
+- core 缓存 A/B，B32/B33 到达时处理 digit 0；
 - A00 与 start 同拍旁路接收；
-- 使用两个 core 交叠输入阶段和乘法流水尾部；
-- 四条 16 级 radix-4 shift/add lane，每拍接收一个 B word，不使用 DSP；
-- 最终 B33 的四个结果使用固定下标旁路；
+- 使用两个 core 交叠输入阶段和 15 周期迭代计算尾部；
+- 16 个固定 C 引擎共用 16 个 radix-4 digit 周期，不使用 DSP；
+- 每个引擎静态绑定一个 C 下标，不需要乘积 tag 或动态结果写交叉开关；
+- A/B radix-4 状态局部化，首 digit 与后续 digit 共用加法树；
 - 结果快照允许已完成组的结果收集与下一组计算重叠。
 
 ### 6.4 CRC 与结果路径
@@ -329,7 +343,7 @@ UART 自动发送器通过 TX FIFO 写入后续字节；发送器在 stop bit �
 
 - START 由硬件状态机发送；
 - CRC 前缀、CRC 数字和 DONE 由 CPU 写 TX FIFO；
-- CRC 前缀在 `read_group_count>=3410` 时提前发送；
+- CRC 前缀在 `read_group_count>=1574` 时提前发送；
 - CPU 使用 TFE 的“最后一个 FIFO 字节已被 transmitter 取走”语义及时补入下一批；
 - TX FIFO 提前准备下一字节；
 - stop bit 状态结束且 FIFO 非空时直接装载下一字符。
@@ -396,7 +410,7 @@ make MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
 7. 串口必须完整且有序收到 START、CRC32、DONE；
 8. 保存线上 elapsed time 和对应 bitstream 的实现报告。
 
-当前本地 `fpga/project` Vivado 工程已经过期。进行本地仿真、综合、实现或读取本地 WNS/DSP 报告前，必须先运行 `fpga/create_project.tcl` 重新创建工程；旧工程和旧报告不代表当前 RTL。工程重建后才能执行本地仿真，并通过新的实现流程生成可用于检查的报告。
+当前本地 `fpga/project/Loongson_Soc.xpr` 可直接复用。源码改变后必须重新运行实现流程，只有对应当前源码的新 WNS/DSP/资源报告才有效；仅在工程缺失、损坏或源文件集合失配时才运行 `fpga/create_project.tcl` 重建工程。
 
 ## 9. 关键源码位置
 

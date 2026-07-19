@@ -376,7 +376,11 @@ always @(posedge clk )
       fcr      <= 2'b11;
       rx_reset <= 0;
       tx_reset <= 0;
-      dl[`UART_DL3] <= 8'h0;
+      // Fractional part of the evaluation UART divisor.  Together with the
+      // integer divisor 26 this gives an average of 26 + 240/256 clocks per
+      // 16x tick (about 116.01 kbaud at 50 MHz).  The transmitter still uses
+      // the proven 13-tick stop interval; only the tick period is refined.
+      dl[`UART_DL3] <= 8'hf0;
   end else
   if (we && addr==`UART_REG_FC) begin
     if(dlab) dl[`UART_DL3] <= dat_i;
@@ -409,10 +413,11 @@ assign tx_complete = lsr6;
 always @(posedge clk )
   if (rst)
   begin
-    // FPGA evaluation clock is 50 MHz; divisor 27 gives 115200 baud.
+    // FPGA evaluation clock is 50 MHz; use the fractional 26.9375 divisor
+    // configured above for a small, receiver-safe baud-rate improvement.
     // A valid reset default lets the hardware banner start immediately,
     // without waiting for CPU firmware to program the UART.
-    dl[`UART_DL1]  <= 8'h1b;
+    dl[`UART_DL1]  <= 8'h1a;
     start_dlc      <= 1'b0;
   end
   else
@@ -553,6 +558,13 @@ begin
     if (rst) begin
        dlc <= 0;
        M_cnt <= 8'h0;
+    end
+    // Do not let the fractional phase free-run while TX is completely idle.
+    // START and each later CPU-written burst then begin with the same tick
+    // sequence instead of an arbitrary accumulator phase.
+    else if (lsr6 && !fifo_write) begin
+       dlc <= 0;
+       M_cnt <= 9'h000;
     end
     else if (start_dlc | ~ (|dlc)) begin
        dlc <= dl - 1 + M_toggle;

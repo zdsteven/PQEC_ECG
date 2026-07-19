@@ -12,7 +12,7 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define EXTRAM_PHYS_BASE       0x1c400000u
 #define MATMUL_INPUT_BYTES     0x0009c400u
 #define MATMUL_RESULT_BASE     (EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES)
-#define CRC_PREFIX_GROUP       1578u
+#define CRC_PREFIX_GROUP       1582u
 
 #define UART_TX_ADDR           (UART_BASE + 0u)
 #define UART_LSR_ADDR          (UART_BASE + 5u)
