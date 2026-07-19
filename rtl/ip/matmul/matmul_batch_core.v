@@ -1,8 +1,11 @@
-// Streaming 4x4 unsigned matrix multiplier.
-// External layout remains A[0..15], B[0..15].  A words are cached as adjacent
-// pairs; every B[k][j]/B[k][j+1] pair immediately launches eight products.
-// The fully-pipelined radix-4 datapath contains no Verilog multiplication
-// operator, preventing DSP inference.
+// Streaming 4x4 unsigned matrix multiplier for the evaluation path.
+// External layout remains A[0..15], B[0..15].  After the sixteen input pairs
+// arrive, sixteen fixed C engines process one radix-4 digit plane per cycle.
+// Each engine owns its output accumulator and four statically wired A/B terms,
+// avoiding both a fully-expanded multiplier pipeline and dynamic result-write
+// crossbars.  Sixteen digit cycles finish exactly inside the 32-cycle interval
+// before the two-core scheduler selects this core again.  No Verilog
+// multiplication operator or DSP resource is used.
 module matmul_batch_core (
     input               clk,
     input               resetn,
@@ -20,26 +23,17 @@ module matmul_batch_core (
 );
 
 reg [31:0] a_data [0:15];
-reg [15:0] a_valid;
+reg [31:0] b_shift [0:15];
+// Keep the four radix-4 operand states physically local to each C engine.
+// The deliberate four-way replication removes the row/column-wide shifted-A
+// nets which are cheap in registers but disproportionately expensive to route.
+reg [65:0] c_a_shift [0:63];
+reg [65:0] c_a3_shift [0:63];
+reg [31:0] c_b_shift [0:63];
 reg [65:0] accumulator [0:15];
 reg [65:0] result_snapshot [0:15];
-
-// Four row lanes, sixteen radix-4 stages per lane and two products per row.
-reg [65:0] mul_x [0:63];
-reg [65:0] mul_x3 [0:63];
-// A pair contains adjacent matrix words.  Adjacent B words have the same k,
-// so both product channels for one row can share the shifted multiplicand
-// pipeline while retaining independent multiplier/accumulator state.
-reg [31:0] mul_y0 [0:63];
-reg [65:0] mul_acc0 [0:63];
-reg [3:0]  mul_tag0 [0:63];
-reg        mul_valid0 [0:63];
-reg        mul_last0 [0:63];
-reg [31:0] mul_y1 [0:63];
-reg [65:0] mul_acc1 [0:63];
-reg [3:0]  mul_tag1 [0:63];
-reg        mul_valid1 [0:63];
-reg        mul_last1 [0:63];
+reg [3:0] digit_step;
+reg       compute_active;
 
 wire input_fire0 = busy && stream_valid;
 wire input_fire1 = busy && stream_valid1;
@@ -47,16 +41,10 @@ wire input_is_b0 = stream_index[4];
 wire input_is_b1 = stream_index1[4];
 wire [3:0] input_pos0 = stream_index[3:0];
 wire [3:0] input_pos1 = stream_index1[3:0];
-wire [1:0] input_k0 = input_pos0[3:2];
-wire [1:0] input_k1 = input_pos1[3:2];
-wire [1:0] input_j0 = input_pos0[1:0];
-wire [1:0] input_j1 = input_pos1[1:0];
 wire launch_b0 = input_fire0 && input_is_b0;
 wire launch_b1 = input_fire1 && input_is_b1;
-wire launch_b_pair = launch_b0 || launch_b1;
-wire [1:0] launch_k = launch_b0 ? input_k0 : input_k1;
-wire launch_last_pair = (launch_b0 && (stream_index == 5'd31)) ||
-                        (launch_b1 && (stream_index1 == 5'd31));
+wire launch_last = (launch_b0 && (stream_index == 5'd31)) ||
+                   (launch_b1 && (stream_index1 == 5'd31));
 
 function [65:0] radix4_term;
     input [65:0] x;
@@ -72,10 +60,46 @@ function [65:0] radix4_term;
     end
 endfunction
 
+wire [31:0] first_b_word [0:15];
+genvar b;
+generate
+    for (b=0; b<16; b=b+1) begin : gen_first_b_word
+        if (b == 14)
+            assign first_b_word[b] = stream_data;
+        else if (b == 15)
+            assign first_b_word[b] = stream_data1;
+        else
+            assign first_b_word[b] = b_shift[b];
+    end
+endgenerate
+
+wire [65:0] digit_sum [0:15];
+genvar c;
+generate
+    for (c=0; c<16; c=c+1) begin : gen_digit_sum
+        localparam integer ROW_BASE = (c/4)*4;
+        localparam integer COL = c%4;
+        wire [1:0] digit0 = launch_last ? first_b_word[COL][1:0]
+                                        : c_b_shift[c*4][1:0];
+        wire [1:0] digit1 = launch_last ? first_b_word[4+COL][1:0]
+                                        : c_b_shift[c*4+1][1:0];
+        wire [1:0] digit2 = launch_last ? first_b_word[8+COL][1:0]
+                                        : c_b_shift[c*4+2][1:0];
+        wire [1:0] digit3 = launch_last ? first_b_word[12+COL][1:0]
+                                        : c_b_shift[c*4+3][1:0];
+        wire [65:0] term0 = radix4_term(c_a_shift[c*4],
+                                        c_a3_shift[c*4], digit0);
+        wire [65:0] term1 = radix4_term(c_a_shift[c*4+1],
+                                        c_a3_shift[c*4+1], digit1);
+        wire [65:0] term2 = radix4_term(c_a_shift[c*4+2],
+                                        c_a3_shift[c*4+2], digit2);
+        wire [65:0] term3 = radix4_term(c_a_shift[c*4+3],
+                                        c_a3_shift[c*4+3], digit3);
+        assign digit_sum[c] = (term0 + term1) + (term2 + term3);
+    end
+endgenerate
+
 integer i;
-integer lane;
-integer stage;
-integer flat;
 always @(*) begin
     case (result_index)
         4'd0: result_data = result_snapshot[0];
@@ -101,151 +125,92 @@ always @(posedge clk) begin
     if (!resetn) begin
         busy <= 1'b0;
         done <= 1'b0;
-        a_valid <= 16'd0;
+        digit_step <= 4'd0;
+        compute_active <= 1'b0;
         for (i=0;i<16;i=i+1) begin
             a_data[i] = 32'd0;
+            b_shift[i] = 32'd0;
             accumulator[i] = 66'd0;
             result_snapshot[i] = 66'd0;
         end
         for (i=0;i<64;i=i+1) begin
-            mul_x[i] = 66'd0; mul_x3[i] = 66'd0;
-            mul_y0[i] = 32'd0; mul_acc0[i] = 66'd0;
-            mul_tag0[i] = 4'd0; mul_valid0[i] = 1'b0; mul_last0[i] = 1'b0;
-            mul_y1[i] = 32'd0; mul_acc1[i] = 66'd0;
-            mul_tag1[i] = 4'd0; mul_valid1[i] = 1'b0; mul_last1[i] = 1'b0;
+            c_a_shift[i] = 66'd0;
+            c_a3_shift[i] = 66'd0;
+            c_b_shift[i] = 32'd0;
         end
     end else begin
         done <= 1'b0;
 
         if (start && !busy) begin
             busy <= 1'b1;
-            a_valid <= 16'd0;
+            compute_active <= 1'b0;
+            digit_step <= 4'd0;
             for (i=0;i<16;i=i+1)
                 accumulator[i] <= 66'd0;
-            for (i=0;i<64;i=i+1) begin
-                mul_valid0[i] <= 1'b0;
-                mul_last0[i] <= 1'b0;
-                mul_valid1[i] <= 1'b0;
-                mul_last1[i] <= 1'b0;
-            end
             // A streaming producer may present A00 together with start;
             // consume that first word through the input bypass.
-            if (stream_valid && !stream_index[4]) begin
+            if (stream_valid && !stream_index[4])
                 a_data[stream_index[3:0]] <= stream_data;
-                a_valid[stream_index[3:0]] <= 1'b1;
-            end
-            if (stream_valid1 && !stream_index1[4]) begin
+            if (stream_valid1 && !stream_index1[4])
                 a_data[stream_index1[3:0]] <= stream_data1;
-                a_valid[stream_index1[3:0]] <= 1'b1;
-            end
         end else if (busy) begin
-            // Default stage-0 bubbles.  A B pair overrides both product
-            // channels in all four row lanes.
-            for (lane=0; lane<4; lane=lane+1) begin
-                mul_valid0[lane*16] <= 1'b0;
-                mul_last0[lane*16] <= 1'b0;
-                mul_valid1[lane*16] <= 1'b0;
-                mul_last1[lane*16] <= 1'b0;
-            end
-            if (input_fire0 && !input_is_b0) begin
+            if (input_fire0 && !input_is_b0)
                 a_data[input_pos0] <= stream_data;
-                a_valid[input_pos0] <= 1'b1;
-            end
-            if (input_fire1 && !input_is_b1) begin
+            else if (launch_b0)
+                b_shift[input_pos0] <= stream_data;
+            if (input_fire1 && !input_is_b1)
                 a_data[input_pos1] <= stream_data1;
-                a_valid[input_pos1] <= 1'b1;
-            end
+            else if (launch_b1)
+                b_shift[input_pos1] <= stream_data1;
 
-            if (launch_b_pair) begin
-                for (lane=0; lane<4; lane=lane+1) begin
-                    flat = lane*16;
-                    mul_x[flat] <= {34'd0, a_data[{lane[1:0],launch_k}]};
-                    mul_x3[flat] <= {34'd0, a_data[{lane[1:0],launch_k}]} +
-                                     {33'd0, a_data[{lane[1:0],launch_k}],1'b0};
-
-                    if (launch_b0) begin
-                        mul_y0[flat] <= stream_data >> 2;
-                        mul_acc0[flat] <= radix4_term(
-                            {34'd0, a_data[{lane[1:0],input_k0}]},
-                            {34'd0, a_data[{lane[1:0],input_k0}]} +
-                            {33'd0, a_data[{lane[1:0],input_k0}],1'b0},
-                            stream_data[1:0]);
-                        mul_tag0[flat] <= {lane[1:0],input_j0};
-                        mul_valid0[flat] <= a_valid[{lane[1:0],input_k0}];
-                        mul_last0[flat] <= launch_last_pair;
-                    end
-                    if (launch_b1) begin
-                        mul_y1[flat] <= stream_data1 >> 2;
-                        mul_acc1[flat] <= radix4_term(
-                            {34'd0, a_data[{lane[1:0],input_k1}]},
-                            {34'd0, a_data[{lane[1:0],input_k1}]} +
-                            {33'd0, a_data[{lane[1:0],input_k1}],1'b0},
-                            stream_data1[1:0]);
-                        mul_tag1[flat] <= {lane[1:0],input_j1};
-                        mul_valid1[flat] <= a_valid[{lane[1:0],input_k1}];
-                        mul_last1[flat] <= launch_last_pair;
-                    end
+            // All A words are stable when B00/B01 arrive.  Prepare their
+            // unshifted radix-4 multiples during the B input phase so digit
+            // zero can be consumed in the B32/B33 cycle.
+            if (launch_b0 && (input_pos0 == 4'd0)) begin
+                for (i=0;i<64;i=i+1) begin
+                    c_a_shift[i] <= {34'd0,
+                        a_data[(i/16)*4+(i%4)]};
+                    c_a3_shift[i] <= {34'd0,
+                        a_data[(i/16)*4+(i%4)]} +
+                        {33'd0,a_data[(i/16)*4+(i%4)],1'b0};
                 end
             end
 
-            for (stage=1; stage<16; stage=stage+1) begin
-                for (lane=0; lane<4; lane=lane+1) begin
-                    flat = lane*16 + stage;
-                    mul_x[flat] <= {mul_x[flat-1][63:0],2'b0};
-                    mul_x3[flat] <= {mul_x3[flat-1][63:0],2'b0};
-                    mul_y0[flat] <= mul_y0[flat-1] >> 2;
-                    mul_acc0[flat] <= mul_acc0[flat-1] +
-                        radix4_term({mul_x[flat-1][63:0],2'b0},
-                                    {mul_x3[flat-1][63:0],2'b0},
-                                    mul_y0[flat-1][1:0]);
-                    mul_tag0[flat] <= mul_tag0[flat-1];
-                    mul_valid0[flat] <= mul_valid0[flat-1];
-                    mul_last0[flat] <= mul_last0[flat-1];
-                    mul_y1[flat] <= mul_y1[flat-1] >> 2;
-                    mul_acc1[flat] <= mul_acc1[flat-1] +
-                        radix4_term({mul_x[flat-1][63:0],2'b0},
-                                    {mul_x3[flat-1][63:0],2'b0},
-                                    mul_y1[flat-1][1:0]);
-                    mul_tag1[flat] <= mul_tag1[flat-1];
-                    mul_valid1[flat] <= mul_valid1[flat-1];
-                    mul_last1[flat] <= mul_last1[flat-1];
-                end
-            end
-
-            // The two adjacent B words have distinct j values, so all eight
-            // tags retiring in one cycle are distinct.
-            for (lane=0; lane<4; lane=lane+1) begin
-                flat = lane*16 + 15;
-                if (mul_valid0[flat])
-                    accumulator[mul_tag0[flat]] <= accumulator[mul_tag0[flat]] + mul_acc0[flat];
-                if (mul_valid1[flat])
-                    accumulator[mul_tag1[flat]] <= accumulator[mul_tag1[flat]] + mul_acc1[flat];
-            end
-
-            if ((mul_valid0[15] && mul_last0[15]) ||
-                (mul_valid0[31] && mul_last0[31]) ||
-                (mul_valid0[47] && mul_last0[47]) ||
-                (mul_valid0[63] && mul_last0[63]) ||
-                (mul_valid1[15] && mul_last1[15]) ||
-                (mul_valid1[31] && mul_last1[31]) ||
-                (mul_valid1[47] && mul_last1[47]) ||
-                (mul_valid1[63] && mul_last1[63])) begin
+            // B33 marks the end of input.  B32/B33 use a direct digit-zero
+            // bypass while prior B words come from b_shift.  The remaining
+            // state is advanced immediately to digit one.
+            if (launch_last) begin
+                compute_active <= 1'b1;
+                digit_step <= 4'd1;
                 for (i=0;i<16;i=i+1) begin
-                    // Both products in the final B32/B33 pair retire in this
-                    // cycle.  Select at most one matching row channel before
-                    // the final 66-bit addition, avoiding a two-adder chain.
-                    flat = (i >> 2) * 16 + 15;
-                    if (mul_valid0[flat] && mul_last0[flat] &&
-                        (mul_tag0[flat] == i[3:0]))
-                        result_snapshot[i] <= accumulator[i] + mul_acc0[flat];
-                    else if (mul_valid1[flat] && mul_last1[flat] &&
-                             (mul_tag1[flat] == i[3:0]))
-                        result_snapshot[i] <= accumulator[i] + mul_acc1[flat];
-                    else
-                        result_snapshot[i] <= accumulator[i];
+                    accumulator[i] <= digit_sum[i];
                 end
-                busy <= 1'b0;
-                done <= 1'b1;
+                for (i=0;i<64;i=i+1) begin
+                    c_a_shift[i] <= {c_a_shift[i][63:0],2'b0};
+                    c_a3_shift[i] <= {c_a3_shift[i][63:0],2'b0};
+                    c_b_shift[i] <= first_b_word[
+                        (i%4)*4+((i/4)%4)] >> 2;
+                end
+            end
+
+            if (compute_active) begin
+                for (i=0;i<16;i=i+1) begin
+                    accumulator[i] <= accumulator[i] + digit_sum[i];
+                    if (digit_step == 4'd15)
+                        result_snapshot[i] <= accumulator[i] + digit_sum[i];
+                end
+                if (digit_step == 4'd15) begin
+                    compute_active <= 1'b0;
+                    busy <= 1'b0;
+                    done <= 1'b1;
+                end else begin
+                    digit_step <= digit_step + 4'd1;
+                    for (i=0;i<64;i=i+1) begin
+                        c_a_shift[i] <= {c_a_shift[i][63:0],2'b0};
+                        c_a3_shift[i] <= {c_a3_shift[i][63:0],2'b0};
+                        c_b_shift[i] <= c_b_shift[i] >> 2;
+                    end
+                end
             end
         end
     end
