@@ -732,6 +732,7 @@ assign dma_matmul_stream_data  = 32'd0;
 assign dma_matmul_result_index = 4'd0;
 `endif
 
+`ifdef USE_MATMUL
 matmul_axi_slave u_matmul (
     .clk            ( sys_clk           ),
     .resetn         ( sys_resetn        ),
@@ -791,6 +792,26 @@ matmul_axi_slave u_matmul (
     .dma_result_data2 ( dma_matmul_result_data2 ),
     .dma_result_data3 ( dma_matmul_result_data3 )
 );
+`else
+assign axiOut_7_awready = 1'b0;
+assign axiOut_7_wready  = 1'b0;
+assign axiOut_7_bid     = 5'd0;
+assign axiOut_7_bresp   = 2'd0;
+assign axiOut_7_bvalid  = 1'b0;
+assign axiOut_7_arready = 1'b0;
+assign axiOut_7_rid     = 5'd0;
+assign axiOut_7_rdata   = 32'd0;
+assign axiOut_7_rresp   = 2'd0;
+assign axiOut_7_rlast   = 1'b0;
+assign axiOut_7_rvalid  = 1'b0;
+
+assign dma_matmul_ready        = 4'd0;
+assign dma_matmul_done         = 4'd0;
+assign dma_matmul_result_data0 = 66'd0;
+assign dma_matmul_result_data1 = 66'd0;
+assign dma_matmul_result_data2 = 66'd0;
+assign dma_matmul_result_data3 = 66'd0;
+`endif
 
 wire confreg_int;
 
