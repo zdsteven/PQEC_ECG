@@ -37,7 +37,7 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // external SRAM bridge implementations.  Undefine it to select the generic
 // AXI DMA plus the original UART/SRAM implementations.
 // (The Verilog preprocessor selects module definitions by symbol presence.)
-`define USE_EVALUATION_UART_SRAM
+`undef USE_EVALUATION_UART_SRAM
 
 `define USE_CACHE
 
