@@ -12,3 +12,5 @@ rtl/xsim.dir/*
 xsim.dir/*
 xvlog.pb
 matmul_testdata/
+*.bat
+*.py
