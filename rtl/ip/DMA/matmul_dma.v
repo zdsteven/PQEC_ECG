@@ -10,6 +10,7 @@ module matmul_dma #(
 ) (
     input             clk,
     input             resetn,
+    input             eval_read_enable,
 
     // CPU-facing AXI slave register interface (0x1f30_0000).
     input      [4:0]  s_axi_awid,
@@ -85,6 +86,17 @@ module matmul_dma #(
     input             m_axi_rvalid,
     output            m_axi_rready,
 
+    // Evaluation-only two-word ExtRAM return path.  The physical SRAM
+    // interface changes address on both edges of the 50 MHz system clock and
+    // returns the two consecutive samples together in the rising-edge domain.
+    output            fast_read_active,
+    output     [19:0] fast_read_base_word,
+    output     [16:0] fast_read_pair_count,
+    input             fast_pair_valid,
+    input      [31:0] fast_pair_data0,
+    input      [31:0] fast_pair_data1,
+    output            fast_pair_ready,
+
     // Direct request/result link to the independently attached Matmul IP.
     output            matmul_active,
     output            matmul_stream_valid,
@@ -92,16 +104,16 @@ module matmul_dma #(
     output     [3:0]  matmul_stream_core,
     output     [4:0]  matmul_stream_index,
     output     [31:0] matmul_stream_data,
+    output            matmul_stream_valid1,
+    output     [4:0]  matmul_stream_index1,
+    output     [31:0] matmul_stream_data1,
     input      [3:0]  matmul_ready,
     input      [3:0]  matmul_done,
     output reg [3:0]  matmul_result_index,
     input      [65:0] matmul_result_data0,
     input      [65:0] matmul_result_data1,
 
-    output            finish,
-    output reg        start_banner_valid,
-    output reg        crc32_valid,
-    output reg [31:0] crc32_final
+    output            finish
 );
 
 localparam [11:0] ADDR_CTRL       = 12'h000;
@@ -110,9 +122,7 @@ localparam [11:0] ADDR_SRC_BASE   = 12'h008;
 localparam [11:0] ADDR_DST_BASE   = 12'h00c;
 localparam [11:0] ADDR_GROUP_NUM  = 12'h010;
 localparam [11:0] ADDR_CRC32       = 12'h020;
-
-localparam RD_IDLE = 1'b0;
-localparam RD_DATA = 1'b1;
+localparam [11:0] ADDR_READ_GROUPS = 12'h024;
 
 reg [31:0] src_base;
 reg [31:0] dst_base;
@@ -133,9 +143,8 @@ reg        error;
 reg [12:0] read_group_count;
 reg [12:0] calc_group_count;
 
-// Eight matrices are fetched by one maximum-length 256-beat AXI burst.
-reg [7:0]  read_beat;
-reg        read_state;
+// One pair contains two consecutive words; sixteen pairs form one group.
+reg [3:0]  read_pair;
 
 reg  [3:0]    store_element;
 reg           store_active;
@@ -150,28 +159,23 @@ reg [31:0] crc_value;
 reg [65:0] crc_result_data;
 reg        crc_result_valid;
 reg        crc_finish_pending;
-reg        auto_start_armed;
 
 wire [11:0] write_offset = awaddr_hold[11:0];
 wire [11:0] read_offset  = s_axi_araddr[11:0];
 wire aw_handshake = s_axi_awvalid && s_axi_awready;
 wire w_handshake  = s_axi_wvalid && s_axi_wready;
 wire write_fire   = aw_hold_valid && w_hold_valid && !s_axi_bvalid;
-wire result_write_enable = busy && store_active;
 wire [65:0] result_write_data = store_core ? matmul_result_data1 :
                                             matmul_result_data0;
 wire [1:0] core_sched_ready = matmul_ready[1:0];
 wire any_core_sched_ready = |core_sched_ready;
 wire selected_launch_core = core_sched_ready[next_core] ? next_core : ~next_core;
-// For full 256-beat evaluation bursts, present the following AR throughout
-// the final 32 beats.  The bridge accepts it only alongside the old RLAST,
-// avoiding an RLAST-to-ARVALID combinational timing path.
-wire read_chain_offer = (read_state == RD_DATA) && (read_beat[7:5] == 3'b111);
-wire [12:0] read_ar_group = read_group_count + (read_chain_offer ? 13'd1 : 13'd0);
-wire [12:0] read_ar_remaining = group_num[12:0] - read_ar_group;
 wire unused_write_channel_inputs = m_axi_awready | m_axi_wready |
                                    (|m_axi_bid) | (|m_axi_bresp) |
                                    m_axi_bvalid;
+wire unused_read_channel_inputs = m_axi_arready | (|m_axi_rid) |
+                                  (|m_axi_rdata) | (|m_axi_rresp) |
+                                  m_axi_rlast | m_axi_rvalid;
 
 function [31:0] apply_wstrb;
     input [31:0] old_value;
@@ -229,34 +233,38 @@ assign s_axi_rlast   = 1'b1;
 
 assign finish = done;
 assign matmul_active = busy;
-assign matmul_stream_valid = (read_state == RD_DATA) && m_axi_rvalid && m_axi_rready;
-assign matmul_stream_core = (read_beat[4:0] == 5'd0) ?
+// CPU may pre-arm the engine, but ExtRAM remains untouched until the complete
+// hardware START line, including its final stop bit, is on the wire.
+assign fast_read_active = busy && eval_read_enable;
+assign fast_read_base_word = src_base[21:2];
+assign fast_read_pair_count = {group_num[12:0], 4'b0000};
+assign fast_pair_ready = busy && ((read_pair != 4'd0) || any_core_sched_ready);
+
+assign matmul_stream_valid = fast_pair_valid && fast_pair_ready;
+assign matmul_stream_core = (read_pair == 4'd0) ?
                             (selected_launch_core ? 4'b0010 : 4'b0001) :
                             (stream_core ? 4'b0010 : 4'b0001);
-assign matmul_stream_index = read_beat[4:0];
-assign matmul_stream_data = m_axi_rdata;
-assign matmul_stream_start = (matmul_stream_valid && (read_beat[4:0] == 5'd0)) ?
+assign matmul_stream_index = {read_pair, 1'b0};
+assign matmul_stream_data = fast_pair_data0;
+assign matmul_stream_valid1 = matmul_stream_valid;
+assign matmul_stream_index1 = {read_pair, 1'b1};
+assign matmul_stream_data1 = fast_pair_data1;
+assign matmul_stream_start = (matmul_stream_valid && (read_pair == 4'd0)) ?
                              matmul_stream_core : 4'b0000;
 
-// Read master: eight complete A/B groups per maximum 256-word burst.  Each
-// burst is 1024-byte aligned and therefore remains inside a 4 KiB page.
+// The scored path uses the private two-word interface above.  Keep the legacy
+// AXI master structurally present and protocol-idle so the shared 32-bit
+// crossbar remains unchanged for CPU/BaseRAM traffic.
 assign m_axi_arid    = 4'h1;
-assign m_axi_araddr  = src_base + {read_ar_group, 7'b0};
-// Evaluation uses 5000 groups (a multiple of four).  Keep the final-burst
-// expression general for smaller software tests as well.
-assign m_axi_arlen   = (read_ar_remaining >= 13'd8) ?
-                       8'd255 :
-                       ({5'd0, read_ar_remaining[2:0]} << 5) - 8'd1;
+assign m_axi_araddr  = 32'd0;
+assign m_axi_arlen   = 8'd0;
 assign m_axi_arsize  = 3'd2;
 assign m_axi_arburst = 2'b01;
 assign m_axi_arlock  = 1'b0;
 assign m_axi_arcache = 4'b0000;
 assign m_axi_arprot  = 3'b000;
-assign m_axi_arvalid = busy &&
-                       ((read_state == RD_IDLE) || read_chain_offer) &&
-                       (read_ar_group < group_num[12:0]);
-assign m_axi_rready  = busy && (read_state == RD_DATA) &&
-                       ((read_beat[4:0] != 5'd0) || any_core_sched_ready);
+assign m_axi_arvalid = 1'b0;
+assign m_axi_rready  = 1'b0 & unused_read_channel_inputs;
 
 // Result writeback is disabled for the optimized online path.  Keep the AXI
 // master write channel structurally present but permanently idle.
@@ -347,6 +355,7 @@ always @(posedge clk) begin
                 ADDR_DST_BASE:    s_axi_rdata <= dst_base;
                 ADDR_GROUP_NUM:   s_axi_rdata <= group_num;
                 ADDR_CRC32:       s_axi_rdata <= crc_value ^ 32'hffffffff;
+                ADDR_READ_GROUPS: s_axi_rdata <= {19'd0, read_group_count};
                 default:          s_axi_rdata <= 32'd0;
             endcase
         end else if (s_axi_rvalid && s_axi_rready) begin
@@ -363,8 +372,7 @@ always @(posedge clk) begin
         error               <= 1'b0;
         read_group_count    <= 13'd0;
         calc_group_count    <= 13'd0;
-        read_beat           <= 8'd0;
-        read_state          <= RD_IDLE;
+        read_pair           <= 4'd0;
         matmul_result_index <= 4'd0;
         store_element       <= 4'd0;
         store_active        <= 1'b0;
@@ -373,29 +381,20 @@ always @(posedge clk) begin
         stream_core         <= 1'b0;
         core_result_pending <= 2'b00;
         crc_value            <= 32'hffffffff;
-        start_banner_valid   <= 1'b0;
         crc_result_data      <= 66'd0;
         crc_result_valid     <= 1'b0;
         crc_finish_pending   <= 1'b0;
-        crc32_valid          <= 1'b0;
-        crc32_final          <= 32'd0;
-        auto_start_armed     <= 1'b1;
         for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
             core_group[core_reset_index] = 13'd0;
             core_result_group[core_reset_index] = 13'd0;
         end
     end else begin
-        start_banner_valid <= 1'b0;
-        crc32_valid  <= 1'b0;
-
         if (clear_status_pulse) begin
             done  <= 1'b0;
             error <= 1'b0;
         end
 
-        if (auto_start_armed || start_pulse) begin
-            auto_start_armed <= 1'b0;
-            start_banner_valid <= 1'b1;
+        if (start_pulse) begin
             done <= 1'b0;
             if ((group_num == 32'd0) || (group_num > MAX_GROUPS) ||
                 (src_base[1:0] != 2'b00) || (dst_base[1:0] != 2'b00)) begin
@@ -407,8 +406,7 @@ always @(posedge clk) begin
                 error               <= 1'b0;
                 read_group_count    <= 13'd0;
                 calc_group_count    <= 13'd0;
-                read_beat           <= 8'd0;
-                read_state          <= RD_IDLE;
+                read_pair           <= 4'd0;
                 store_element       <= 4'd0;
                 store_active        <= 1'b0;
                 store_core          <= 1'b0;
@@ -419,48 +417,26 @@ always @(posedge clk) begin
                 crc_result_data      <= 66'd0;
                 crc_result_valid     <= 1'b0;
                 crc_finish_pending   <= 1'b0;
-                crc32_final          <= 32'd0;
                 for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
                     core_group[core_reset_index] = 13'd0;
                     core_result_group[core_reset_index] = 13'd0;
                 end
             end
         end else if (busy) begin
-            // Input DMA state machine.
-            if ((read_state == RD_IDLE) && m_axi_arvalid && m_axi_arready) begin
-                read_beat        <= 8'd0;
-                read_state       <= RD_DATA;
-            end else if ((read_state == RD_DATA) && m_axi_rvalid && m_axi_rready) begin
-                // Start a core on word A00 and route all remaining words of
-                // this matrix to the same core.  A00 participates through the
-                // core's input bypass on this very handshake.
-                if (read_beat[4:0] == 5'd0) begin
+            // Two consecutive SRAM words arrive together.  Start a core on
+            // A00/A01 and keep all sixteen pairs of the group on that core.
+            if (fast_pair_valid && fast_pair_ready) begin
+                if (read_pair == 4'd0) begin
                     stream_core <= selected_launch_core;
                     core_group[selected_launch_core] <= read_group_count;
                     next_core <= ~selected_launch_core;
                 end
 
-                if (m_axi_rresp != 2'b00)
-                    error <= 1'b1;
-
-                if (read_beat[4:0] == 5'd31) begin
+                if (read_pair == 4'd15) begin
                     read_group_count <= read_group_count + 13'd1;
-                    if (m_axi_rlast) begin
-                        read_beat  <= 8'd0;
-                        // If the bridge accepts the next AR alongside RLAST,
-                        // remain in RD_DATA and remove the burst-boundary gap.
-                        if (m_axi_arvalid && m_axi_arready)
-                            read_state <= RD_DATA;
-                        else
-                            read_state <= RD_IDLE;
-                    end else begin
-                        read_beat <= read_beat + 8'd1;
-                    end
-                end else begin
-                    if (m_axi_rlast)
-                        error <= 1'b1;
-                    read_beat <= read_beat + 8'd1;
-                end
+                    read_pair <= 4'd0;
+                end else
+                    read_pair <= read_pair + 4'd1;
             end
 
             for (core_reset_index = 0; core_reset_index < 2; core_reset_index = core_reset_index + 1) begin
@@ -468,9 +444,11 @@ always @(posedge clk) begin
                     core_result_group[core_reset_index] <= core_group[core_reset_index];
             end
 
-            // Done pulses are retained until the single BRAM write port has
-            // copied all sixteen snapshotted results.  The originating core
-            // may already be computing its next group.
+            // Done pulses are retained until all sixteen snapshotted results
+            // have entered the CRC pipeline.  Capture element zero directly
+            // from an ordered done/pending indication so consecutive groups
+            // need exactly sixteen cycles rather than sixteen plus a select
+            // bubble.
             core_result_pending <= core_result_pending | matmul_done[1:0];
             if (!store_active) begin
                 if ((core_result_pending[0] &&
@@ -478,43 +456,48 @@ always @(posedge clk) begin
                     (matmul_done[0] && (core_group[0] == calc_group_count))) begin
                     store_active <= 1'b1;
                     store_core <= 1'b0;
-                    store_element <= 4'd0;
-                    matmul_result_index <= 4'd0;
+                    store_element <= 4'd1;
+                    matmul_result_index <= 4'd1;
                     core_result_pending[0] <= 1'b0;
+                    crc_result_valid <= 1'b1;
+                    crc_result_data <= matmul_result_data0;
                 end else if ((core_result_pending[1] &&
                               (core_result_group[1] == calc_group_count)) ||
                              (matmul_done[1] && (core_group[1] == calc_group_count))) begin
                     store_active <= 1'b1;
                     store_core <= 1'b1;
-                    store_element <= 4'd0;
-                    matmul_result_index <= 4'd0;
+                    store_element <= 4'd1;
+                    matmul_result_index <= 4'd1;
                     core_result_pending[1] <= 1'b0;
+                    crc_result_valid <= 1'b1;
+                    crc_result_data <= matmul_result_data1;
+                end else begin
+                    crc_result_valid <= 1'b0;
                 end
             end else if (store_element == 4'd15) begin
+                crc_result_valid <= 1'b1;
+                crc_result_data <= result_write_data;
                 store_active <= 1'b0;
+                store_element <= 4'd0;
+                matmul_result_index <= 4'd0;
                 calc_group_count <= calc_group_count + 13'd1;
                 if ((calc_group_count + 13'd1) == group_num[12:0]) begin
                     crc_finish_pending <= 1'b1;
                 end
             end else begin
+                crc_result_valid <= 1'b1;
+                crc_result_data <= result_write_data;
                 store_element <= store_element + 4'd1;
                 matmul_result_index <= matmul_result_index + 4'd1;
             end
 
-            // One pipeline register breaks the long result-index/mux-to-CRC
-            // route while preserving one complete result element per cycle.
-            crc_result_valid <= result_write_enable;
-            if (result_write_enable)
-                crc_result_data <= result_write_data;
+            // One pipeline register breaks the result-index/mux-to-CRC route.
             if (crc_result_valid) begin
                 crc_value <= crc32_update_result(crc_value, crc_result_data);
                 if (crc_finish_pending) begin
                     crc_finish_pending <= 1'b0;
                     busy <= 1'b0;
                     done <= 1'b1;
-                    crc32_valid <= 1'b1;
-                    crc32_final <= crc32_update_result(crc_value, crc_result_data)
-                                   ^ 32'hffffffff;
                 end
             end
         end

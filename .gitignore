@@ -1,6 +1,7 @@
 fpga/*
 sim/*
 rtl/ip/PLL_2019_2/*
+!rtl/ip/PLL_2019_2/clk_pll.xci
 obj/
 *.mif
 *.bin
@@ -11,3 +12,5 @@ rtl/xsim.dir/*
 xsim.dir/*
 xvlog.pb
 matmul_testdata/
+*.bat
+*.py

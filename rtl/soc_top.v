@@ -81,6 +81,8 @@ wire cpu_clk;
 wire cpu_resetn;
 wire sys_clk;
 wire sys_resetn;
+wire sram_clk180;
+wire sram_sample_clk;
 wire pll_locked;
 
 generate if(SIMULATION) begin: sim_clk
@@ -93,6 +95,8 @@ generate if(SIMULATION) begin: sim_clk
 
     assign cpu_clk = clk_sim;
     assign sys_clk = clk;
+    assign sram_clk180 = ~clk;
+    assign sram_sample_clk = ~clk;
     rst_sync u_rst_sys(
         .clk(sys_clk),
         .rst_n_in(~reset),
@@ -108,6 +112,8 @@ else begin: pll_clk
     clk_pll u_clk_pll(
         .cpu_clk    (cpu_clk),
         .sys_clk    (sys_clk),
+        .sram_clk180(sram_clk180),
+        .sram_sample_clk(sram_sample_clk),
         // Keep the PLL running while the platform holds CPU/SoC reset.
         // Its lock time is then paid before the timed reset release.
         .resetn     (1'b1),
@@ -403,15 +409,15 @@ wire        dma_s_bvalid ;
 wire        dma_s_bready ;
 wire        dma_finish   ;
 
-wire        dma_start_banner_valid;
-wire        dma_crc32_valid;
-wire [31:0] dma_crc32_final;
 wire        dma_matmul_active;
 wire        dma_matmul_stream_valid;
 wire [3:0]  dma_matmul_stream_start;
 wire [3:0]  dma_matmul_stream_core;
 wire [4:0]  dma_matmul_stream_index;
 wire [31:0] dma_matmul_stream_data;
+wire        dma_matmul_stream_valid1;
+wire [4:0]  dma_matmul_stream_index1;
+wire [31:0] dma_matmul_stream_data1;
 wire [3:0]  dma_matmul_ready;
 wire [3:0]  dma_matmul_done;
 wire [3:0]  dma_matmul_result_index;
@@ -419,6 +425,13 @@ wire [65:0] dma_matmul_result_data0;
 wire [65:0] dma_matmul_result_data1;
 wire [65:0] dma_matmul_result_data2;
 wire [65:0] dma_matmul_result_data3;
+wire        dma_fast_read_active;
+wire [19:0] dma_fast_read_base_word;
+wire [16:0] dma_fast_read_pair_count;
+wire        dma_fast_pair_valid;
+wire [31:0] dma_fast_pair_data0;
+wire [31:0] dma_fast_pair_data1;
+wire        dma_fast_pair_ready;
 
 
 //axi dvi
@@ -625,6 +638,10 @@ axi_dma
 u_dma (
     .clk            (sys_clk),
     .resetn         (sys_resetn),
+`ifdef USE_EVALUATION_UART_SRAM
+    // CPU now starts DMA only after polling UART TE for its START line.
+    .eval_read_enable(1'b1),
+`endif
 
     .s_axi_awid     (dma_s_awid),
     .s_axi_awaddr   (dma_s_awaddr),
@@ -698,21 +715,28 @@ u_dma (
     .m_axi_rvalid   (dma_m_rvalid),
     .m_axi_rready   (dma_m_rready),
 `ifdef USE_EVALUATION_UART_SRAM
+    .fast_read_active(dma_fast_read_active),
+    .fast_read_base_word(dma_fast_read_base_word),
+    .fast_read_pair_count(dma_fast_read_pair_count),
+    .fast_pair_valid(dma_fast_pair_valid),
+    .fast_pair_data0(dma_fast_pair_data0),
+    .fast_pair_data1(dma_fast_pair_data1),
+    .fast_pair_ready(dma_fast_pair_ready),
     .matmul_active  (dma_matmul_active),
     .matmul_stream_valid(dma_matmul_stream_valid),
     .matmul_stream_start(dma_matmul_stream_start),
     .matmul_stream_core (dma_matmul_stream_core),
     .matmul_stream_index(dma_matmul_stream_index),
     .matmul_stream_data (dma_matmul_stream_data),
+    .matmul_stream_valid1(dma_matmul_stream_valid1),
+    .matmul_stream_index1(dma_matmul_stream_index1),
+    .matmul_stream_data1(dma_matmul_stream_data1),
     .matmul_ready   (dma_matmul_ready),
     .matmul_done    (dma_matmul_done),
     .matmul_result_index (dma_matmul_result_index),
     .matmul_result_data0 (dma_matmul_result_data0),
     .matmul_result_data1 (dma_matmul_result_data1),
-    .finish         (dma_finish),
-    .start_banner_valid(dma_start_banner_valid),
-    .crc32_valid    (dma_crc32_valid),
-    .crc32_final    (dma_crc32_final)
+    .finish         (dma_finish)
 `else
     .finish         (dma_finish)
 `endif
@@ -720,16 +744,20 @@ u_dma (
 
 `ifndef USE_EVALUATION_UART_SRAM
 // Generic DMA mode has no private Matmul or autonomous-UART sideband link.
-assign dma_start_banner_valid  = 1'b0;
-assign dma_crc32_valid         = 1'b0;
-assign dma_crc32_final         = 32'd0;
 assign dma_matmul_active       = 1'b0;
 assign dma_matmul_stream_valid = 1'b0;
 assign dma_matmul_stream_start = 4'd0;
 assign dma_matmul_stream_core  = 4'd0;
 assign dma_matmul_stream_index = 5'd0;
 assign dma_matmul_stream_data  = 32'd0;
+assign dma_matmul_stream_valid1 = 1'b0;
+assign dma_matmul_stream_index1 = 5'd0;
+assign dma_matmul_stream_data1  = 32'd0;
 assign dma_matmul_result_index = 4'd0;
+assign dma_fast_read_active     = 1'b0;
+assign dma_fast_read_base_word  = 20'd0;
+assign dma_fast_read_pair_count = 17'd0;
+assign dma_fast_pair_ready      = 1'b0;
 `endif
 
 `ifdef USE_MATMUL
@@ -784,6 +812,9 @@ matmul_axi_slave u_matmul (
     .dma_stream_core (dma_matmul_stream_core),
     .dma_stream_index(dma_matmul_stream_index),
     .dma_stream_data (dma_matmul_stream_data),
+    .dma_stream_valid1(dma_matmul_stream_valid1),
+    .dma_stream_index1(dma_matmul_stream_index1),
+    .dma_stream_data1(dma_matmul_stream_data1),
     .dma_ready      ( dma_matmul_ready  ),
     .dma_done       ( dma_matmul_done   ),
     .dma_result_index ( dma_matmul_result_index ),
@@ -1387,6 +1418,8 @@ Axi_CDC u_Axi_CDC (
 axi_wrap_ram_sp_external u_axi_ram (
     .aclk ( sys_clk ),
     .aresetn ( sys_resetn ),
+    .fast_clk180 ( sram_clk180 ),
+    .fast_sample_clk ( sram_sample_clk ),
     //ar
     .axi_arid ( ram_arid ),
     .axi_araddr ( ram_araddr ),
@@ -1427,6 +1460,14 @@ axi_wrap_ram_sp_external u_axi_ram (
     .axi_bresp ( ram_bresp ),
     .axi_bvalid ( ram_bvalid ),
     .axi_bready ( ram_bready ),
+
+    .fast_read_active    ( dma_fast_read_active     ),
+    .fast_read_base_word ( dma_fast_read_base_word  ),
+    .fast_read_pair_count( dma_fast_read_pair_count ),
+    .fast_pair_valid     ( dma_fast_pair_valid      ),
+    .fast_pair_data0     ( dma_fast_pair_data0      ),
+    .fast_pair_data1     ( dma_fast_pair_data1      ),
+    .fast_pair_ready     ( dma_fast_pair_ready      ),
 
     .base_ram_addr ( base_ram_addr ),
     .base_ram_be_n ( base_ram_be_n ),
@@ -1513,10 +1554,7 @@ axi_uart_controller u_axi_uart_controller
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
 `ifdef USE_EVALUATION_UART_SRAM
-    .uart0_int (uart0_int ),
-    .auto_start_valid (dma_start_banner_valid ),
-    .auto_crc_valid (dma_crc32_valid ),
-    .auto_crc32 (dma_crc32_final )
+    .uart0_int (uart0_int )
 `else
     .uart0_int (uart0_int )
 `endif
@@ -1741,4 +1779,3 @@ assign Crypto_rlast   = 1'b0;
 
 
 endmodule
-

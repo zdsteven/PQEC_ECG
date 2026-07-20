@@ -21,6 +21,7 @@ _start:
     addi.w $r29,zero,0x0; addi.w $r30,zero,0x0; addi.w $r31,zero,0x0;  
 
 #if has_cache==1
+#if !EVAL_FAST_START
     # invalid the old inst in icache and old data in dcache by index
     li.w t0,0x0
     #li.w t2,0x100
@@ -48,6 +49,7 @@ _start:
 #endif
     addi.w    t0, t0, 0x1
     bne       t0, t2, 1b
+#endif
 #else
     /* disable   cache */
     li.w    $r12,0x1
@@ -71,6 +73,27 @@ _start:
     li.w	    $r12,0x10
     li.w	    $r13,0x18
     csrxchg	$r12,$r13,0x0
+
+#if EVAL_CPU_START_BANNER
+    /* The evaluation protocol now requires START to be CPU-driven.  Queue
+     * the complete line at the earliest point where the uncached UART DMW is
+     * available, overlapping its physical transmission with the remaining
+     * C runtime setup.  The 16-entry FIFO can hold all thirteen bytes. */
+    li.w        t0, 0xbf000000
+    li.w        t1, 'M'; st.b t1, t0, 0
+    li.w        t1, 'A'; st.b t1, t0, 0
+    li.w        t1, 'T'; st.b t1, t0, 0
+    li.w        t1, 'M'; st.b t1, t0, 0
+    li.w        t1, 'U'; st.b t1, t0, 0
+    li.w        t1, 'L'; st.b t1, t0, 0
+    li.w        t1, '_'; st.b t1, t0, 0
+    li.w        t1, 'S'; st.b t1, t0, 0
+    li.w        t1, 'T'; st.b t1, t0, 0
+    li.w        t1, 'A'; st.b t1, t0, 0
+    li.w        t1, 'R'; st.b t1, t0, 0
+    li.w        t1, 'T'; st.b t1, t0, 0
+    li.w        t1, 10;  st.b t1, t0, 0
+#endif
 
     /* load data section */
 	la.local t0, _data_lma

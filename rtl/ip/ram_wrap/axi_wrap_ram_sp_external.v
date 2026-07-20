@@ -34,6 +34,8 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 module axi_wrap_ram_sp_external (
     input         aclk,
     input         aresetn,
+    input         fast_clk180,
+    input         fast_sample_clk,
     //ar
     input  [4 :0] axi_arid   ,
     input  [31:0] axi_araddr ,
@@ -74,6 +76,17 @@ module axi_wrap_ram_sp_external (
     output [1 :0] axi_bresp  ,
     output        axi_bvalid ,
     input         axi_bready ,
+
+    // Evaluation-only direct ExtRAM read stream.  The address is a physical
+    // ExtRAM word address; each accepted output pair contains two consecutive
+    // words, with data0 preceding data1 in memory.
+    input         fast_read_active,
+    input  [19:0] fast_read_base_word,
+    input  [16:0] fast_read_pair_count,
+    output        fast_pair_valid,
+    output [31:0] fast_pair_data0,
+    output [31:0] fast_pair_data1,
+    input         fast_pair_ready,
 
     //BaseRAM信号
     inout  [31:0] base_ram_data,  //BaseRAM数据，低8位与CPLD串口控制器共享
@@ -142,6 +155,14 @@ wire            soc_sram_we;
 wire  [3:0]     soc_sram_be;
 wire  [31:0]    soc_sram_wdata;
 wire  [31:0]    soc_sram_rdata;
+
+wire [19:0] fast_ext_addr;
+wire [3:0]  fast_ext_be_n;
+wire        fast_ext_ce_n;
+wire        fast_ext_oe_n;
+wire        fast_ext_we_n;
+wire        fast_ext_bus_active;
+wire [31:0] ext_ram_data_in;
 
 //ar
 assign ram_arid    = axi_arid   ;
@@ -247,13 +268,311 @@ assign base_ram_oe_n = soc_sram_we | choose_sram;
 assign base_ram_we_n = ~(soc_sram_we & (~choose_sram));
 assign base_ram_data = ((~choose_sram) & soc_sram_cs & soc_sram_we) ? soc_sram_wdata : 32'hzzzzzzzz;
 
+// Explicit input buffers let the IDDRs in the evaluation PHY pack into the
+// input I/O logic.  Verilator has no Xilinx UNISIM library, so lint and the
+// standalone PHY test use the equivalent inferred tri-state connection.
+genvar ext_data_bit;
+generate
+for (ext_data_bit = 0; ext_data_bit < 32; ext_data_bit = ext_data_bit + 1) begin: gen_ext_data_iobuf
+`ifdef USE_EVALUATION_UART_SRAM
+`ifdef VERILATOR
+    assign ext_ram_data_in[ext_data_bit] = ext_ram_data[ext_data_bit];
+    assign ext_ram_data[ext_data_bit] = 1'bz;
+`else
+    IOBUF u_ext_data_iobuf (
+        .I  (soc_sram_wdata[ext_data_bit]),
+        .O  (ext_ram_data_in[ext_data_bit]),
+        .T  (1'b1),
+        .IO (ext_ram_data[ext_data_bit])
+    );
+`endif
+`else
+    assign ext_ram_data_in[ext_data_bit] = ext_ram_data[ext_data_bit];
+    assign ext_ram_data[ext_data_bit] =
+        (choose_sram & soc_sram_cs & soc_sram_we) ?
+        soc_sram_wdata[ext_data_bit] : 1'bz;
+`endif
+end
+endgenerate
+
+assign soc_sram_rdata = choose_sram ? ext_ram_data_in : base_ram_data;
+
+`ifdef USE_EVALUATION_UART_SRAM
+// ODDR Q must drive the output buffer directly.  A fabric mux after the ODDR
+// prevents OLOGIC packing, so the scored build gives the private reader sole
+// ownership of ExtRAM pins.  The DMA AXI master is protocol-idle in this mode;
+// BaseRAM remains on the unchanged legacy AXI path.  The non-evaluation branch
+// below retains ordinary AXI ExtRAM operation.
+assign ext_ram_addr = fast_ext_addr;
+assign ext_ram_be_n = fast_ext_be_n;
+assign ext_ram_ce_n = fast_ext_ce_n;
+assign ext_ram_oe_n = fast_ext_oe_n;
+assign ext_ram_we_n = fast_ext_we_n;
+
+eval_ext_sram_ddr_phy u_eval_ext_sram_ddr_phy (
+    .clk                  (aclk),
+    .clk_180              (fast_clk180),
+    .sample_clk           (fast_sample_clk),
+    .resetn               (aresetn),
+    .fast_read_active     (fast_read_active),
+    .fast_read_base_word  (fast_read_base_word),
+    .fast_read_pair_count (fast_read_pair_count),
+    .fast_pair_valid      (fast_pair_valid),
+    .fast_pair_data0      (fast_pair_data0),
+    .fast_pair_data1      (fast_pair_data1),
+    .fast_pair_ready      (fast_pair_ready),
+    .sram_data_i          (ext_ram_data_in),
+    .sram_addr_o          (fast_ext_addr),
+    .sram_be_n_o          (fast_ext_be_n),
+    .sram_ce_n_o          (fast_ext_ce_n),
+    .sram_oe_n_o          (fast_ext_oe_n),
+    .sram_we_n_o          (fast_ext_we_n),
+    .sram_bus_active_o    (fast_ext_bus_active)
+);
+`else
 assign ext_ram_addr = soc_sram_addr[21:2];
 assign ext_ram_be_n = choose_sram ? ~be_out : 4'b1111;
 assign ext_ram_ce_n = choose_sram ? ~soc_sram_cs : 1'b1;
 assign ext_ram_oe_n = choose_sram ? soc_sram_we : 1'b1;
 assign ext_ram_we_n = choose_sram ? ~soc_sram_we : 1'b1;
-assign ext_ram_data = ((choose_sram) & soc_sram_cs & soc_sram_we) ? soc_sram_wdata : 32'hzzzzzzzz;
+assign fast_pair_valid     = 1'b0;
+assign fast_pair_data0     = 32'd0;
+assign fast_pair_data1     = 32'd0;
+assign fast_ext_addr       = 20'd0;
+assign fast_ext_be_n       = 4'b1111;
+assign fast_ext_ce_n       = 1'b1;
+assign fast_ext_oe_n       = 1'b1;
+assign fast_ext_we_n       = 1'b1;
+assign fast_ext_bus_active = 1'b0;
+`endif
 
-assign soc_sram_rdata = choose_sram ? ext_ram_data : base_ram_data;
+endmodule
+
+// Evaluation-only phase-split dual-edge asynchronous ExtRAM reader.
+//
+// A 50 MHz clock shifted 180 degrees drives the address ODDR.  A separate
+// 50 MHz/150-degree clock samples the input before the next address transition,
+// avoiding the zero-hold-margin boundary exposed by the 180-degree IDDR clock.
+// The unshifted 50 MHz system clock retains all control/FIFO state.
+module eval_ext_sram_ddr_phy (
+    input         clk,
+    input         clk_180,
+    input         sample_clk,
+    input         resetn,
+    input         fast_read_active,
+    input  [19:0] fast_read_base_word,
+    input  [16:0] fast_read_pair_count,
+    output        fast_pair_valid,
+    output [31:0] fast_pair_data0,
+    output [31:0] fast_pair_data1,
+    input         fast_pair_ready,
+    input  [31:0] sram_data_i,
+    output [19:0] sram_addr_o,
+    output [3:0]  sram_be_n_o,
+    output        sram_ce_n_o,
+    output        sram_oe_n_o,
+    output        sram_we_n_o,
+    output        sram_bus_active_o
+);
+
+localparam FIFO_ADDR_WIDTH = 7;
+localparam FIFO_DEPTH = 128;
+
+reg active_seen_q;
+reg issuing_q;
+reg [19:0] issue_addr_q;
+reg [17:0] words_remaining_q;
+reg capture_valid_d1_q;
+reg capture_valid_d2_q;
+reg [31:0] even_word_q;
+
+reg [63:0] pair_fifo [0:FIFO_DEPTH-1];
+reg [FIFO_ADDR_WIDTH-1:0] fifo_wr_ptr_q;
+reg [FIFO_ADDR_WIDTH-1:0] fifo_rd_ptr_q;
+reg [FIFO_ADDR_WIDTH:0] fifo_count_q;
+
+wire fifo_pop = (fifo_count_q != 0) && fast_pair_ready;
+// With the IDDR also clocked at 180 degrees, the earlier/later samples become
+// visible on adjacent sys_clk observations.  Save Q1, then pair it with Q2 on
+// the following cycle.
+wire fifo_push = capture_valid_d2_q;
+// At most two launched pairs have not yet reached the FIFO.  Stop launching
+// with three free entries so already in-flight IDDR samples cannot overflow.
+wire fifo_has_issue_space = (fifo_count_q <= (FIFO_DEPTH - 3));
+wire issue_pair = issuing_q && (words_remaining_q >= 2) &&
+                  fifo_has_issue_space;
+
+wire [31:0] read_data_rise;
+wire [31:0] read_data_fall;
+wire [19:0] issue_addr_plus1 = issue_addr_q + 20'd1;
+wire [63:0] fifo_head = pair_fifo[fifo_rd_ptr_q];
+
+assign fast_pair_valid = (fifo_count_q != 0);
+assign fast_pair_data0 = fifo_head[31:0];
+assign fast_pair_data1 = fifo_head[63:32];
+
+// Keep CE/OE asserted through both IDDR capture stages.  In idle/reset the
+// wrapper falls back to the legacy AXI pin controls and leaves ExtRAM undriven.
+assign sram_bus_active_o = issuing_q | capture_valid_d1_q |
+                           capture_valid_d2_q;
+assign sram_be_n_o = 4'b0000;
+assign sram_ce_n_o = ~sram_bus_active_o;
+assign sram_oe_n_o = ~sram_bus_active_o;
+assign sram_we_n_o = 1'b1;
+
+genvar ddr_bit;
+generate
+for (ddr_bit = 0; ddr_bit < 20; ddr_bit = ddr_bit + 1) begin: gen_addr_oddr
+`ifdef VERILATOR
+    reg addr_rise_q;
+    reg addr_fall_q;
+    // Lint-only behavioural equivalent.  XSim/synthesis use the ODDR below.
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            addr_rise_q <= 1'b0;
+            addr_fall_q <= 1'b0;
+        end else begin
+            if (sram_bus_active_o) begin
+                addr_rise_q <= issue_addr_q[ddr_bit];
+                addr_fall_q <= issue_addr_plus1[ddr_bit];
+            end
+        end
+    end
+    assign sram_addr_o[ddr_bit] = clk_180 ? addr_rise_q : addr_fall_q;
+`else
+    ODDR #(
+        .DDR_CLK_EDGE ("SAME_EDGE"),
+        .INIT         (1'b0),
+        .SRTYPE       ("ASYNC")
+    ) u_addr_oddr (
+        .Q  (sram_addr_o[ddr_bit]),
+        .C  (clk_180),
+        // SAME_EDGE captures both addresses on clk_180's rising edge, then
+        // emits the earlier/later words on its rising/falling halves.
+        .CE (sram_bus_active_o),
+        .D1 (issue_addr_q[ddr_bit]),
+        .D2 (issue_addr_plus1[ddr_bit]),
+        .R  (~resetn),
+        .S  (1'b0)
+    );
+`endif
+end
+
+for (ddr_bit = 0; ddr_bit < 32; ddr_bit = ddr_bit + 1) begin: gen_data_iddr
+`ifdef VERILATOR
+    reg fall_sample_q;
+    reg rise_out_q;
+    reg fall_out_q;
+    always @(negedge sample_clk or negedge resetn) begin
+        if (!resetn)
+            fall_sample_q <= 1'b0;
+        else
+            fall_sample_q <= sram_data_i[ddr_bit];
+    end
+    always @(posedge sample_clk or negedge resetn) begin
+        if (!resetn) begin
+            rise_out_q <= 1'b0;
+            fall_out_q <= 1'b0;
+        end else begin
+            rise_out_q <= sram_data_i[ddr_bit];
+            fall_out_q <= fall_sample_q;
+        end
+    end
+    assign read_data_rise[ddr_bit] = rise_out_q;
+    assign read_data_fall[ddr_bit] = fall_out_q;
+`else
+    IDDR #(
+        .DDR_CLK_EDGE ("SAME_EDGE"),
+        .INIT_Q1      (1'b0),
+        .INIT_Q2      (1'b0),
+        .SRTYPE       ("ASYNC")
+    ) u_data_iddr (
+        .Q1 (read_data_rise[ddr_bit]),
+        .Q2 (read_data_fall[ddr_bit]),
+        .C  (sample_clk),
+        .CE (1'b1),
+        .D  (sram_data_i[ddr_bit]),
+        .R  (~resetn),
+        .S  (1'b0)
+    );
+`endif
+end
+endgenerate
+
+always @(posedge clk or negedge resetn) begin
+    if (!resetn) begin
+        active_seen_q       <= 1'b0;
+        issuing_q           <= 1'b0;
+        issue_addr_q        <= 20'd0;
+        words_remaining_q   <= 18'd0;
+        capture_valid_d1_q  <= 1'b0;
+        capture_valid_d2_q  <= 1'b0;
+        even_word_q         <= 32'd0;
+        fifo_wr_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
+        fifo_rd_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
+        fifo_count_q        <= {(FIFO_ADDR_WIDTH+1){1'b0}};
+    end else if (!fast_read_active) begin
+        active_seen_q       <= 1'b0;
+        issuing_q           <= 1'b0;
+        issue_addr_q        <= 20'd0;
+        words_remaining_q   <= 18'd0;
+        capture_valid_d1_q  <= 1'b0;
+        capture_valid_d2_q  <= 1'b0;
+        even_word_q         <= 32'd0;
+        fifo_wr_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
+        fifo_rd_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
+        fifo_count_q        <= {(FIFO_ADDR_WIDTH+1){1'b0}};
+    end else begin
+        if (!active_seen_q) begin
+            active_seen_q       <= 1'b1;
+            issuing_q           <= (fast_read_pair_count != 0);
+            issue_addr_q        <= fast_read_base_word;
+            words_remaining_q   <= {fast_read_pair_count, 1'b0};
+            capture_valid_d1_q  <= 1'b0;
+            capture_valid_d2_q  <= 1'b0;
+            even_word_q         <= 32'd0;
+            fifo_wr_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
+            fifo_rd_ptr_q       <= {FIFO_ADDR_WIDTH{1'b0}};
+            fifo_count_q        <= {(FIFO_ADDR_WIDTH+1){1'b0}};
+        end else begin
+            capture_valid_d1_q <= issue_pair;
+            capture_valid_d2_q <= capture_valid_d1_q;
+
+            if (capture_valid_d1_q)
+                even_word_q <= read_data_rise;
+
+            if (issue_pair) begin
+                issue_addr_q      <= issue_addr_q + 20'd2;
+                words_remaining_q <= words_remaining_q - 18'd2;
+                if (words_remaining_q == 18'd2)
+                    issuing_q <= 1'b0;
+            end
+
+            case ({fifo_push, fifo_pop})
+                2'b10: begin
+                    fifo_wr_ptr_q <= fifo_wr_ptr_q + 1'b1;
+                    fifo_count_q  <= fifo_count_q + 1'b1;
+                end
+                2'b01: begin
+                    fifo_rd_ptr_q <= fifo_rd_ptr_q + 1'b1;
+                    fifo_count_q  <= fifo_count_q - 1'b1;
+                end
+                2'b11: begin
+                    fifo_wr_ptr_q <= fifo_wr_ptr_q + 1'b1;
+                    fifo_rd_ptr_q <= fifo_rd_ptr_q + 1'b1;
+                end
+                default: begin
+                end
+            endcase
+        end
+    end
+end
+
+// Reset-free storage permits LUTRAM/BRAM inference.  FIFO count is the sole
+// validity source, so uninitialised entries are never observed after reset.
+always @(posedge clk) begin
+    if (fifo_push)
+        pair_fifo[fifo_wr_ptr_q] <= {read_data_fall, even_word_q};
+end
 
 endmodule

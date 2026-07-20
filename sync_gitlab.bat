@@ -45,7 +45,11 @@ echo [INFO] Starting incremental sync...
 
 if exist "%SOURCE%\rtl" (
     echo Syncing: rtl (preserving existing soc.bit, skipping updates)
-    robocopy "%SOURCE%\rtl" "%TARGET%\rtl" /E /XO /XF soc_top.bit /NJH /NJS /NDL /NC /NS /NP
+    robocopy "%SOURCE%\rtl" "%TARGET%\rtl" /E /XO ^
+        /XD xsim.dir ^
+        /XF soc_top.bit xvlog.pb *.sdb *.rlx *.vhdl ^
+            clk_pll_stub.v clk_pll_sim_netlist.v clk_pll.dcp ^
+        /NJH /NJS /NDL /NC /NS /NP
 ) else (
     echo [WARNING] Source not found: %SOURCE%\rtl
 )
@@ -75,6 +79,10 @@ if errorlevel 1 (
 
 echo [INFO] Adding changes to stage...
 git add -A
+:: The online lint script misclassifies PLL VHDL as Verilog.  Submit only the
+:: editable XCI; keep stubs, simulation netlists, DCP and VHDL output products
+:: platform-owned/ignored.
+git add -f rtl/ip/PLL_2019_2/clk_pll.xci
 
 echo.
 echo ============================================

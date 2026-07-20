@@ -10,6 +10,11 @@ U32 MATMUL_DMA_Get_CRC32(void)
     return RegRead(MATMUL_DMA_CRC32_ADDR);
 }
 
+U32 MATMUL_DMA_Get_Read_Groups(void)
+{
+    return RegRead(MATMUL_DMA_READ_GROUPS_ADDR);
+}
+
 int MATMUL_DMA_Start(U32 src_phys, U32 dst_phys, U32 groups)
 {
     U32 status = MATMUL_DMA_Get_Status();
