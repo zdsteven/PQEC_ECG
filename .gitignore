@@ -14,3 +14,4 @@ xvlog.pb
 matmul_testdata/
 *.bat
 *.py
+*.md
