@@ -1,11 +1,9 @@
 // Streaming 4x4 unsigned matrix multiplier for the evaluation path.
-// External layout remains A[0..15], B[0..15].  After the sixteen input pairs
-// arrive, sixteen fixed C engines process one radix-4 digit plane per cycle.
-// Each engine owns its output accumulator and four statically wired A/B terms,
-// avoiding both a fully-expanded multiplier pipeline and dynamic result-write
-// crossbars.  Sixteen digit cycles finish exactly inside the 32-cycle interval
-// before the two-core scheduler selects this core again.  No Verilog
-// multiplication operator or DSP resource is used.
+// External layout remains A[0..15], B[0..15].  Sixteen fixed C engines process
+// one radix-4 digit plane per cycle.  Their private operand state lets group N
+// compute while the input registers receive group N+1, sustaining one group
+// per sixteen 50 MHz cycles (the SRAM stream's effective 100 Mword/s rate)
+// with one physical core.  No Verilog multiplication operator or DSP is used.
 module matmul_batch_core (
     input               clk,
     input               resetn,
@@ -35,14 +33,19 @@ reg [65:0] result_snapshot [0:15];
 reg [3:0] digit_step;
 reg       compute_active;
 
-wire input_fire0 = busy && stream_valid;
-wire input_fire1 = busy && stream_valid1;
+wire start_accept = start && !busy;
+wire input_fire0 = (busy || start_accept) && stream_valid;
+wire input_fire1 = (busy || start_accept) && stream_valid1;
 wire input_is_b0 = stream_index[4];
 wire input_is_b1 = stream_index1[4];
 wire [3:0] input_pos0 = stream_index[3:0];
 wire [3:0] input_pos1 = stream_index1[3:0];
 wire launch_b0 = input_fire0 && input_is_b0;
 wire launch_b1 = input_fire1 && input_is_b1;
+// Stream indices 28/29 (B30/B31) arrive one cycle after the prior group's
+// final digit.  The arithmetic state is then free and all A words are stable,
+// so prepare the next group's operands before the B32/B33 launch cycle.
+wire preload_operands = launch_b0 && (stream_index == 5'd28);
 wire launch_last = (launch_b0 && (stream_index == 5'd31)) ||
                    (launch_b1 && (stream_index1 == 5'd31));
 
@@ -141,19 +144,13 @@ always @(posedge clk) begin
     end else begin
         done <= 1'b0;
 
-        if (start && !busy) begin
+        if (start_accept)
             busy <= 1'b1;
-            compute_active <= 1'b0;
-            digit_step <= 4'd0;
-            for (i=0;i<16;i=i+1)
-                accumulator[i] <= 66'd0;
-            // A streaming producer may present A00 together with start;
-            // consume that first word through the input bypass.
-            if (stream_valid && !stream_index[4])
-                a_data[stream_index[3:0]] <= stream_data;
-            if (stream_valid1 && !stream_index1[4])
-                a_data[stream_index1[3:0]] <= stream_data1;
-        end else if (busy) begin
+
+        // Loading is independent of compute_active.  Once a group launches,
+        // c_* owns all of its arithmetic state and A/B may be overwritten by
+        // the next group without disturbing the running calculation.
+        if (input_fire0 || input_fire1) begin
             if (input_fire0 && !input_is_b0)
                 a_data[input_pos0] <= stream_data;
             else if (launch_b0)
@@ -163,23 +160,22 @@ always @(posedge clk) begin
             else if (launch_b1)
                 b_shift[input_pos1] <= stream_data1;
 
-            // All A words are stable when B00/B01 arrive.  Prepare their
-            // unshifted radix-4 multiples during the B input phase so digit
-            // zero can be consumed in the B32/B33 cycle.
-            if (launch_b0 && (input_pos0 == 4'd0)) begin
+            if (preload_operands) begin
                 for (i=0;i<64;i=i+1) begin
                     c_a_shift[i] <= {34'd0,
                         a_data[(i/16)*4+(i%4)]};
-                    c_a3_shift[i] <= {34'd0,
-                        a_data[(i/16)*4+(i%4)]} +
+                    c_a3_shift[i] <=
+                        {34'd0,a_data[(i/16)*4+(i%4)]} +
                         {33'd0,a_data[(i/16)*4+(i%4)],1'b0};
                 end
             end
 
             // B33 marks the end of input.  B32/B33 use a direct digit-zero
-            // bypass while prior B words come from b_shift.  The remaining
-            // state is advanced immediately to digit one.
+            // bypass while prior B words come from b_shift.  Load the private
+            // compute state directly at this boundary, after the prior group
+            // has retired, and advance it immediately to digit one.
             if (launch_last) begin
+                busy <= 1'b0;
                 compute_active <= 1'b1;
                 digit_step <= 4'd1;
                 for (i=0;i<16;i=i+1) begin
@@ -192,24 +188,23 @@ always @(posedge clk) begin
                         (i%4)*4+((i/4)%4)] >> 2;
                 end
             end
+        end
 
-            if (compute_active) begin
-                for (i=0;i<16;i=i+1) begin
-                    accumulator[i] <= accumulator[i] + digit_sum[i];
-                    if (digit_step == 4'd15)
-                        result_snapshot[i] <= accumulator[i] + digit_sum[i];
-                end
-                if (digit_step == 4'd15) begin
-                    compute_active <= 1'b0;
-                    busy <= 1'b0;
-                    done <= 1'b1;
-                end else begin
-                    digit_step <= digit_step + 4'd1;
-                    for (i=0;i<64;i=i+1) begin
-                        c_a_shift[i] <= {c_a_shift[i][63:0],2'b0};
-                        c_a3_shift[i] <= {c_a3_shift[i][63:0],2'b0};
-                        c_b_shift[i] <= c_b_shift[i] >> 2;
-                    end
+        if (compute_active) begin
+            for (i=0;i<16;i=i+1) begin
+                accumulator[i] <= accumulator[i] + digit_sum[i];
+                if (digit_step == 4'd15)
+                    result_snapshot[i] <= accumulator[i] + digit_sum[i];
+            end
+            if (digit_step == 4'd15) begin
+                compute_active <= 1'b0;
+                done <= 1'b1;
+            end else begin
+                digit_step <= digit_step + 4'd1;
+                for (i=0;i<64;i=i+1) begin
+                    c_a_shift[i] <= {c_a_shift[i][63:0],2'b0};
+                    c_a3_shift[i] <= {c_a3_shift[i][63:0],2'b0};
+                    c_b_shift[i] <= c_b_shift[i] >> 2;
                 end
             end
         end

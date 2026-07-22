@@ -1,6 +1,4 @@
 #include "regdef.h"
-#include "uart_print.h"
-#include "handler.h"
 
 .extern UART_BASE
 
@@ -21,7 +19,7 @@ _start:
     addi.w $r29,zero,0x0; addi.w $r30,zero,0x0; addi.w $r31,zero,0x0;  
 
 #if has_cache==1
-#if !EVAL_FAST_START
+#if !MATMUL_EVALUATION
     # invalid the old inst in icache and old data in dcache by index
     li.w t0,0x0
     #li.w t2,0x100
@@ -74,7 +72,7 @@ _start:
     li.w	    $r13,0x18
     csrxchg	$r12,$r13,0x0
 
-#if EVAL_CPU_START_BANNER
+#if MATMUL_EVALUATION
     /* The evaluation protocol now requires START to be CPU-driven.  Queue
      * the complete line at the earliest point where the uncached UART DMW is
      * available, overlapping its physical transmission with the remaining
@@ -126,9 +124,9 @@ _start:
 
 #endif
 
-#if UART_INIT_ON_START
-	/* UART has hardware reset defaults for the autonomous matmul reporter.
-	 * Do not reset its FIFO while MATMUL_START is already being transmitted. */
+#if !MATMUL_EVALUATION
+	/* Generic programs explicitly initialize the UART.  The evaluator uses
+	 * the verified reset divisor and has already queued MATMUL_START. */
 	la.local    t0, UART_BASE
 	ld.w        t1, t0, 0
 	#WRITE(li.wne,OFS_FIFO,FIFO_ENABLE|FIFO_RCV_RST|FIFO_XMT_RST|FIFO_TRIGGER_0);

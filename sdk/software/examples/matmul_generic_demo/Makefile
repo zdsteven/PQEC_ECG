@@ -1,7 +1,6 @@
 TARGET = matmul_generic_demo
 
 CFLAGS += -O3 -g
-UART_INIT_ON_START ?= 1
 
 C_SRCS := $(wildcard ./*.c)
 

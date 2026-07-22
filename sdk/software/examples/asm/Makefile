@@ -3,10 +3,9 @@ TARGET = user-sample
 CFLAGS += -O3 -g
 MATMUL_GROUP_NUM ?= 5000
 CFLAGS += -DMATMUL_GROUP_NUM=$(MATMUL_GROUP_NUM)
-EVAL_FAST_DMA_START ?= 1
-CFLAGS += -DEVAL_FAST_DMA_START=$(EVAL_FAST_DMA_START)
-EVAL_CPU_START_BANNER ?= 1
-CFLAGS += -DEVAL_CPU_START_BANNER=$(EVAL_CPU_START_BANNER)
+# This program is the online evaluator.  One build switch owns all of its
+# startup differences; the shared BSP remains generic by default.
+MATMUL_EVALUATION ?= 1
 
 C_SRCS := $(wildcard ./*.c )
 

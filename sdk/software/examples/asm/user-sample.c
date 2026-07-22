@@ -9,9 +9,6 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define MATMUL_GROUP_NUM 5000u
 #endif
 
-#define EXTRAM_PHYS_BASE       0x1c400000u
-#define MATMUL_INPUT_BYTES     0x0009c400u
-#define MATMUL_RESULT_BASE     (EXTRAM_PHYS_BASE + MATMUL_INPUT_BYTES)
 #define CRC_PREFIX_GROUP       1582u
 
 #define UART_TX_ADDR           (UART_BASE + 0u)
@@ -58,11 +55,8 @@ static void uart_write_crc_and_done(U32 crc)
         uart_write_byte(done_line[index]);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
-    (void)argc;
-    (void)argv;
-
     static const U8 crc_prefix[13] = {
         'M', 'A', 'T', 'M', 'U', 'L', '_',
         'C', 'R', 'C', '3', '2', '='
@@ -70,19 +64,11 @@ int main(int argc, char **argv)
     U32 index;
     U32 crc;
 
-#if EVAL_FAST_DMA_START
     /* START was queued by the CPU in start.S.  Do not permit the first
      * ExtRAM read until its final stop bit has physically completed. */
     while ((uart_line_status() & UART_LSR_TE) == 0u) {
     }
     RegWrite(MATMUL_DMA_CTRL_ADDR, 1u);
-#else
-    if (MATMUL_DMA_Start(EXTRAM_PHYS_BASE, MATMUL_RESULT_BASE,
-                         MATMUL_GROUP_NUM) != 0) {
-        while (1) {
-        }
-    }
-#endif
 
     while (MATMUL_DMA_Get_Read_Groups() < CRC_PREFIX_GROUP) {
     }
@@ -98,6 +84,4 @@ int main(int argc, char **argv)
 
     while (1) {
     }
-
-    return 0;
 }

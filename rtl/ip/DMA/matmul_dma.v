@@ -233,8 +233,8 @@ assign s_axi_rlast   = 1'b1;
 
 assign finish = done;
 assign matmul_active = busy;
-// CPU may pre-arm the engine, but ExtRAM remains untouched until the complete
-// hardware START line, including its final stop bit, is on the wire.
+// ExtRAM remains untouched until the CPU has sent the complete START line,
+// including its final stop bit, and then writes CTRL.start.
 assign fast_read_active = busy && eval_read_enable;
 assign fast_read_base_word = src_base[21:2];
 assign fast_read_pair_count = {group_num[12:0], 4'b0000};
@@ -423,16 +423,20 @@ always @(posedge clk) begin
                 end
             end
         end else if (busy) begin
-            // Two consecutive SRAM words arrive together.  Start a core on
-            // A00/A01 and keep all sixteen pairs of the group on that core.
+            // Two consecutive SRAM words arrive together.  Start the
+            // evaluation core on A00/A01 and keep all sixteen pairs together.
             if (fast_pair_valid && fast_pair_ready) begin
                 if (read_pair == 4'd0) begin
                     stream_core <= selected_launch_core;
-                    core_group[selected_launch_core] <= read_group_count;
                     next_core <= ~selected_launch_core;
                 end
 
                 if (read_pair == 4'd15) begin
+                    // The single evaluation engine may already be loading the
+                    // next group while the prior group computes.  Commit its
+                    // result tag only at launch, so a prior done seen on this
+                    // same edge still observes the old group number.
+                    core_group[stream_core] <= read_group_count;
                     read_group_count <= read_group_count + 13'd1;
                     read_pair <= 4'd0;
                 end else
