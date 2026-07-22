@@ -88,15 +88,26 @@ wire pll_locked;
 generate if(SIMULATION) begin: sim_clk
     //simulation clk.
     reg clk_sim;
+    reg sram_sample_clk_sim;
     initial begin
         clk_sim = 1'b0;
     end
     always #15 clk_sim = ~clk_sim;
 
+    // Match the implemented PLL's 150-degree SRAM sample phase.  Using the
+    // same 180-degree phase as the address ODDR creates a zero-delay race in
+    // XSim and shifts the fast pair stream after the first group.
+    initial begin
+        sram_sample_clk_sim = 1'b0;
+        // Clock Wizard realizes 150 degrees as 149.516 degrees.
+        #8.306444;
+        forever #10 sram_sample_clk_sim = ~sram_sample_clk_sim;
+    end
+
     assign cpu_clk = clk_sim;
     assign sys_clk = clk;
     assign sram_clk180 = ~clk;
-    assign sram_sample_clk = ~clk;
+    assign sram_sample_clk = sram_sample_clk_sim;
     rst_sync u_rst_sys(
         .clk(sys_clk),
         .rst_n_in(~reset),

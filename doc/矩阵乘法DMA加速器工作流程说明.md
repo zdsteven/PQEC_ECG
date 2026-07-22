@@ -95,8 +95,8 @@ eval_ext_sram_ddr_phy（每个 50 MHz 周期返回两个 word）
   │  fast_pair_valid/data0/data1/ready
   ▼
 matmul_dma 读调度器
-  ├────────► matmul_batch_core 0 ──┐
-  └────────► matmul_batch_core 1 ──┤ 66-bit result
+  └────────► 单个 matmul_batch_core ──► 66-bit result
+                                   │
                                    ▼
                          有序结果收集 + 硬件 CRC32
                                    │
@@ -135,9 +135,9 @@ DST_BASE  = 0x1C49_C400（保留寄存器，当前不写回）
 GROUP_NUM = 5000
 ```
 
-评测网表将 I-cache 和 D-cache 的 tag/valid BRAM 初始化为全 0。软件使用 `EVAL_FAST_START=1`，因此复位释放后不再重复执行 256 个索引、两个 cache、两个 way 的 1024 次 `cacop`，但仍保留地址模式、data/bss、cache enable、异常入口和栈初始化。
+评测网表将 I-cache 和 D-cache 的 tag/valid BRAM 初始化为全 0。评测程序 Makefile 使用唯一控制宏 `MATMUL_EVALUATION=1`，因此复位释放后不再重复执行 256 个索引、两个 cache、两个 way 的 1024 次 `cacop`，但仍保留地址模式、data/bss、cache enable、异常入口和栈初始化。`common.mk` 默认 `MATMUL_EVALUATION=0`，其他程序保持通用启动过程。
 
-启动汇编使用 `EVAL_CPU_START_BANNER=1`。在 DMW 建立、CPU 可以访问未缓存 UART 地址后，CPU 立即用 13 次 byte MMIO 写把 `MATMUL_START\n` 放入 16-entry TX FIFO。发送与后续 data/bss、cache、异常入口和栈初始化重叠。
+同一个 `MATMUL_EVALUATION` 宏使启动汇编在 DMW 建立、CPU 可以访问未缓存 UART 地址后，立即用 13 次 byte MMIO 写把 `MATMUL_START\n` 放入 16-entry TX FIFO。发送与后续 data/bss、cache、异常入口和栈初始化重叠；评测启动也不重新初始化 UART，不会清空刚写入的 FIFO。
 
 CPU 进入 `main` 后轮询 UART TE；只有最后一个 START stop bit 已在线路上完成，才写一次 CTRL.start。DMA 接受该写入后：
 
@@ -145,7 +145,7 @@ CPU 进入 `main` 后轮询 UART TE；只有最后一个 START stop bit 已在�
 - 置 `busy`；
 - 随即发起第一笔 ExtRAM AXI 读请求。
 
-完整配置式 `MATMUL_DMA_Start` 仍保留在关闭 `EVAL_FAST_DMA_START` 时使用；正式评测默认 `EVAL_FAST_DMA_START=1`。
+`user-sample.c` 是评测专用程序，直接写一次已具有正确复位参数的 CTRL.start；通用程序仍可通过 BSP 驱动完整配置 DMA。
 
 评测 RTL 已删除硬件自动 START/CRC/DONE 状态机和 DMA-to-UART sideband，只保留 CPU 写 TX FIFO 的发送路径。DMA 的 `eval_read_enable` 固定允许，顺序正确性由 CPU 的“先等待 TE、后写 DMA start”保证。
 
@@ -166,29 +166,29 @@ CPU 进入 `main` 后轮询 UART TE；只有最后一个 START stop bit 已在�
 每 pair = data0、data1 两个连续 32-bit word
 ```
 
-`fast_read_base_word` 给出首 word 地址，`fast_read_pair_count` 固定为 `group_num×16`。物理层在两个半周期发出相邻地址，经 SRAM 采样后以 `fast_pair_valid` 同拍返回 `data0/data1`。DMA 只在 `fast_pair_valid && fast_pair_ready` 时推进 pair 和 group 计数；仅组首且两个 core 都不 ready 时允许反压。当前正式路径的 AXI master 读写 VALID 均固定为 0，不参与评测数据搬运。
+`fast_read_base_word` 给出首 word 地址，`fast_read_pair_count` 固定为 `group_num×16`。物理层在两个半周期发出相邻地址，经 SRAM 采样后以 `fast_pair_valid` 同拍返回 `data0/data1`。DMA 只在 `fast_pair_valid && fast_pair_ready` 时推进 pair 和 group 计数；仅组首且单 core 正在装载当前组时允许反压。当前正式路径的 AXI master 读写 VALID 均固定为 0，不参与评测数据搬运。
 
-### 4.5 双 core 交替调度
+### 4.5 单 core 输入与计算重叠
 
-`matmul_dma` 当前只调度 core0 和 core1。每组第一个 word A00 握手时：
+`matmul_dma` 当前只使用 core0。每组第一对 A00/A01 握手时：
 
-- 从 ready core 中选择一个 core；
-- 同拍产生该 core 的 `stream_start`；
-- A00 通过输入旁路被 core 直接接收；
-- 后续 31 word 固定路由到同一 core；
-- `next_core` 使相邻组优先交替使用两个 core。
+- 同拍产生 core0 的 `stream_start`；
+- A00/A01 与 start 同拍进入输入寄存器；
+- 后续 30 word 继续送入同一 core；
+- B32/B33 到达时发射该组计算，输入 busy 随即释放；
+- 下一拍可开始装载下一组，不等待当前组的 15 个剩余 digit 周期。
 
-只有在一组第一个 word 到来而两个 core 都不 ready 时，DMA 才拉低 `m_axi_rready`。组内其余 31 word 不产生调度背压。
+这里的 `busy` 只表示 32-word 输入装载占用；`compute_active` 独立表示迭代计算。计算状态使用私有 `c_a_shift/c_a3_shift/c_b_shift/accumulator`，所以装载下一组覆盖 A/B 输入寄存器不会影响当前组。
 
-评测读路径每个系统周期向 core 提供相邻的两个 word，因此一组 32 word 占 16 个输入周期。B32/B33 进入后，选中 core 还需 15 个 radix-4 digit 周期形成结果；下一组先送入另一个 ready core。相邻两次选择同一 core 的间隔为 32 周期，当前结构无需为计算主动插入输入停顿。
+评测读路径每个 50 MHz 系统周期向 core 提供相邻两个 word，因此一组占 16 周期。当前组在第 16 个输入周期处理 digit0，随后 15 个 digit 周期恰好与下一组的第 1～15 个输入周期重叠；前一组在下一组 B30/B31 到达时完成，下一拍 B32/B33 到达即可发射新计算。稳态吞吐为每 16 个 50 MHz 周期一组，与 SRAM 的等效 100 Mword/s 完全匹配，不需要第二个 core，也不引入双沿寄存器或新的时钟域。
 
 ### 4.6 十六个固定 C 引擎
 
 评测 core 使用流式输入和 16 个固定 C 引擎，不需要完整的 1024-bit A/B block 输入端口。当前输入布局仍为先 A 后 B：
 
 1. A00～A33 到达时写入 16 个 A 寄存器，A00 可与 `start` 同拍旁路接收；
-2. B00/B01 到达时，把各行 A 操作数复制到对应 C 引擎的局部 radix-4 状态，并预先形成 `A` 和 `3A`；
-3. B00～B33 写入输入暂存；B32/B33 到达的同拍，通过直接旁路处理所有 16 个 C 的 digit 0；
+2. B30/B31（stream index 28/29）到达时，前一组已结束计算；此时把各行 A 操作数复制到对应 C 引擎的局部 radix-4 状态，并形成 `A` 和 `3A`；
+3. B00～B31 写入输入暂存；B32/B33 到达的同拍通过输入旁路取得最后两个 B，并处理所有 16 个 C 的 digit0；
 4. 随后 15 个周期依次处理 digit 1～15。每个 C 引擎固定计算：
 
 ```text
@@ -198,26 +198,26 @@ A[2][k] × B[k][j] → C[2][j]
 A[3][k] × B[k][j] → C[3][j]
 ```
 
-每个 digit 周期，各引擎根据四个 B 的 2-bit digit 在 `0/A/2A/3A` 中选择四项，经平衡加法树加入自己的 66-bit accumulator。第 15 个 digit 同拍写入 16 个稳定的 `result_snapshot`，随后 core 拉低 busy 并脉冲输出 done。
+每个 digit 周期，各引擎根据四个 B 的 2-bit digit 在 `0/A/2A/3A` 中选择四项，经平衡加法树加入自己的 66-bit accumulator。第 15 个 digit 同拍写入 16 个稳定的 `result_snapshot` 并脉冲输出 done；输入 busy 已在本组发射时提前释放。
 
 这种结构以 16 个迭代 C 引擎替代原先四条、16 级完全展开且每条包含双通道的乘法流水。A/B 移位状态按 C 引擎局部复制，避免共享状态形成跨行列高扇出布线；首 digit 与后续 digit 共用同一套加法树。评测宏下例化的是 `matmul_batch_core`，数据通路使用 radix-4 shift/add，不使用 Verilog `*` 运算符，DSP 使用量为 0。
 
-当前版本的本地完整实现及线上功能验证结果如下：
+当前版本的本地完整实现结果如下：
 
-| 指标 | 原 16 级全流水基线 | 当前固定 C 引擎实现 |
+| 指标 | 上一版双 core | 当前单 core 重叠实现 |
 |---|---:|---:|
-| 整体布局 LUT | 63,415 | 42,537 |
-| 整体布局 FF | 43,295 | 21,939 |
-| 两个计算 core 的综合 LUT | 48,518 | 28,029 |
-| 两个计算 core 的综合 FF | 33,195 | 11,897 |
+| 整体布局 LUT | 42,537 | 28,748 |
+| 整体布局 FF | 21,939 | 15,808 |
+| 计算 core LUT | 28,029（两核合计） | 10,229（单核） |
+| 计算 core FF | 11,897（两核合计） | 5,805（单核） |
 | DSP | 0 | 0 |
-| 本地实现 WNS | +0.908 ns | +0.118 ns |
+| 本地实现 WNS | +0.118 ns | +0.388 ns |
 
-5000 组全系统仿真中 `core-stall=0`、结果 word mismatch 为 0。当前清理前的 CPU-START 版本在线上随机 seed `0xd1245467` 下得到 CRC `0x056bb209`，CRC 匹配，elapsed time 为 5.039490 ms，得分 99.92；完整成绩日志也表示线上 lint、DSP=0 与 WNS>0 均通过。表中资源和 WNS 来自删除评测调试端口及硬件自动串口死逻辑后的本地重新实现；清理版仍需以新一轮线上结果确认最终 elapsed time。
+200 组 core 随机向量通过；64 组 pair→DMA→core→CRC 联调得到 1024 pair/1024 cycle、`core-stall=0` 且 CRC 正确。5000 组全系统 XSim 使用 10 ns ExtRAM 读延迟和 PLL 的 149.516° 采样相位，连续读取 160000 word，`r-empty=0`、`core-stall=0`，UART 上报 CRC `0xDDA0905C` 与独立期望值一致。`make check` 已确认 HDL lint、DSP=0 和 WNS>0。上一版 CPU-START 双 core 在线上随机 seed `0xd1245467` 下得到 CRC `0x056bb209`，elapsed time 为 5.039490 ms，得分 99.92；当前单 core 版本的线上 elapsed 与随机数据 CRC 仍以提交 `4304278` 的平台结果为准。
 
 ### 4.7 结果有序收集与 CRC
 
-core0/core1 可能交错完成，但 CRC 必须严格保持 group0～group4999、C00～C33 的规定顺序。DMA 为每个 core 记录所属 group，并用 `calc_group_count` 只选择当前应处理的完成结果。
+CRC 必须严格保持 group0～group4999、C00～C33 的规定顺序。DMA 在每组最后一对输入、即计算真正发射时提交 core0 的 group tag；这样在同拍观察到前一组 done 时仍读到旧 tag。`calc_group_count` 只接受当前应处理的完成结果。
 
 每组结果收集过程为：
 
@@ -258,7 +258,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 ├─ CPU 继续运行时初始化，与 START 物理发送重叠                         │
 ├─ UART TE=1 ─► CPU 写 DMA start ─► ExtRAM 读取、core 计算             │
 │                                                                    │
-├─ 后续 ExtRAM 读取 + 双 core 计算 + 已完成结果收集/CRC                │
+├─ 后续 ExtRAM 读取 + 单 core 装载/计算重叠 + 结果收集/CRC             │
 ├─ read_groups=1582 ─► CPU 提前发送 MATMUL_CRC32=                     │
 │                                                                    │
 └─ CRC ready ─► CPU 读 CRC ─► 8 hex + DONE ─► 平台停止计时 ◄────────┘
@@ -269,7 +269,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 - 平台保持 SoC 复位时，PLL 仍保持运行；
 - CPU 在启动汇编中尽早发送 START，使物理发送与剩余初始化重叠；
 - CPU 必须观察到 TE 后才写 DMA start，因此 START 完成前不会读取 ExtRAM；
-- ExtRAM 读取与两个 core 的计算并行推进；
+- ExtRAM 读取与单 core 的装载、迭代计算并行推进；
 - DMA 读取已完成结果并更新 CRC 时，core 可处理后续输入；
 - CPU 发送 CRC 前缀时 DMA、core 和 CRC 继续运行；
 - CPU 的 done 轮询不参与矩阵计算或硬件 CRC 更新。
@@ -302,7 +302,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 - 乘法运算保留在独立矩阵 IP 内，DMA 不复制计算资源；
 - core 缓存 A/B，B32/B33 到达时处理 digit 0；
 - A00 与 start 同拍旁路接收；
-- 使用两个 core 交叠输入阶段和 15 周期迭代计算尾部；
+- 使用一个 core，让第 N 组 15 周期计算尾部与第 N+1 组输入重叠；
 - 16 个固定 C 引擎共用 16 个 radix-4 digit 周期，不使用 DSP；
 - 每个引擎静态绑定一个 C 下标，不需要乘积 tag 或动态结果写交叉开关；
 - A/B radix-4 状态局部化，首 digit 与后续 digit 共用加法树；
@@ -313,7 +313,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 - CRC32 完全硬件化；
 - 每拍接收一个 66-bit C，并在组合函数中按三个 word 的规定顺序更新；
 - result mux 和 CRC 网络之间有一级寄存器；
-- 用 group tag 和 `calc_group_count` 保证双 core 乱序完成时仍按输入顺序计算 CRC；
+- 用发射点 group tag 和 `calc_group_count` 保证结果严格按输入顺序计算 CRC；
 - 评测路径不执行 ExtRAM 结果写回；
 - DMA 中没有大型 `result_memory`、写回 block、AW/W/B 写回 FSM；
 - DMA 没有专用性能统计寄存器。
@@ -331,7 +331,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 
 - CRC 输入前有一级 `crc_result_data/crc_result_valid` 寄存器；
 - ExtRAM pair 地址由物理层连续生成；
-- 当前评测分支例化两个 core；
+- 当前评测分支只例化一个 core；
 - 使用固定 case 选择 16 个结果；
 - 评测数据通路只保留输入读取、core 调度、结果排序和 CRC 所需状态；
 - 复位 for-loop 内的数组初始化使用阻塞赋值。
@@ -351,7 +351,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 - 每组 32 word 从第一个到最后一个绑定同一 core；
 - 只有组首允许因无 ready core 而反压；
 - core done 被 pending 位保留，不依赖 DMA 恰好同拍采集；
-- group tag 防止双 core 先后次序变化破坏 CRC；
+- group tag 在计算发射点更新，不能被下一组提前装载覆盖；
 - 结果快照保证收集期间数值稳定。
 
 ### 7.3 CRC 和完成条件
@@ -373,7 +373,7 @@ MATMUL_CRC32=XXXXXXXX\nMATMUL_DONE\n
 推荐以如下参数构建评测程序：
 
 ```text
-make MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
+make MATMUL_EVALUATION=1 MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
 ```
 
 提交前应逐项确认：
@@ -394,14 +394,18 @@ make MATMUL_GROUP_NUM=5000 COPY_OUTPUT=0
 | 文件 | 评测相关职责 |
 |---|---|
 | `rtl/soc_top.v` | PLL/复位、评测 DMA、Matmul、UART 和 ExtRAM 桥连接 |
-| `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取进度、双 core 调度、有序结果收集、CRC32 |
-| `rtl/ip/matmul/matmul_axi_slave.v` | 两个评测 core 的例化和 DMA stream 接口 |
+| `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取进度、单 core 发射、结果收集、CRC32 |
+| `rtl/ip/matmul/matmul_axi_slave.v` | 单个评测 core 的例化和 DMA stream 接口 |
 | `rtl/ip/matmul/matmul_batch_core.v` | 评测分支例化的无 `*` 流式 4×4 矩阵乘法 core |
 | `rtl/ip/Bus_interconnects/axi2sram_sp_external.v` | 连续 SRAM 地址发射、R FIFO、burst 链接 |
 | `rtl/ip/APB_UART/URT/uart_top.v` | CPU 驱动的 UART TX 数据通路 |
 | `rtl/ip/APB_UART/URT/uart_regs.v` | UART 整数/分数复位分频、空闲相位复位和 CPU TX FIFO 写入 |
 | `rtl/ip/APB_UART/URT/uart_transmitter.v` | 字符位状态和相邻字符衔接 |
 | `rtl/ip/ram_wrap/cache_sram.v` | 评测 cache tag/valid 的确定性冷启动无效初值 |
-| `sdk/software/bsp/env/start.S` | CPU 尽早写入 START、评测快速启动和可关闭的 UART 软件初始化 |
+| `sdk/software/examples/asm/Makefile` | 评测专用 `MATMUL_EVALUATION=1` 和 5000 组配置 |
+| `sdk/software/bsp/common.mk` | 默认 `MATMUL_EVALUATION=0` 的通用启动配置 |
+| `sdk/software/bsp/env/start.S` | 由统一宏选择 CPU START、cache 快速启动或通用 UART 初始化 |
 | `sdk/software/examples/asm/user-sample.c` | 等待 START TE、DMA start、提前前缀、读取 CRC、发送 CRC/DONE |
-| `fpga/create_project.tcl` | 本地验证前重新创建已过期的 Vivado 工程 |
+| `sim/run_sim.bat` | 复用 xsim 完整系统仿真（Windows 批处理显式 `call` 工具链） |
+| `sim/sram.v` | ExtRAM 仿真使用 10 ns 异步读延迟，避免零延迟地址/IDDR 竞争 |
+| `fpga/create_project.tcl` | 仅在现有 Vivado 工程缺失或损坏时重建工程 |

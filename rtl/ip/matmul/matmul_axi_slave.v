@@ -116,11 +116,9 @@ wire cpu_accept   = start_write && !dma_active && !busy_status;
 wire core0_start  = dma_accept0 || cpu_accept;
 
 `ifdef USE_EVALUATION_UART_SRAM
-// A completed snapshot remains stable while the core accepts the next group.
-// Allow the DMA to reuse a core in the cycle where its one-cycle done pulse is
-// still high, eliminating the otherwise recurring pair-stream bubble.
+// The evaluation core overlaps group N computation with group N+1 input.
 assign dma_ready[0]       = dma_active && !core0_busy && !capture_active;
-assign dma_ready[1]       = dma_active && !core1_busy;
+assign dma_ready[1]       = 1'b0;
 `else
 assign dma_ready[0]       = dma_active && !core0_busy && !core0_done && !capture_active;
 assign dma_ready[1]       = dma_active && !core1_busy && !core1_done;
@@ -244,21 +242,9 @@ matmul_batch_core_dsp u_matmul_batch_core0 (
 `endif
 
 `ifdef USE_EVALUATION_UART_SRAM
-matmul_batch_core u_matmul_batch_core1 (
-    .clk          (clk),
-    .resetn       (resetn),
-    .start        (dma_accept1),
-    .stream_valid (dma_stream_valid && dma_stream_core[1]),
-    .stream_index (dma_stream_index),
-    .stream_data  (dma_stream_data),
-    .stream_valid1(dma_stream_valid1 && dma_stream_core[1]),
-    .stream_index1(dma_stream_index1),
-    .stream_data1 (dma_stream_data1),
-    .busy         (core1_busy),
-    .done         (core1_done),
-    .result_index (dma_result_index),
-    .result_data  (core1_result_data)
-);
+assign core1_busy = 1'b0;
+assign core1_done = 1'b0;
+assign core1_result_data = 66'd0;
 `else
 // Generic AXI DMA reaches the multiplier through the CPU-compatible register
 // window, so a second evaluation scheduler core would be permanently idle.

@@ -12,11 +12,11 @@ CRC32 正确、串口协议正确、AXI4 合规、DSP 使用量为 0、HDL lint 
 
 在用户给出新的调度方案前，后续 agent 将以下流程视为当前优化基线：
 
-1. CPU 完成必要启动后，显式配置并启动 `matmul_dma`。
-2. DMA 硬件自动从 ExtRAM 连续读取 5000 组 A/B 矩阵。
-3. DMA 调度两个流式矩阵乘法 core，并保持每组 32 个输入 word 路由到同一 core。
-4. DMA 按 group 顺序收集 66-bit 结果并在硬件中计算完整 CRC32。
-5. DMA 启动后，UART 硬件自动发送硬化在串口模块中的 `MATMUL_START\n` 字节序列。
+1. 启动汇编由 CPU 尽早把 `MATMUL_START\n` 写入 UART TX FIFO。
+2. CPU 等待 START 最后一个 stop bit 完整发送后，写 CTRL.start 启动 `matmul_dma`。
+3. DMA 从 ExtRAM 连续读取 5000 组 A/B，每个 50 MHz 周期交付两个 word。
+4. 单个流式矩阵 core 让第 N 组计算与第 N+1 组输入重叠，保持每 16 周期一组。
+5. DMA 按 group 顺序收集 66-bit 结果并在硬件中计算完整 CRC32。
 6. CPU 显式安排 `MATMUL_CRC32=` 的提前发送时机。
 7. DMA CRC32 就绪后，CPU 读取最终 CRC，并把 8 位十六进制字符紧接在前缀之后送入 UART。
 8. 前缀和 8 位 CRC 在串口线上必须无缝连续，接收端不能观察到两者之间的时间间隔。
@@ -161,12 +161,14 @@ make gitlab
 - CPU 写 DMA CTRL 的实际时刻；
 - DMA ARVALID/ARREADY、RVALID/RREADY、RLAST；
 - `read_group_count`、`read_beat` 和组首 core-ready 停顿；
-- 两个 core 的 start/busy/done/result index；
+- 单 core 的 start/input-busy/compute-active/done/result index；
 - `calc_group_count`、CRC 输入 valid 和最终 CRC valid；
 - CPU 发送 CRC 前缀、读取 CRC、写 8 位 hex 和打印 DONE 的周期；
 - UART TX FIFO push/pop/count、字符状态和实际 TX 波形。
 
 当前 `fpga/project/Loongson_Soc.xpr` 可以直接复用。进行本地 Vivado 仿真、综合或实现分析时，默认打开或调用现有工程，并确认工程引用的是当前 `rtl/`、`sim/` 和 `fpga/constraints` 源码；不要为了常规验证删除并重建工程。
+
+评测 ExtRAM 完整 XSim 必须使用 `sim/sram.v` 的 10 ns 读延迟和约 149.516° 的 PLL 采样相位。零延迟 SRAM 与地址 ODDR/数据 IDDR 会产生仿真竞争并导致 pair 错位，不能据此判断线上 CRC。当前 5000 组固定输入完整仿真的参考 CRC 为 `0xDDA0905C`。
 
 只有当工程文件缺失、损坏、源文件集合明显失配，或用户明确要求重新创建时，才运行 `fpga/create_project.tcl`。现有 run 生成的 WNS/DSP 报告只有在对应源码已经重新综合实现后才能作为依据；源码改变后需要生成 bitstream 和最新实现报告时，在仓库根目录运行 `make vivado`。
 
@@ -230,7 +232,7 @@ make check
 MATMUL_GROUP_NUM=5000
 ```
 
-当前仓库已经固定使用评测所需的硬件和 UART 启动配置，无需把这些既有设置当作待修改项。后续 agent 只需确保自己的更改没有切换评测分支、没有在 CPU 启动阶段清空自动 START 使用的 TX FIFO，也没有把正式组数改离 5000。
+当前仓库已经固定使用评测所需的硬件和 UART 启动配置。`user-sample` Makefile 默认 `MATMUL_EVALUATION=1`，`common.mk` 默认 0。后续 agent 只需确保自己的更改没有切换评测分支、没有在 CPU 写入 START 后清空 TX FIFO，也没有把正式组数改离 5000。
 
 ## 数据布局与 CRC 不变量
 
@@ -282,34 +284,35 @@ CRC 为 reflected IEEE CRC-32：
 
 ### ExtRAM 快速读取
 
-- 必须等硬件完整发送 `MATMUL_START\n` 后，评测 DMA 才允许读取 ExtRAM。
+- 必须等 CPU 驱动 UART 完整发送 `MATMUL_START\n` 后，评测 DMA 才允许读取 ExtRAM。
 - `axi_wrap_ram_sp_external.v` 的评测路径用相差 180° 的两个 50 MHz 相位发射相邻 word 地址，并用 IDDR 分别采样两个返回 word。
 - 桥以 `fast_pair_valid/ready` 每个系统时钟向 DMA 交付一对连续 word；5000 组共 80000 对。
-- DMA 仅在组首且两个 core 都未就绪时反压，反压期间必须保持 pair 数据和地址进度不变。
+- DMA 仅在组首且单 core 尚未释放输入 busy 时反压，反压期间必须保持 pair 数据和地址进度不变。
 - 原 CPU/通用 AXI 主读接口仍保留端口兼容性，但评测输入不经过 AXI R burst/FIFO 热路径。
 
-### 双核流式乘法
+### 单核流式乘法
 
-- 评测路径使用 core0/core1。
-- 一组第一个 A00 与 stream start 同拍进入选中的 core。
+- 评测路径只例化 core0。
+- 一组第一对 A00/A01 与 stream start 同拍进入 core。
 - A[0..15] 和 B[0..15] 到达时分别缓存。
-- 每个评测 core 使用 16 个固定对应 C 元素的无 DSP 累加引擎，按 16 个 radix-4 digit plane 迭代计算；不展开 16 级乘法器流水线。
+- core 使用 16 个固定对应 C 元素的无 DSP 累加引擎，按 16 个 radix-4 digit plane 迭代计算；不展开 16 级乘法器流水线。
+- 第 N 组发射后释放输入 busy，用私有计算状态与第 N+1 组装载重叠，稳态每 16 个 50 MHz 周期完成一组。
 - 评测 core 乘法数据通路不使用 Verilog `*`，评测网表不允许 DSP。
-- DMA 必须保持同组 32 word 绑定同一 core。
+- DMA 必须保持同组 32 word 连续送入 core。
 
 ### 结果排序和 CRC
 
-- DMA 为两个 core 保存 group 编号。
+- DMA 在每组最后一对输入、即计算发射点提交 core0 group 编号。
 - core done 进入 pending 状态。
-- `calc_group_count` 保证 CRC 按 group 0..4999 更新，不按两个 core 的实际完成先后更新。
+- `calc_group_count` 保证 CRC 按 group 0..4999 更新。
 - 每组按 C index 0..15 读取结果。
 - result mux 与 CRC 网络之间有一级 `crc_result_data/crc_result_valid` 寄存器。
 - CPU 只能在最终 CRC 已有效后读取并格式化 8 位 hex。
 
 ### CPU 与 UART
 
-- CPU 显式启动 DMA，启动写必须早于或与后续 START 自动触发顺序一致。
-- START 字节序列硬化在 UART，DMA 启动后由硬件自动发送。
+- CPU 在启动汇编中写入 START，并等待 UART TE 后显式启动 DMA。
+- START、CRC 前缀、CRC 数字和 DONE 都由 CPU 写 UART TX FIFO。
 - CPU 提前发送 `MATMUL_CRC32=`，并在前缀仍在 UART 发送时等待或读取最终 CRC。
 - CPU 必须及时把 8 位 CRC hex 补入 TX FIFO，保证前缀末字节 `=` 后直接衔接第一个 hex 字符。
 - CPU 在 8 位 CRC 入队后显式打印 `MATMUL_DONE\n`；必须保持 FIFO 顺序，不能让 DONE 越过 CRC。
@@ -321,19 +324,19 @@ CRC 为 reflected IEEE CRC-32：
 | 文件 | 评测提速时需要关注的内容 |
 |---|---|
 | `rtl/soc_top.v` | PLL/复位、DMA、Matmul stream、UART 和 ExtRAM 连接 |
-| `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取、双核调度、结果排序、CRC32 和完成状态 |
-| `rtl/ip/matmul/matmul_axi_slave.v` | 两个评测 core 的例化和 DMA stream 接口 |
+| `rtl/ip/DMA/matmul_dma.v` | CPU start、fast pair 读取、单核发射、结果排序、CRC32 和完成状态 |
+| `rtl/ip/matmul/matmul_axi_slave.v` | 单个评测 core 的例化和 DMA stream 接口 |
 | `rtl/ip/matmul/matmul_batch_core.v` | 无 DSP 流式矩阵计算 core |
 | `rtl/ip/ram_wrap/axi_wrap_ram_sp_external.v` | ExtRAM 双相位地址、IDDR 采样和 fast pair 接口 |
-| `rtl/ip/APB_UART/axi_uart_controller.v` | UART AXI/APB 封装和自动 START 连接 |
-| `rtl/ip/APB_UART/URT/uart_top.v` | 硬化 START、CPU 字节流与自动发送控制 |
+| `rtl/ip/APB_UART/axi_uart_controller.v` | UART AXI/APB 封装和 CPU TX 路径 |
+| `rtl/ip/APB_UART/URT/uart_top.v` | CPU 字节流发送控制 |
 | `rtl/ip/APB_UART/URT/uart_regs.v` | TX FIFO 写入、状态位、复位默认值 |
 | `rtl/ip/APB_UART/URT/uart_transmitter.v` | 字符位时序和连续字符衔接 |
 | `rtl/ip/APB_UART/URT/uart_tfifo.v` | TX FIFO push/pop/count |
 | `sdk/software/examples/asm/user-sample.c` | CPU 启动 DMA、提前发前缀、读 CRC、发 hex 和 DONE |
-| `sdk/software/examples/asm/Makefile` | 5000 组和评测软件构建参数 |
-| `sdk/software/bsp/env/start.S` | UART 启动初始化开关 |
-| `sdk/software/bsp/common.mk` | 评测软件公共构建参数 |
+| `sdk/software/examples/asm/Makefile` | 5000 组和 `MATMUL_EVALUATION=1` 评测构建参数 |
+| `sdk/software/bsp/env/start.S` | 统一宏选择 CPU START、快速 cache 启动或通用 UART 初始化 |
+| `sdk/software/bsp/common.mk` | 默认 `MATMUL_EVALUATION=0` 的通用构建参数 |
 | `sdk/software/bsp/drivers/matmul_dma.c` | DMA start/wait/status/CRC MMIO 驱动 |
 | `sdk/software/bsp/include/matmul_dma.h` | DMA 地址、状态位和最大组数 |
 | `doc/2026集创赛龙芯中科杯-区域赛决赛描述.md` | 任务、数据和串口协议 |
@@ -353,7 +356,7 @@ CRC 为 reflected IEEE CRC-32：
 
 1. 读取当前 RTL、SDK 和本文件，确认代码是否仍实现上述临时流程。
 2. 保存上一版线上 seed、CRC、elapsed time、得分、WNS、lint 和串口 tail 作为基线。
-3. 确认仍在评测分支、正式组数为 5000，CPU 启动过程没有重置自动 UART。
+3. 确认仍在评测分支、正式组数为 5000，CPU 启动过程没有重置 START 所在的 UART FIFO。
 4. 根据线上日志或本地仿真定位一个明确空泡、等待或关键路径。
 5. 一次只修改可归因的一类行为。
 6. 做必要本地检查后优先运行 `make gitlab`。
@@ -362,9 +365,9 @@ CRC 为 reflected IEEE CRC-32：
 重点检查：
 
 - 复位释放到 CPU 写 DMA start 的软件周期；
-- DMA start 到 START 首字节、START 完整行的 UART 周期；
+- START 首字节、完整行到 CPU 写 DMA start 的 UART/软件周期；
 - 80000 个 fast pair 的发射、返回、退休以及反压周期；
-- 组首是否因两个 core 都不 ready 而停顿；
+- 组首是否因单 core 输入 busy 未释放而停顿；
 - 最后一组输入、乘法流水、结果排序和 CRC 的尾部；
 - CPU 发送 CRC 前缀的提前量；
 - 前缀末尾到第一个 CRC hex 是否真正无缝；
@@ -390,15 +393,15 @@ CRC 为 reflected IEEE CRC-32：
 - 每个输入 word 和结果只能处理一次。
 - CRC 顺序必须是 group、row-major C、low/mid/high word。
 - 第三个结果 word 的高 30 位必须为 0。
-- 双核完成顺序不能改变 group CRC 顺序。
+- 下一组提前装载不能覆盖前一组计算状态或 group tag。
 - CPU 读取的必须是最后一个结果已更新后的最终 CRC。
 
 ### UART
 
 - START、CRC、DONE 必须完整且顺序固定。
 - `MATMUL_CRC32=` 与 8 位 CRC 必须无缝连续。
-- 自动 START 开始后，CPU 不能清空 TX FIFO。
-- CPU 和硬件不能在同一 UART 写入口发生未仲裁冲突。
+- CPU 写入 START 后，启动代码不能清空 TX FIFO。
+- 评测 UART 只使用 CPU TX 写入口，字节入队顺序必须与协议一致。
 - DONE 只能排在完整 8 位 CRC 之后。
 - 波特率和 start/data/stop 位必须能被平台 115200-baud 接收端识别。
 
