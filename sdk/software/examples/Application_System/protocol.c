@@ -36,17 +36,19 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t length)
     return crc;
 }
 
-void protocol_send(uint8_t type, const uint8_t *payload, uint32_t length)
+void protocol_send(uint8_t type, uint32_t session_id,
+                   const uint8_t *payload, uint32_t length)
 {
-    uint8_t header[9];
+    uint8_t header[13];
     uint8_t crc_bytes[4];
     uint32_t crc;
 
     memcpy(header, frame_magic, sizeof(frame_magic));
     header[4] = type;
-    store32_le(header + 5, length);
+    store32_le(header + 5, session_id);
+    store32_le(header + 9, length);
 
-    crc = crc32_update(0xffffffffU, header + 4, 5U);
+    crc = crc32_update(0xffffffffU, header + 4, 9U);
     crc = crc32_update(crc, payload, length) ^ 0xffffffffU;
     store32_le(crc_bytes, crc);
 
@@ -59,7 +61,7 @@ void protocol_send(uint8_t type, const uint8_t *payload, uint32_t length)
 
 int protocol_receive(struct protocol_frame *frame)
 {
-    uint8_t header[5];
+    uint8_t header[9];
     uint8_t crc_bytes[4];
     uint32_t crc;
     uint32_t i;
@@ -80,7 +82,8 @@ int protocol_receive(struct protocol_frame *frame)
     }
 
     frame->type = header[0];
-    frame->length = load32_le(header + 1);
+    frame->session_id = load32_le(header + 1);
+    frame->length = load32_le(header + 5);
     if (frame->length > PROTOCOL_FRAME_MAX_PAYLOAD) {
         return -2;
     }

@@ -1,17 +1,26 @@
 #include <string.h>
 #include "aes.h"
 
+/* GCM construction follows the Apache-2.0 reference in AES-GCM_software. */
+
 #define Nb 4
 
 #if defined(AES256) && (AES256 == 1)
 #define Nk 8
 #define Nr 14
+#define AES_KEY_EXP_SIZE 240
 #else
-#define Nk 4  // The number of 32 bit words in a key.
-#define Nr 10 // The number of rounds in AES Cipher.
+#define Nk 4
+#define Nr 10
+#define AES_KEY_EXP_SIZE 176
 #endif
 
 typedef uint8_t state_t[4][4];
+
+struct aes_context
+{
+    uint8_t RoundKey[AES_KEY_EXP_SIZE];
+};
 
 static const uint8_t sbox[256] = {
     // 0     1    2      3     4    5     6     7      8    9     A      B    C     D     E     F
@@ -96,20 +105,6 @@ static void KeyExpansion(uint8_t *RoundKey, const uint8_t *Key)
         RoundKey[j + 2] = RoundKey[k + 2] ^ tempa[2];
         RoundKey[j + 3] = RoundKey[k + 3] ^ tempa[3];
     }
-}
-
-void AES_init_ctx_software(struct AES_ctx *ctx, const uint8_t *key)
-{
-    KeyExpansion(ctx->RoundKey, key);
-}
-void AES_init_ctx_iv_software(struct AES_ctx *ctx, const uint8_t *key, const uint8_t *iv)
-{
-    KeyExpansion(ctx->RoundKey, key);
-    memcpy(ctx->Iv, iv, AES_BLOCKLEN);
-}
-void AES_ctx_set_iv_software(struct AES_ctx *ctx, const uint8_t *iv)
-{
-    memcpy(ctx->Iv, iv, AES_BLOCKLEN);
 }
 
 static void AddRoundKey(uint8_t round, state_t *state, const uint8_t *RoundKey)
@@ -211,50 +206,242 @@ static void Cipher(state_t *state, const uint8_t *RoundKey)
 }
 
 
-void AES_CTR_software(struct AES_ctx *ctx, uint8_t *buf, size_t length)
+static void secure_zero(void *data, size_t length)
 {
-    uint8_t buffer[AES_BLOCKLEN];
-    size_t i;
-    int bi;
-    for (i = 0, bi = AES_BLOCKLEN; i < length; ++i, ++bi)
-    {
-        if (bi == AES_BLOCKLEN)
-        {
-            memcpy(buffer, ctx->Iv, AES_BLOCKLEN);
-            Cipher((state_t *)buffer, ctx->RoundKey);
-            for (bi = (AES_BLOCKLEN - 1); bi >= 0; --bi)
-            {
-                if (ctx->Iv[bi] == 255)
-                {
-                    ctx->Iv[bi] = 0;
-                    continue;
-                }
-                ctx->Iv[bi] += 1;
-                break;
-            }
-            bi = 0;
-        }
-        buf[i] = (buf[i] ^ buffer[bi]);
+    volatile uint8_t *bytes = (volatile uint8_t *)data;
+
+    while (length-- != 0u) {
+        *bytes++ = 0u;
     }
 }
 
-void AES_CTR_software_message(const uint8_t *key, const uint8_t nonce[8],
-                              uint32_t message_index, uint8_t *buf,
-                              size_t length)
+static void encrypt_block  (const struct aes_context *context,
+                            const uint8_t input[AES_BLOCKLEN],
+                            uint8_t output[AES_BLOCKLEN])
 {
-    struct AES_ctx context;
-    uint8_t iv[AES_BLOCKLEN];
+    memcpy(output, input, AES_BLOCKLEN);
+    Cipher((state_t *)output, context->RoundKey);
+}
 
-    memcpy(iv, nonce, 8u);
-    iv[8] = (uint8_t)(message_index >> 24);
-    iv[9] = (uint8_t)(message_index >> 16);
-    iv[10] = (uint8_t)(message_index >> 8);
-    iv[11] = (uint8_t)message_index;
-    iv[12] = 0u;
-    iv[13] = 0u;
-    iv[14] = 0u;
-    iv[15] = 2u;
+static void xor_block  (uint8_t destination[AES_BLOCKLEN],
+                        const uint8_t source[AES_BLOCKLEN])
+{
+    size_t i;
 
-    AES_init_ctx_iv_software(&context, key, iv);
-    AES_CTR_software(&context, buf, length);
+    for (i = 0u; i < AES_BLOCKLEN; ++i) {
+        destination[i] ^= source[i];
+    }
+}
+
+static void multiply_gf128 (uint8_t value[AES_BLOCKLEN],
+                            const uint8_t hash_key[AES_BLOCKLEN])
+{
+    uint8_t factor[AES_BLOCKLEN];
+    uint8_t product[AES_BLOCKLEN];
+    size_t bit;
+    size_t i;
+
+    memcpy(factor, hash_key, sizeof(factor));
+    memset(product, 0, sizeof(product));
+
+    for (bit = 0u; bit < 128u; ++bit) {
+        uint8_t carry;
+        uint8_t mask;
+
+        mask = (uint8_t)(0u - ((value[bit / 8u] >> (7u - bit % 8u)) & 1u));
+        for (i = 0u; i < AES_BLOCKLEN; ++i) {
+            product[i] ^= factor[i] & mask;
+        }
+
+        carry = factor[AES_BLOCKLEN - 1u] & 1u;
+        for (i = AES_BLOCKLEN - 1u; i != 0u; --i) {
+            factor[i] = (uint8_t)((factor[i] >> 1) | (factor[i - 1u] << 7));
+        }
+        factor[0] >>= 1;
+        factor[0] ^= (uint8_t)(0xe1u & (0u - carry));
+    }
+
+    memcpy(value, product, AES_BLOCKLEN);
+    secure_zero(factor, sizeof(factor));
+    secure_zero(product, sizeof(product));
+}
+
+static void ghash_update   (uint8_t state[AES_BLOCKLEN],
+                            const uint8_t hash_key[AES_BLOCKLEN],
+                            const uint8_t *data, size_t length)
+{
+    while (length >= AES_BLOCKLEN) {
+        xor_block(state, data);
+        multiply_gf128(state, hash_key);
+        data += AES_BLOCKLEN;
+        length -= AES_BLOCKLEN;
+    }
+
+    if (length != 0u) {
+        uint8_t last[AES_BLOCKLEN];
+
+        memset(last, 0, sizeof(last));
+        memcpy(last, data, length);
+        xor_block(state, last);
+        multiply_gf128(state, hash_key);
+        secure_zero(last, sizeof(last));
+    }
+}
+
+static void store64_be(uint8_t output[8], uint64_t value)
+{
+    size_t i;
+
+    for (i = 8u; i != 0u; --i) {
+        output[i - 1u] = (uint8_t)value;
+        value >>= 8;
+    }
+}
+
+static void ghash  (const uint8_t hash_key[AES_BLOCKLEN],
+                    const void *aad, size_t aad_length,
+                    const void *ciphertext, size_t ciphertext_length,
+                    uint8_t result[AES_BLOCKLEN])
+{
+    uint8_t lengths[AES_BLOCKLEN];
+
+    memset(result, 0, AES_BLOCKLEN);
+    ghash_update(result, hash_key, (const uint8_t *)aad, aad_length);
+    ghash_update(result, hash_key, (const uint8_t *)ciphertext, ciphertext_length);
+
+    store64_be(lengths, (uint64_t)aad_length * 8u);
+    store64_be(lengths + 8u, (uint64_t)ciphertext_length * 8u);
+    xor_block(result, lengths);
+    multiply_gf128(result, hash_key);
+    secure_zero(lengths, sizeof(lengths));
+}
+
+static void increment_counter(uint8_t counter[AES_BLOCKLEN])
+{
+    size_t i;
+
+    for (i = AES_BLOCKLEN; i != AES_GCM_NONCE_BYTES;) {
+        --i;
+        ++counter[i];
+        if (counter[i] != 0u) {
+            break;
+        }
+    }
+}
+
+static void ctr_crypt  (const struct aes_context *context,
+                        const uint8_t initial_counter[AES_BLOCKLEN],
+                        const uint8_t *input, size_t input_length,
+                        uint8_t *output)
+{
+    uint8_t counter[AES_BLOCKLEN];
+    uint8_t stream[AES_BLOCKLEN];
+    size_t offset = 0u;
+
+    memcpy(counter, initial_counter, sizeof(counter));
+    while (offset < input_length) {
+        size_t block_length = input_length - offset;
+        size_t i;
+
+        if (block_length > AES_BLOCKLEN) {
+            block_length = AES_BLOCKLEN;
+        }
+        increment_counter(counter);
+        encrypt_block(context, counter, stream);
+        for (i = 0u; i < block_length; ++i) {
+            output[offset + i] = input[offset + i] ^ stream[i];
+        }
+        offset += block_length;
+    }
+
+    secure_zero(counter, sizeof(counter));
+    secure_zero(stream, sizeof(stream));
+}
+
+static void gcm_setup  (const uint8_t *key,
+                        const uint8_t nonce[AES_GCM_NONCE_BYTES],
+                        struct aes_context *context,
+                        uint8_t hash_key[AES_BLOCKLEN],
+                        uint8_t initial_counter[AES_BLOCKLEN])
+{
+    uint8_t zero[AES_BLOCKLEN];
+
+    memset(zero, 0, sizeof(zero));
+    KeyExpansion(context->RoundKey, key);
+    encrypt_block(context, zero, hash_key);
+    memcpy(initial_counter, nonce, AES_GCM_NONCE_BYTES);
+    memset(initial_counter + AES_GCM_NONCE_BYTES, 0, AES_BLOCKLEN - AES_GCM_NONCE_BYTES);
+    initial_counter[AES_BLOCKLEN - 1u] = 1u;
+    secure_zero(zero, sizeof(zero));
+}
+
+static int tags_differ(const uint8_t *left, const uint8_t *right)
+{
+    uint8_t difference = 0u;
+    size_t i;
+
+    for (i = 0u; i < AES_GCM_TAG_BYTES; ++i) {
+        difference |= left[i] ^ right[i];
+    }
+    return difference != 0u;
+}
+
+void AES_GCM_encrypt_software  (const uint8_t *key,
+                                const uint8_t nonce[AES_GCM_NONCE_BYTES],
+                                const void *aad, size_t aad_length,
+                                const void *plaintext, size_t plaintext_length,
+                                void *ciphertext,
+                                uint8_t tag[AES_GCM_TAG_BYTES])
+{
+    struct aes_context context;
+    uint8_t hash_key[AES_BLOCKLEN];
+    uint8_t initial_counter[AES_BLOCKLEN];
+    uint8_t tag_mask[AES_BLOCKLEN];
+
+    gcm_setup(key, nonce, &context, hash_key, initial_counter);
+    ctr_crypt(&context, initial_counter, (const uint8_t *)plaintext,
+              plaintext_length, (uint8_t *)ciphertext);
+    ghash(hash_key, aad, aad_length, ciphertext, plaintext_length, tag);
+    encrypt_block(&context, initial_counter, tag_mask);
+    xor_block(tag, tag_mask);
+
+    secure_zero(&context, sizeof(context));
+    secure_zero(hash_key, sizeof(hash_key));
+    secure_zero(initial_counter, sizeof(initial_counter));
+    secure_zero(tag_mask, sizeof(tag_mask));
+}
+
+int AES_GCM_decrypt_software   (const uint8_t *key,
+                                const uint8_t nonce[AES_GCM_NONCE_BYTES],
+                                const void *aad, size_t aad_length,
+                                const void *ciphertext, size_t ciphertext_length,
+                                const uint8_t tag[AES_GCM_TAG_BYTES],
+                                void *plaintext)
+{
+    struct aes_context context;
+    uint8_t authentication[AES_BLOCKLEN];
+    uint8_t hash_key[AES_BLOCKLEN];
+    uint8_t initial_counter[AES_BLOCKLEN];
+    uint8_t tag_mask[AES_BLOCKLEN];
+    int result;
+
+    gcm_setup(key, nonce, &context, hash_key, initial_counter);
+    ghash(hash_key, aad, aad_length, ciphertext, ciphertext_length, authentication);
+    encrypt_block(&context, initial_counter, tag_mask);
+    xor_block(authentication, tag_mask);
+
+    if (tags_differ(tag, authentication)) {
+        result = AES_GCM_AUTHENTICATION_ERROR;
+    } else {
+        ctr_crypt(&context, initial_counter, (const uint8_t *)ciphertext,
+                  ciphertext_length, (uint8_t *)plaintext);
+        result = AES_GCM_SUCCESS;
+    }
+
+    secure_zero(&context, sizeof(context));
+    secure_zero(authentication, sizeof(authentication));
+    secure_zero(hash_key, sizeof(hash_key));
+    secure_zero(initial_counter, sizeof(initial_counter));
+    secure_zero(tag_mask, sizeof(tag_mask));
+    return result;
 }

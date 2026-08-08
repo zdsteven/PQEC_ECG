@@ -6,22 +6,24 @@
 
 #include "Kem_api.h"
 #include "aes.h"
-#include "dma.h"
 #include "dvi.h"
 #include "ecg.h"
 #include "led.h"
 #include "random_api.h"
 #include "seg7.h"
 
+#define MAX_CLIENT_SESSIONS 8U
 #define HELLO_PAYLOAD_BYTES 2U
 #define ECG_PLAINTEXT_BYTES 198U
-#define ECG_REQUEST_BYTES   (4U + ECG_PLAINTEXT_BYTES)
-#define ECG_RESULT_BYTES    10U
+#define ECG_PADDED_BYTES    AES_DATA_BYTES
+#define ECG_REQUEST_BYTES   (4U + ECG_PADDED_BYTES + AES_GCM_TAG_BYTES)
+#define ECG_RESULT_PLAINTEXT_BYTES 10U
+#define ECG_RESULT_BYTES    (ECG_RESULT_PLAINTEXT_BYTES + AES_GCM_TAG_BYTES)
 
-enum server_state {
-    STATE_WAIT_HELLO = 0,
-    STATE_WAIT_KEM_CIPHERTEXT = 1,
-    STATE_ESTABLISHED = 2
+enum session_state {
+    SESSION_FREE = 0,
+    SESSION_WAIT_KEM_CIPHERTEXT = 1,
+    SESSION_ESTABLISHED = 2
 };
 
 enum error_code {
@@ -29,7 +31,10 @@ enum error_code {
     ERROR_BAD_LENGTH = 2,
     ERROR_UNEXPECTED_MESSAGE = 3,
     ERROR_BAD_SEQUENCE = 4,
-    ERROR_HARDWARE = 5
+    ERROR_HARDWARE = 5,
+    ERROR_AUTHENTICATION = 6,
+    ERROR_NO_SESSION = 7,
+    ERROR_SERVER_BUSY = 8
 };
 
 struct session_keys {
@@ -39,15 +44,21 @@ struct session_keys {
     uint8_t server_to_client_nonce[8];
 };
 
-static uint8_t public_key[KYBER_PUBLICKEYBYTES] __attribute__((aligned(64)));
-static uint8_t secret_key[KYBER_SECRETKEYBYTES] __attribute__((aligned(64)));
+struct client_session {
+    uint32_t session_id;
+    uint32_t expected_ecg_sequence;
+    enum session_state state;
+    struct session_keys keys;
+};
+
+static uint8_t server_public_key[KYBER_PUBLICKEYBYTES] __attribute__((aligned(64)));
+static uint8_t server_secret_key[KYBER_SECRETKEYBYTES] __attribute__((aligned(64)));
+static uint8_t keypair_coins[2U * KYBER_SYMBYTES] __attribute__((aligned(64)));
 static uint8_t kem_ciphertext[KYBER_CIPHERTEXTBYTES] __attribute__((aligned(64)));
 static uint8_t shared_secret[KYBER_SSBYTES] __attribute__((aligned(64)));
-static uint8_t keypair_coins[2U * KYBER_SYMBYTES] __attribute__((aligned(64)));
-static uint32_t aes_ecg_buffer[AES_DATA_WORDS] __attribute__((aligned(64)));
-static struct session_keys session_keys;
-static enum server_state current_state;
-static uint32_t expected_ecg_sequence;
+static uint32_t aes_ecg_buffer[AES_GCM_INPUT_WORDS] __attribute__((aligned(64)));
+static struct client_session sessions[MAX_CLIENT_SESSIONS];
+static int server_ready;
 
 static void store32_le(uint8_t output[4], uint32_t value)
 {
@@ -74,135 +85,201 @@ static void secure_zero(void *data, size_t length)
     }
 }
 
-static void send_error(enum error_code code)
+static struct client_session *find_session(uint32_t session_id)
+{
+    uint32_t i;
+
+    if (session_id == 0U) {
+        return NULL;
+    }
+    for (i = 0U; i < MAX_CLIENT_SESSIONS; ++i) {
+        if (sessions[i].state != SESSION_FREE &&
+            sessions[i].session_id == session_id) {
+            return &sessions[i];
+        }
+    }
+    return NULL;
+}
+
+static uint32_t create_session_id(void)
+{
+    uint32_t session_id;
+    uint32_t attempt;
+
+    for (attempt = 0U; attempt < 32U; ++attempt) {
+        if (random_bytes((uint8_t *)&session_id, sizeof(session_id)) != 0) {
+            return 0U;
+        }
+        if (session_id != 0U && find_session(session_id) == NULL) {
+            return session_id;
+        }
+    }
+    return 0U;
+}
+
+static struct client_session *allocate_session(void)
+{
+    struct client_session *session;
+    uint32_t session_id;
+    uint32_t i;
+
+    for (i = 0U; i < MAX_CLIENT_SESSIONS; ++i) {
+        if (sessions[i].state == SESSION_FREE) {
+            session_id = create_session_id();
+            if (session_id == 0U) {
+                return NULL;
+            }
+            session = &sessions[i];
+            secure_zero(session, sizeof(*session));
+            session->session_id = session_id;
+            session->state = SESSION_WAIT_KEM_CIPHERTEXT;
+            return session;
+        }
+    }
+    return NULL;
+}
+
+static void release_session(struct client_session *session)
+{
+    if (session != NULL) {
+        secure_zero(session, sizeof(*session));
+    }
+}
+
+static void send_error(uint32_t session_id, enum error_code code,
+                       const struct client_session *session)
 {
     uint8_t payload[6];
 
     payload[0] = (uint8_t)code;
-    payload[1] = (uint8_t)current_state;
-    store32_le(payload + 2, expected_ecg_sequence);
-    protocol_send(MSG_ERROR, payload, sizeof(payload));
+    payload[1] = (uint8_t)(session != NULL ? session->state : SESSION_FREE);
+    store32_le(payload + 2, session != NULL ? session->expected_ecg_sequence : 0U);
+    protocol_send(MSG_ERROR, session_id, payload, sizeof(payload));
 }
 
-static void reset_session(void)
-{
-    secure_zero(secret_key, sizeof(secret_key));
-    secure_zero(shared_secret, sizeof(shared_secret));
-    secure_zero(keypair_coins, sizeof(keypair_coins));
-    secure_zero(&session_keys, sizeof(session_keys));
-    secure_zero(aes_ecg_buffer, sizeof(aes_ecg_buffer));
-    expected_ecg_sequence = 0U;
-    current_state = STATE_WAIT_HELLO;
-}
-
-static void derive_session_keys(void)
+static void derive_session_keys(struct client_session *session)
 {
     uint8_t material[PQEC_SESSION_KEY_MATERIAL_BYTES] __attribute__((aligned(64)));
     const uint8_t *cursor = material;
 
+    /* Keep the original SHAKE256("PQEC-ECG" || K) derivation unchanged. */
     pqec_session_kdf(material, shared_secret);
-    memcpy(session_keys.client_to_server_aes, cursor, AES_KEYLEN);
+    memcpy(session->keys.client_to_server_aes, cursor, AES_KEYLEN);
     cursor += AES_KEYLEN;
-    memcpy(session_keys.client_to_server_nonce, cursor, 8U);
+    memcpy(session->keys.client_to_server_nonce, cursor, 8U);
     cursor += 8U;
-    memcpy(session_keys.server_to_client_aes, cursor, AES_KEYLEN);
+    memcpy(session->keys.server_to_client_aes, cursor, AES_KEYLEN);
     cursor += AES_KEYLEN;
-    memcpy(session_keys.server_to_client_nonce, cursor, 8U);
+    memcpy(session->keys.server_to_client_nonce, cursor, 8U);
     secure_zero(material, sizeof(material));
+}
+
+static void build_gcm_nonce(uint8_t nonce[AES_GCM_NONCE_BYTES], const uint8_t base_nonce[8], uint32_t sequence)
+{
+    memcpy(nonce, base_nonce, 8U);
+    nonce[8] = (uint8_t)(sequence >> 24);
+    nonce[9] = (uint8_t)(sequence >> 16);
+    nonce[10] = (uint8_t)(sequence >> 8);
+    nonce[11] = (uint8_t)sequence;
 }
 
 static void handle_hello(const struct protocol_frame *frame)
 {
+    struct client_session *session;
+
+    if (frame->session_id != 0U) {
+        send_error(frame->session_id, ERROR_UNEXPECTED_MESSAGE, NULL);
+        return;
+    }
     if (frame->length != HELLO_PAYLOAD_BYTES ||
         frame->payload[0] != KYBER_K ||
         frame->payload[1] != AES_KEYLEN) {
-        send_error(ERROR_BAD_LENGTH);
+        send_error(0U, ERROR_BAD_LENGTH, NULL);
+        return;
+    }
+    if (!server_ready) {
+        send_error(0U, ERROR_HARDWARE, NULL);
         return;
     }
 
-    reset_session();
-    if (random_bytes(keypair_coins, sizeof(keypair_coins)) != 0 ||
-        crypto_kem_keypair_derand(public_key, secret_key, keypair_coins) != 0) {
-        send_error(ERROR_HARDWARE);
-        reset_session();
+    session = allocate_session();
+    if (session == NULL) {
+        send_error(0U, ERROR_SERVER_BUSY, NULL);
         return;
     }
 
-    protocol_send(MSG_SERVER_PK, public_key, sizeof(public_key));
-    current_state = STATE_WAIT_KEM_CIPHERTEXT;
+    protocol_send(MSG_SERVER_PK, session->session_id, server_public_key, sizeof(server_public_key));
 }
 
-static void handle_kem_ciphertext(const struct protocol_frame *frame)
+static void handle_kem_ciphertext(struct client_session *session, const struct protocol_frame *frame)
 {
-    if (frame->type != MSG_KEM_CIPHERTEXT) {
-        send_error(ERROR_UNEXPECTED_MESSAGE);
+    if (session->state != SESSION_WAIT_KEM_CIPHERTEXT) {
+        send_error(session->session_id, ERROR_UNEXPECTED_MESSAGE, session);
         return;
     }
     if (frame->length != KYBER_CIPHERTEXTBYTES) {
-        send_error(ERROR_BAD_LENGTH);
+        send_error(session->session_id, ERROR_BAD_LENGTH, session);
         return;
     }
 
     memcpy(kem_ciphertext, frame->payload, sizeof(kem_ciphertext));
-    if (crypto_kem_dec(shared_secret, kem_ciphertext, secret_key) != 0) {
-        send_error(ERROR_HARDWARE);
-        reset_session();
+    if (crypto_kem_dec(shared_secret, kem_ciphertext, server_secret_key) != 0) {
+        send_error(session->session_id, ERROR_HARDWARE, session);
+        release_session(session);
         return;
     }
 
-    derive_session_keys();
-    AES_init_hardware(session_keys.client_to_server_aes);
-    protocol_send(MSG_SERVER_FINISH, 0, 0U);
-
-    secure_zero(secret_key, sizeof(secret_key));
+    derive_session_keys(session);
     secure_zero(shared_secret, sizeof(shared_secret));
-    secure_zero(keypair_coins, sizeof(keypair_coins));
-    expected_ecg_sequence = 1U;
-    current_state = STATE_ESTABLISHED;
+    secure_zero(kem_ciphertext, sizeof(kem_ciphertext));
+    session->expected_ecg_sequence = 1U;
+    session->state = SESSION_ESTABLISHED;
+    protocol_send(MSG_SERVER_FINISH, session->session_id, NULL, 0U);
 }
 
-static int decrypt_ecg(const uint8_t *ciphertext, uint32_t sequence)
+static int decrypt_ecg(struct client_session *session, const uint8_t *ciphertext_and_tag, uint32_t sequence)
 {
-    uint32_t nonce_words[2];
-    int result;
+    uint8_t nonce[AES_GCM_NONCE_BYTES];
 
-    memcpy(aes_ecg_buffer, ciphertext, ECG_PLAINTEXT_BYTES);
-    memcpy(nonce_words, session_keys.client_to_server_nonce, sizeof(nonce_words));
-
-    AES_set_nonce_hardware(nonce_words, sequence);
-    result = AES_CTR_hardware(aes_ecg_buffer);
-    if (result != 0) {
-        return result;
-    }
-
-    while ((RegRead(AES_STATUS_ADDR) & AES_STATUS_BUSY) != 0U) {
-    }
-    return DMA_Transfer_Blocking(AES_DATA_BASE_ADDR, ECG_DATA_BASE_ADDR, AES_DATA_BYTES, 0U);
+    memcpy(aes_ecg_buffer, ciphertext_and_tag, ECG_PADDED_BYTES + AES_GCM_TAG_BYTES);
+    build_gcm_nonce(nonce, session->keys.client_to_server_nonce, sequence);
+    AES_init_hardware(session->keys.client_to_server_aes);
+    AES_set_nonce_hardware(nonce);
+    return AES_GCM_decrypt_to_peripheral_hardware(aes_ecg_buffer, ECG_DATA_BASE_ADDR, ECG_PADDED_BYTES);
 }
 
-static void handle_ecg_data(const struct protocol_frame *frame)
+static void handle_ecg_data(struct client_session *session, const struct protocol_frame *frame)
 {
-    uint8_t result[ECG_RESULT_BYTES];
+    uint8_t result[ECG_RESULT_PLAINTEXT_BYTES];
+    uint8_t encrypted_result[ECG_RESULT_BYTES];
+    uint8_t nonce[AES_GCM_NONCE_BYTES];
     uint8_t scores[5];
     uint32_t sequence;
+    int decrypt_result;
 
-    if (frame->type != MSG_ECG_DATA) {
-        send_error(ERROR_UNEXPECTED_MESSAGE);
+    if (session->state != SESSION_ESTABLISHED) {
+        send_error(session->session_id, ERROR_UNEXPECTED_MESSAGE, session);
         return;
     }
     if (frame->length != ECG_REQUEST_BYTES) {
-        send_error(ERROR_BAD_LENGTH);
+        send_error(session->session_id, ERROR_BAD_LENGTH, session);
         return;
     }
 
     sequence = load32_le(frame->payload);
-    if (sequence != expected_ecg_sequence) {
-        send_error(ERROR_BAD_SEQUENCE);
+    if (sequence != session->expected_ecg_sequence) {
+        send_error(session->session_id, ERROR_BAD_SEQUENCE, session);
         return;
     }
-    if (decrypt_ecg(frame->payload + 4U, sequence) != 0) {
-        send_error(ERROR_HARDWARE);
-        reset_session();
+
+    decrypt_result = decrypt_ecg(session, frame->payload + 4U, sequence);
+    if (decrypt_result == AES_GCM_AUTHENTICATION_ERROR) {
+        send_error(session->session_id, ERROR_AUTHENTICATION, session);
+        return;
+    }
+    if (decrypt_result != AES_GCM_SUCCESS) {
+        send_error(session->session_id, ERROR_HARDWARE, session);
+        release_session(session);
         return;
     }
 
@@ -223,52 +300,92 @@ static void handle_ecg_data(const struct protocol_frame *frame)
         DVI_Draw_Rect(0U, 0U, 0U, 0U);
     }
     memcpy(result + 5U, scores, sizeof(scores));
+
+    build_gcm_nonce(nonce, session->keys.server_to_client_nonce, sequence);
+    AES_GCM_encrypt_software(session->keys.server_to_client_aes,
+                            nonce, NULL, 0U,
+                            result, sizeof(result),
+                            encrypted_result,
+                            encrypted_result + sizeof(result));
+    protocol_send(MSG_ECG_RESULT, session->session_id, encrypted_result, sizeof(encrypted_result));
+
     secure_zero(aes_ecg_buffer, sizeof(aes_ecg_buffer));
     secure_zero(scores, sizeof(scores));
-
-    AES_CTR_software_message(session_keys.server_to_client_aes,
-                            session_keys.server_to_client_nonce,
-                            sequence, result, sizeof(result));
-    protocol_send(MSG_ECG_RESULT, result, sizeof(result));
     secure_zero(result, sizeof(result));
+    secure_zero(encrypted_result, sizeof(encrypted_result));
 
-    ++expected_ecg_sequence;
-    if (expected_ecg_sequence == 0U) {
-        reset_session();
+    ++session->expected_ecg_sequence;
+    if (session->expected_ecg_sequence == 0U) {
+        release_session(session);
     }
+}
+
+static void handle_close_session(struct client_session *session, const struct protocol_frame *frame)
+{
+    uint32_t session_id = frame->session_id;
+
+    if (frame->length != 0U) {
+        send_error(session_id, ERROR_BAD_LENGTH, session);
+        return;
+    }
+    protocol_send(MSG_CLOSE_ACK, session_id, NULL, 0U);
+    release_session(session);
 }
 
 void application_service_init(void)
 {
+    uint32_t i;
+
     crypto_kem_init();
     setLedPin(0U);
     setSegNum(0U, 0U, 0U, 0U);
     DVI_Draw_Rect(0U, 0U, 0U, 0U);
-    reset_session();
+    for (i = 0U; i < MAX_CLIENT_SESSIONS; ++i) {
+        release_session(&sessions[i]);
+    }
+
+    server_ready = 0;
+    if (random_bytes(keypair_coins, sizeof(keypair_coins)) == 0 &&
+        crypto_kem_keypair_derand(server_public_key, server_secret_key, keypair_coins) == 0) 
+    {
+        server_ready = 1;
+    }
+    secure_zero(keypair_coins, sizeof(keypair_coins));
 }
 
 void application_service_handle_frame(const struct protocol_frame *frame)
 {
+    struct client_session *session;
+
     if (frame->type == MSG_HELLO) {
         handle_hello(frame);
         return;
     }
 
-    switch (current_state) {
-    case STATE_WAIT_KEM_CIPHERTEXT:
-        handle_kem_ciphertext(frame);
+    session = find_session(frame->session_id);
+    if (session == NULL) {
+        send_error(frame->session_id, ERROR_NO_SESSION, NULL);
+        return;
+    }
+
+    switch (frame->type) {
+    case MSG_KEM_CIPHERTEXT:
+        handle_kem_ciphertext(session, frame);
         break;
-    case STATE_ESTABLISHED:
-        handle_ecg_data(frame);
+    case MSG_ECG_DATA:
+        handle_ecg_data(session, frame);
         break;
-    case STATE_WAIT_HELLO:
+    case MSG_CLOSE_SESSION:
+        handle_close_session(session, frame);
+        break;
     default:
-        send_error(ERROR_UNEXPECTED_MESSAGE);
+        send_error(frame->session_id, ERROR_UNEXPECTED_MESSAGE, session);
         break;
     }
 }
 
-void application_service_handle_receive_error(int receive_result)
+void application_service_handle_receive_error(int receive_result, uint32_t session_id)
 {
-    send_error((receive_result == -2) ? ERROR_BAD_LENGTH : ERROR_BAD_FRAME);
+    struct client_session *session = find_session(session_id);
+    send_error(session_id, receive_result == -2 ? ERROR_BAD_LENGTH : ERROR_BAD_FRAME, session);
 }

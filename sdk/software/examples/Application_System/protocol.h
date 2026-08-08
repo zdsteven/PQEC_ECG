@@ -12,6 +12,8 @@ enum protocol_message_type {
     MSG_SERVER_PK = 0x02,
     MSG_KEM_CIPHERTEXT = 0x03,
     MSG_SERVER_FINISH = 0x04,
+    MSG_CLOSE_SESSION = 0x05,
+    MSG_CLOSE_ACK = 0x06,
     MSG_ECG_DATA = 0x10,
     MSG_ECG_RESULT = 0x11,
     MSG_ERROR = 0x7f
@@ -19,11 +21,13 @@ enum protocol_message_type {
 
 struct protocol_frame {
     uint8_t type;
+    uint32_t session_id;
     uint32_t length;
     uint8_t payload[PROTOCOL_FRAME_MAX_PAYLOAD];
 };
 
-void protocol_send(uint8_t type, const uint8_t *payload, uint32_t length);
+void protocol_send(uint8_t type, uint32_t session_id,
+                   const uint8_t *payload, uint32_t length);
 int protocol_receive(struct protocol_frame *frame);
 
 #endif
