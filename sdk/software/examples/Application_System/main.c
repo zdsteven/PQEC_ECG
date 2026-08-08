@@ -18,7 +18,7 @@ int main(void)
         if (result == 0) {
             application_service_handle_frame(&frame);
         } else {
-            application_service_handle_receive_error(result);
+            application_service_handle_receive_error(result, frame.session_id);
         }
     }
 

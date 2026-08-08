@@ -10,28 +10,29 @@ unsigned long CONFREG_TIMER_BASE = 0xbf20f100;
 unsigned long CONFREG_CLOCKS_PER_SEC = 50000000L;
 unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 
-#define ECG_VALIDATION_COUNT 1000u
+#define ECG_VALIDATION_COUNT 10000u
+#define ECG_BATCH_SIZE       1000u
+#define ECG_BATCH_COUNT      (ECG_VALIDATION_COUNT / ECG_BATCH_SIZE)
 #define ECG_SAMPLE_BYTES     198u
 #define ECG_DMA_BYTES        200u
 #define ECG_CLASS_COUNT      5u
-#define ECG_PROGRESS_STEP    100u
 #define CONFREG_CYCLES_PER_US (CONFREG_CLOCKS_PER_SEC / 1000000ul)
 
 #define CONFREG_TIMER_CMP_ADDR (CONFREG_TIMER_BASE + 0x4u)
 #define CONFREG_TIMER_EN_ADDR  (CONFREG_TIMER_BASE + 0x8u)
 
 __asm__(
-    ".section .rodata\n"
+    ".section .validation_data,\"a\",@progbits\n"
     ".balign 64\n"
     ".global validation_ecg_data\n"
     "validation_ecg_data:\n"
-    ".incbin \"validation_ecg_uint8_198.bin\"\n"
+    ".incbin \"validation_ecg_uint8_198_10000.bin\"\n"
     ".global validation_ecg_data_end\n"
     "validation_ecg_data_end:\n"
     ".balign 4\n"
     ".global validation_labels\n"
     "validation_labels:\n"
-    ".incbin \"validation_golden_labels.bin\"\n"
+    ".incbin \"validation_golden_labels_10000.bin\"\n"
     ".previous\n"
 );
 
@@ -82,9 +83,9 @@ static U8 run_inference(uint32_t index, unsigned long *cycles)
 int main(int argc, char **argv)
 {
     uint32_t i;
+    uint32_t batch;
     uint32_t correct = 0u;
-    uint32_t class_total[ECG_CLASS_COUNT] = {0u, 0u, 0u, 0u, 0u};
-    uint32_t class_correct[ECG_CLASS_COUNT] = {0u, 0u, 0u, 0u, 0u};
+    uint32_t batch_correct = 0u;
     unsigned long total_cycles = 0ul;
 
     (void)argc;
@@ -93,7 +94,6 @@ int main(int argc, char **argv)
     init_timer();
 
     printf("ecg validation start\n");
-    printf("samples=%u\n", ECG_VALIDATION_COUNT);
 
     for (i = 0u; i < ECG_VALIDATION_COUNT; ++i) {
         unsigned long cycles;
@@ -103,35 +103,30 @@ int main(int argc, char **argv)
         total_cycles += cycles;
 
         if (label < ECG_CLASS_COUNT) {
-            ++class_total[label];
             if (pred == label) {
                 ++correct;
-                ++class_correct[label];
+                ++batch_correct;
             }
         }
 
-        if (((i + 1u) % ECG_PROGRESS_STEP) == 0u) {
-            printf("processed %u/%u, correct=%u\n", i + 1u, ECG_VALIDATION_COUNT, correct);
+        if (((i + 1u) % ECG_BATCH_SIZE) == 0u) {
+            batch = (i + 1u) / ECG_BATCH_SIZE;
+            printf("batch %u/%u: correct=%u/%u accuracy=%u.%u%%\n",
+                    batch,
+                    ECG_BATCH_COUNT,
+                    batch_correct,
+                    ECG_BATCH_SIZE,
+                    batch_correct / 10u,
+                    batch_correct % 10u);
+            batch_correct = 0u;
         }
     }
 
     printf("ecg validation done\n");
-    printf("correct=%u total=%u accuracy=%u.%u%%\n",
-            correct,
-            ECG_VALIDATION_COUNT,
-            correct / 10u,
-            correct % 10u);
-    printf("total inference cycles=%lu us=%lu avg_cycles=%lu avg_us=%lu\n",
-            total_cycles,
-            cycles_to_us(total_cycles),
+
+    printf("avg_cycles=%lu avg_us=%lu\n",
             total_cycles / ECG_VALIDATION_COUNT,
             cycles_to_us(total_cycles / ECG_VALIDATION_COUNT));
-    printf("class correct/total: N=%u/%u L=%u/%u R=%u/%u A=%u/%u V=%u/%u\n",
-            class_correct[0], class_total[0],
-            class_correct[1], class_total[1],
-            class_correct[2], class_total[2],
-            class_correct[3], class_total[3],
-            class_correct[4], class_total[4]);
 
     while (1) {
     }

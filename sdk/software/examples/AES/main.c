@@ -14,10 +14,11 @@ unsigned long CORE_CLOCKS_PER_SEC = 33000000L;
 #define CONFREG_TIMER_CMP_ADDR (CONFREG_TIMER_BASE + 0x4u)
 #define CONFREG_TIMER_EN_ADDR  (CONFREG_TIMER_BASE + 0x8u)
 #define CONFREG_CYCLES_PER_US  (CONFREG_CLOCKS_PER_SEC / 1000000ul)
-#define AES_BUFFER_WORDS       64u
 
-static uint32_t software_data[AES_BUFFER_WORDS] __attribute__((aligned(64)));
-static uint32_t hardware_data[AES_BUFFER_WORDS] __attribute__((aligned(64)));
+static uint32_t plaintext[AES_DATA_WORDS] __attribute__((aligned(64)));
+static uint32_t ciphertext[AES_DATA_WORDS] __attribute__((aligned(64)));
+static uint32_t software_result[AES_DATA_WORDS] __attribute__((aligned(64)));
+static uint32_t hardware_result[AES_GCM_INPUT_WORDS] __attribute__((aligned(64)));
 
 static const uint8_t aes_key[AES_KEYLEN] = {
 #if defined(AES256) && (AES256 == 1)
@@ -31,12 +32,10 @@ static const uint8_t aes_key[AES_KEYLEN] = {
 #endif
 };
 
-static const uint32_t nonce_key[2] = {
-    0x03020100u,
-    0x07060504u
+static const uint8_t nonce[AES_GCM_NONCE_BYTES] = {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+    0x06, 0x07, 0x11, 0x22, 0x33, 0x44
 };
-
-static const uint32_t message_index = 0x11223344u;
 
 static unsigned long cycles_to_us(unsigned long cycles)
 {
@@ -50,88 +49,94 @@ static void init_timer(void)
     RegWrite(CONFREG_TIMER_EN_ADDR, 1u);
 }
 
-static void prepare_input(void)
+static void prepare_plaintext(void)
 {
-    uint8_t *software_bytes = (uint8_t *)software_data;
+    uint8_t *bytes = (uint8_t *)plaintext;
     uint32_t i;
 
     for (i = 0u; i < AES_DATA_BYTES; ++i) {
-        software_bytes[i] = (uint8_t)(i * 29u + 7u);
+        bytes[i] = (uint8_t)(i * 29u + 7u);
     }
-    memcpy(hardware_data, software_data, AES_DATA_BYTES);
 }
 
-static void build_software_iv(uint8_t iv[AES_BLOCKLEN])
+static uint32_t first_mismatch(const uint32_t *left, const uint32_t *right)
 {
-    const uint8_t *nonce_bytes = (const uint8_t *)nonce_key;
+    uint32_t i;
 
-    memcpy(iv, nonce_bytes, 8u);
-    iv[8] = (uint8_t)(message_index >> 24);
-    iv[9] = (uint8_t)(message_index >> 16);
-    iv[10] = (uint8_t)(message_index >> 8);
-    iv[11] = (uint8_t)message_index;
-    iv[12] = 0u;
-    iv[13] = 0u;
-    iv[14] = 0u;
-    iv[15] = 2u;
+    for (i = 0u; i < AES_DATA_WORDS; ++i) {
+        if (left[i] != right[i]) {
+            return i;
+        }
+    }
+    return AES_DATA_WORDS;
 }
 
 int main(int argc, char **argv)
 {
-    struct AES_ctx software_ctx;
-    uint8_t software_iv[AES_BLOCKLEN];
-    unsigned long software_start;
-    unsigned long software_cycles;
-    unsigned long hardware_start;
+    uint8_t tag[AES_GCM_TAG_BYTES];
+    uint8_t bad_tag[AES_GCM_TAG_BYTES];
+    unsigned long encrypt_cycles;
     unsigned long hardware_cycles;
-    uint32_t mismatch_word = AES_DATA_WORDS;
-    uint32_t i;
-    int dma_result;
+    unsigned long software_cycles;
+    unsigned long start;
+    uint32_t mismatch;
+    int hardware_auth_test;
+    int hardware_status;
+    int software_status;
 
     (void)argc;
     (void)argv;
 
     init_timer();
-    prepare_input();
-    build_software_iv(software_iv);
+    prepare_plaintext();
 
-    software_start = get_confreg_clock_count();
-    AES_init_ctx_iv_software(&software_ctx, aes_key, software_iv);
-    AES_CTR_software(&software_ctx, (uint8_t *)software_data, AES_DATA_BYTES);
-    software_cycles = get_confreg_clock_count() - software_start;
+    AES_GCM_encrypt_software(aes_key, nonce, 0, 0u, plaintext, AES_DATA_BYTES, ciphertext, tag);
 
-    hardware_start = get_confreg_clock_count();
+    start = get_confreg_clock_count();
+    software_status = AES_GCM_decrypt_software(aes_key, nonce, 0, 0u,
+                                                ciphertext, AES_DATA_BYTES,
+                                                tag, software_result);
+    software_cycles = get_confreg_clock_count() - start;
+
+    memcpy(hardware_result, ciphertext, AES_DATA_BYTES);
+    memcpy(&hardware_result[AES_DATA_WORDS], tag, AES_GCM_TAG_BYTES);
+    start = get_confreg_clock_count();
     AES_init_hardware(aes_key);
-    AES_set_nonce_hardware(nonce_key, message_index);
-    dma_result = AES_CTR_hardware(hardware_data);
-    if (dma_result == 0) {
-        dma_result = AES_read_result_hardware(hardware_data);
-    }
-    hardware_cycles = get_confreg_clock_count() - hardware_start;
+    AES_set_nonce_hardware(nonce);
+    hardware_status = AES_GCM_decrypt_hardware(hardware_result);
+    hardware_cycles = get_confreg_clock_count() - start;
 
-    if (dma_result == 0) {
-        for (i = 0u; i < AES_DATA_WORDS; ++i) {
-            if (software_data[i] != hardware_data[i]) {
-                mismatch_word = i;
-                break;
-            }
-        }
-    }
+    printf("AES-%u GCM, 198 bytes ECG data processing\n", (unsigned)(AES_KEYLEN * 8u));
+    printf("software decrypt: cycles=%lu us=%lu\n", software_cycles, cycles_to_us(software_cycles));
+    printf("hardware decrypt: cycles=%lu us=%lu\n", hardware_cycles, cycles_to_us(hardware_cycles));
 
-    printf("AES-%u CTR, data=%u bytes\n", AES_KEYLEN * 8u, (unsigned)AES_DATA_BYTES);
-    printf("software: cycles=%lu us=%lu\n", software_cycles, cycles_to_us(software_cycles));
-    printf("hardware: cycles=%lu us=%lu\n", hardware_cycles, cycles_to_us(hardware_cycles));
-
-    if (dma_result != 0) {
-        printf("AES hardware test FAIL: DMA error %d\n", dma_result);
-    } else if (mismatch_word != AES_DATA_WORDS) {
-        printf("AES hardware test FAIL at word %u: sw=%08x hw=%08x\n",
-                mismatch_word,
-                software_data[mismatch_word],
-                hardware_data[mismatch_word]);
+    mismatch = first_mismatch(software_result, plaintext);
+    if (software_status != AES_GCM_SUCCESS) {
+        printf("AES-GCM software test FAIL: authentication error\n");
+    } else if (mismatch != AES_DATA_WORDS) {
+        printf("AES-GCM software test FAIL at word %u\n", mismatch);
     } else {
-        printf("AES hardware test PASS\n");
+        printf("AES-GCM software test PASS\n");
     }
+
+    mismatch = first_mismatch(hardware_result, plaintext);
+    if (hardware_status != AES_GCM_SUCCESS) {
+        printf("AES-GCM hardware test FAIL: status=%d\n", hardware_status);
+    } else if (mismatch != AES_DATA_WORDS) {
+        printf("AES-GCM hardware test FAIL at word %u: expected=%08x actual=%08x\n",
+                mismatch, plaintext[mismatch], hardware_result[mismatch]);
+    } else {
+        printf("AES-GCM hardware test PASS\n");
+    }
+
+    memcpy(bad_tag, tag, sizeof(bad_tag));
+    bad_tag[0] ^= 1u;
+    memcpy(hardware_result, ciphertext, AES_DATA_BYTES);
+    memcpy(&hardware_result[AES_DATA_WORDS], bad_tag, AES_GCM_TAG_BYTES);
+    AES_set_nonce_hardware(nonce);
+    hardware_auth_test = AES_GCM_decrypt_hardware(hardware_result);
+    printf("AES-GCM hardware bad-tag test %s\n",
+            hardware_auth_test == AES_GCM_AUTHENTICATION_ERROR ? "PASS" : "FAIL");
 
     while (1) {
     }

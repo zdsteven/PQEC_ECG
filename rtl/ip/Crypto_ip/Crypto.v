@@ -61,6 +61,7 @@ module Crypto (
     //status[2] = 1: polyvec reset buzy
     //status[3] = 1: polyvec buzy
     //status[4] = 1: aes buzy
+    //status[5] = 1: authentication passed
 
     localparam NTT_INTT_DATA_BASE_ADDR  = 16'h0100;
     localparam NTT_INTT_DATA_LAST_ADDR  = NTT_INTT_DATA_BASE_ADDR + 128 * 4 - 4;//16'h02FC
@@ -72,7 +73,9 @@ module Crypto (
     localparam POLYVEC_DATA_LAST_ADDR = POLYVEC_DATA_BASE_ADDR + 512 * 4 - 4;//16'h0EFC
 
     localparam AES_DATA_BASE_ADDR = 16'h0F00;
-    localparam AES_DATA_LAST_ADDR = AES_DATA_BASE_ADDR + 64 * 4 - 4;//16'h0FFC
+    localparam AES_DATA_LAST_ADDR = AES_DATA_BASE_ADDR + 50 * 4 - 4;//16'h0FC4
+    localparam AES_EXPECTED_TAG_BASE_ADDR = AES_DATA_BASE_ADDR + 50 * 4;//16'h0FC8
+    localparam AES_EXPECTED_TAG_LAST_ADDR = AES_EXPECTED_TAG_BASE_ADDR + 4 * 4 - 4;//16'h0FD4
     localparam AES_KEY_BASE_ADDR = 16'h1000;
     localparam AES_KEY_LAST_ADDR = AES_KEY_BASE_ADDR + 8 * 4 - 4;//16'h101C
     localparam AES_NONCE_COUNTER_ADDR = 16'h1020;
@@ -207,8 +210,12 @@ module Crypto (
 
 //---------------------------------{aes}begin-------------------------------//
     // aes Inputs
-    wire write_addr_is_aes = write_addr[11:8] == 4'b1111;
-    wire read_addr_is_aes = read_addr[11:8] == 4'b1111;
+    wire write_addr_is_aes = write_addr[15:0] >= AES_DATA_BASE_ADDR &&
+                             write_addr[15:0] <= AES_DATA_LAST_ADDR;
+    wire read_addr_is_aes = read_addr[15:0] >= AES_DATA_BASE_ADDR &&
+                            read_addr[15:0] <= AES_DATA_LAST_ADDR;
+    wire write_addr_is_aes_expected_tag = write_addr[15:0] >= AES_EXPECTED_TAG_BASE_ADDR &&
+                                          write_addr[15:0] <= AES_EXPECTED_TAG_LAST_ADDR;
     wire aes_init = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[16] == 1'b1);
     wire aes_keylen = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[17] == 1'b1);
     wire aes_start = w_fire & (write_addr[15:0] == CTRL_ADDR) & (s_wdata[18] == 1'b1);
@@ -216,6 +223,7 @@ module Crypto (
     wire [2:0] aes_load_key_addr = write_addr[4:2];
     wire [31:0] aes_load_key = s_wdata;
     reg [95:0] aes_nonce;
+    reg [127:0] aes_expected_tag;
     wire aes_load_ct_data_en = w_fire & write_addr_is_aes;
     wire [5:0] aes_load_ct_data_addr = write_addr[7:2];
     wire [31:0] aes_load_ct_data = s_wdata;
@@ -223,6 +231,7 @@ module Crypto (
     wire [5:0] aes_take_ct_data_addr = read_addr[7:2];
     wire [31:0] aes_take_ct_data;
     wire aes_ready;
+    wire aes_auth_ok;
 //---------------------------------{aes}end---------------------------------//
 
 //--------------------------------------------------------------------------------------------------------//
@@ -428,9 +437,11 @@ module Crypto (
             end
             if (aes_start | aes_init) begin
                 status_reg[4] <= 1'b1;
+                status_reg[5] <= 1'b0;
             end
             else if (aes_ready) begin
                 status_reg[4] <= 1'b0;
+                status_reg[5] <= aes_auth_ok;
             end
         end
     end
@@ -544,6 +555,21 @@ module Crypto (
         end
     end
 
+    always @(posedge aclk) begin
+        if (~aresetn) begin
+            aes_expected_tag <= 128'b0;
+        end
+        else if (w_fire & write_addr_is_aes_expected_tag) begin
+            case (write_addr[4:2])
+                3'd2: aes_expected_tag[31:0]   <= s_wdata;//16'h0FC8
+                3'd3: aes_expected_tag[63:32]  <= s_wdata;//16'h0FCC
+                3'd4: aes_expected_tag[95:64]  <= s_wdata;//16'h0FD0
+                3'd5: aes_expected_tag[127:96] <= s_wdata;//16'h0FD4
+                default: ;
+            endcase
+        end
+    end
+
     aes  u_aes (
         .clk                     ( aclk                 ),
         .reset_n                 ( aresetn              ),
@@ -554,12 +580,14 @@ module Crypto (
         .load_key_addr           ( aes_load_key_addr    ),
         .load_key                ( aes_load_key         ),
         .nonce                   ( aes_nonce            ),
+        .expected_tag            ( aes_expected_tag     ),
         .load_ct_data_en         ( aes_load_ct_data_en  ),
         .load_ct_data_addr       ( aes_load_ct_data_addr),
         .load_ct_data            ( aes_load_ct_data     ),
         .take_ct_data_en         ( aes_take_ct_data_en  ),
         .take_ct_data_addr       ( aes_take_ct_data_addr),
         .ready                   ( aes_ready            ),
+        .auth_ok                 ( aes_auth_ok          ),
         .take_ct_data            ( aes_take_ct_data     )
     );
 //---------------------------------{aes}end---------------------------------//
