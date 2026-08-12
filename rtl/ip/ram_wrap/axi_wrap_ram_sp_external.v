@@ -89,7 +89,9 @@ module axi_wrap_ram_sp_external (
     input         fast_pair_ready,
 
     //BaseRAM信号
-    inout  [31:0] base_ram_data,  //BaseRAM数据，低8位与CPLD串口控制器共享
+    input  [31:0] base_ram_data_i,  //BaseRAM数据，低8位与CPLD串口控制器共享
+    output [31:0] base_ram_data_o,
+    output [31:0] base_ram_data_oe,
     output [19:0] base_ram_addr, //BaseRAM地址
     output [ 3:0] base_ram_be_n,  //BaseRAM字节使能，低有效。如果不使用字节使能，请保持为0
     output  base_ram_ce_n,       //BaseRAM片选，低有效
@@ -97,7 +99,9 @@ module axi_wrap_ram_sp_external (
     output  base_ram_we_n,       //BaseRAM写使能，低有效
 
     //ExtRAM信号
-    inout  [31:0] ext_ram_data,  //ExtRAM数据
+    input  [31:0] ext_ram_data_i,  //ExtRAM数据
+    output [31:0] ext_ram_data_o,
+    output [31:0] ext_ram_data_oe,
     output [19:0] ext_ram_addr, //ExtRAM地址
     output [ 3:0] ext_ram_be_n,  //ExtRAM字节使能，低有效。如果不使用字节使能，请保持为0
     output  ext_ram_ce_n,       //ExtRAM片选，低有效
@@ -266,7 +270,8 @@ assign base_ram_be_n = choose_sram ? 4'b1111 : ~be_out;
 assign base_ram_ce_n = ~(soc_sram_cs & (~choose_sram));
 assign base_ram_oe_n = soc_sram_we | choose_sram;
 assign base_ram_we_n = ~(soc_sram_we & (~choose_sram));
-assign base_ram_data = ((~choose_sram) & soc_sram_cs & soc_sram_we) ? soc_sram_wdata : 32'hzzzzzzzz;
+assign base_ram_data_o = soc_sram_wdata;
+assign base_ram_data_oe = {32{~((~choose_sram) & soc_sram_cs & soc_sram_we)}};
 
 // Explicit input buffers let the IDDRs in the evaluation PHY pack into the
 // input I/O logic.  Verilator has no Xilinx UNISIM library, so lint and the
@@ -276,26 +281,23 @@ generate
 for (ext_data_bit = 0; ext_data_bit < 32; ext_data_bit = ext_data_bit + 1) begin: gen_ext_data_iobuf
 `ifdef USE_EVALUATION_UART_SRAM
 `ifdef VERILATOR
-    assign ext_ram_data_in[ext_data_bit] = ext_ram_data[ext_data_bit];
-    assign ext_ram_data[ext_data_bit] = 1'bz;
+    assign ext_ram_data_in[ext_data_bit] = ext_ram_data_i[ext_data_bit];
+    assign ext_ram_data_o[ext_data_bit] = 1'b0;
+    assign ext_ram_data_oe[ext_data_bit] = 1'b1;
 `else
-    IOBUF u_ext_data_iobuf (
-        .I  (soc_sram_wdata[ext_data_bit]),
-        .O  (ext_ram_data_in[ext_data_bit]),
-        .T  (1'b1),
-        .IO (ext_ram_data[ext_data_bit])
-    );
+    assign ext_ram_data_in[ext_data_bit] = ext_ram_data_i[ext_data_bit];
+    assign ext_ram_data_o[ext_data_bit] = 1'b0;
+    assign ext_ram_data_oe[ext_data_bit] = 1'b1;
 `endif
 `else
-    assign ext_ram_data_in[ext_data_bit] = ext_ram_data[ext_data_bit];
-    assign ext_ram_data[ext_data_bit] =
-        (choose_sram & soc_sram_cs & soc_sram_we) ?
-        soc_sram_wdata[ext_data_bit] : 1'bz;
+    assign ext_ram_data_in[ext_data_bit] = ext_ram_data_i[ext_data_bit];
+    assign ext_ram_data_o[ext_data_bit] = soc_sram_wdata[ext_data_bit];
+    assign ext_ram_data_oe[ext_data_bit] = ~(choose_sram & soc_sram_cs & soc_sram_we);
 `endif
 end
 endgenerate
 
-assign soc_sram_rdata = choose_sram ? ext_ram_data_in : base_ram_data;
+assign soc_sram_rdata = choose_sram ? ext_ram_data_in : base_ram_data_i;
 
 `ifdef USE_EVALUATION_UART_SRAM
 // ODDR Q must drive the output buffer directly.  A fabric mux after the ODDR
