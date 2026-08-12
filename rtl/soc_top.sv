@@ -36,10 +36,12 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //1f30_0000 dma
 
 `include "config.h"
+`include "iopad.svh"
 
 module soc_top #(parameter SIMULATION=1'b0)
 (
     input           clk,
+    output          clk_o,              //XTALO
     input           reset,
 
     //图像输出信号
@@ -77,40 +79,128 @@ module soc_top #(parameter SIMULATION=1'b0)
     inout           UART_TX             //串口TX发送
 );
 
+wire clk_i;
+PX3W PAD_CLK_IN (.XIN(clk), .XOUT(clk_o), .XC(clk_i));
+`IPADU_GEN_SIMPLE(reset)
+`OPAD_GEN_VEC_SIMPLE(video_red)
+`OPAD_GEN_VEC_SIMPLE(video_green)
+`OPAD_GEN_VEC_SIMPLE(video_blue)
+`OPAD_GEN_SIMPLE(video_hsync)
+`OPAD_GEN_SIMPLE(video_vsync)
+`OPAD_GEN_SIMPLE(video_clk)
+`OPAD_GEN_SIMPLE(video_de)
+`IPAD_GEN_VEC_SIMPLE(touch_btn)
+`IPAD_GEN_VEC_SIMPLE(dip_sw)
+`OPAD_GEN_VEC_SIMPLE(leds)
+`OPAD_GEN_VEC_SIMPLE(dpy0)
+`OPAD_GEN_VEC_SIMPLE(dpy1)
+`IOPAD_GEN_VEC_SIMPLE(base_ram_data)
+`OPAD_GEN_VEC_SIMPLE(base_ram_addr)
+`OPAD_GEN_VEC_SIMPLE(base_ram_be_n)
+`OPAD_GEN_SIMPLE(base_ram_ce_n)
+`OPAD_GEN_SIMPLE(base_ram_oe_n)
+`OPAD_GEN_SIMPLE(base_ram_we_n)
+`IOPAD_GEN_VEC_SIMPLE(ext_ram_data)
+`OPAD_GEN_VEC_SIMPLE(ext_ram_addr)
+`OPAD_GEN_VEC_SIMPLE(ext_ram_be_n)
+`OPAD_GEN_SIMPLE(ext_ram_ce_n)
+`OPAD_GEN_SIMPLE(ext_ram_oe_n)
+`OPAD_GEN_SIMPLE(ext_ram_we_n)
+`IOPAD_GEN_SIMPLE(UART_RX)
+`IOPAD_GEN_SIMPLE(UART_TX)
+
+//wire cpu_clk;
+//wire cpu_resetn;
+//wire sys_clk;
+//wire sys_resetn;
+//wire sram_clk180;
+//wire sram_sample_clk;
+//wire pll_locked;
+//
+//generate if(SIMULATION) begin: sim_clk
+//    //simulation clk.
+//    reg clk_sim;
+//    reg sram_sample_clk_sim;
+//    initial begin
+//        clk_sim = 1'b0;
+//    end
+//    always #15 clk_sim = ~clk_sim;
+//
+//    // Match the implemented PLL's 150-degree SRAM sample phase.  Using the
+//    // same 180-degree phase as the address ODDR creates a zero-delay race in
+//    // XSim and shifts the fast pair stream after the first group.
+//    initial begin
+//        sram_sample_clk_sim = 1'b0;
+//        // Clock Wizard realizes 150 degrees as 149.516 degrees.
+//        #8.306444;
+//        forever #10 sram_sample_clk_sim = ~sram_sample_clk_sim;
+//    end
+//
+//    assign cpu_clk = clk_sim;
+//    assign sys_clk = clk;
+//    assign sram_clk180 = ~clk;
+//    assign sram_sample_clk = sram_sample_clk_sim;
+//    rst_sync u_rst_sys(
+//        .clk(sys_clk),
+//        .rst_n_in(~reset),
+//        .rst_n_out(sys_resetn)
+//    );
+//    rst_sync u_rst_cpu(
+//        .clk(cpu_clk),
+//        .rst_n_in(sys_resetn),
+//        .rst_n_out(cpu_resetn)
+//    );
+//end
+//else begin: pll_clk
+//    clk_pll u_clk_pll(
+//        .cpu_clk    (cpu_clk),
+//        .sys_clk    (sys_clk),
+//        .sram_clk180(sram_clk180),
+//        .sram_sample_clk(sram_sample_clk),
+//        // Keep the PLL running while the platform holds CPU/SoC reset.
+//        // Its lock time is then paid before the timed reset release.
+//        .resetn     (1'b1),
+//        .locked     (pll_locked),
+//        .clk_in1    (clk)
+//    );
+//    rst_sync u_rst_sys(
+//        .clk(sys_clk),
+//        // PLL lock and external reset are separate concerns: clocks remain
+//        // locked, while all system state stays reset until the platform
+//        // explicitly releases reset.
+//        .rst_n_in(pll_locked & ~reset),
+//        .rst_n_out(sys_resetn)
+//    );
+//    rst_sync u_rst_cpu(
+//        .clk(cpu_clk),
+//        .rst_n_in(sys_resetn),
+//        .rst_n_out(cpu_resetn)
+//    );
+//end
+//endgenerate
+
 wire cpu_clk;
 wire cpu_resetn;
 wire sys_clk;
 wire sys_resetn;
 wire sram_clk180;
 wire sram_sample_clk;
-wire pll_locked;
 
 generate if(SIMULATION) begin: sim_clk
     //simulation clk.
     reg clk_sim;
-    reg sram_sample_clk_sim;
     initial begin
         clk_sim = 1'b0;
     end
     always #15 clk_sim = ~clk_sim;
 
-    // Match the implemented PLL's 150-degree SRAM sample phase.  Using the
-    // same 180-degree phase as the address ODDR creates a zero-delay race in
-    // XSim and shifts the fast pair stream after the first group.
-    initial begin
-        sram_sample_clk_sim = 1'b0;
-        // Clock Wizard realizes 150 degrees as 149.516 degrees.
-        #8.306444;
-        forever #10 sram_sample_clk_sim = ~sram_sample_clk_sim;
-    end
-
     assign cpu_clk = clk_sim;
-    assign sys_clk = clk;
-    assign sram_clk180 = ~clk;
-    assign sram_sample_clk = sram_sample_clk_sim;
+    assign sys_clk = clk_i;
+    assign sram_clk180 = clk_i;
+    assign sram_sample_clk = clk_i;
     rst_sync u_rst_sys(
         .clk(sys_clk),
-        .rst_n_in(~reset),
+        .rst_n_in(~reset_i),
         .rst_n_out(sys_resetn)
     );
     rst_sync u_rst_cpu(
@@ -120,30 +210,20 @@ generate if(SIMULATION) begin: sim_clk
     );
 end
 else begin: pll_clk
-    clk_pll u_clk_pll(
-        .cpu_clk    (cpu_clk),
-        .sys_clk    (sys_clk),
-        .sram_clk180(sram_clk180),
-        .sram_sample_clk(sram_sample_clk),
-        // Keep the PLL running while the platform holds CPU/SoC reset.
-        // Its lock time is then paid before the timed reset release.
-        .resetn     (1'b1),
-        .locked     (pll_locked),
-        .clk_in1    (clk)
-    );
-    rst_sync u_rst_sys(
-        .clk(sys_clk),
-        // PLL lock and external reset are separate concerns: clocks remain
-        // locked, while all system state stays reset until the platform
-        // explicitly releases reset.
-        .rst_n_in(pll_locked & ~reset),
-        .rst_n_out(sys_resetn)
-    );
-    rst_sync u_rst_cpu(
-        .clk(cpu_clk),
-        .rst_n_in(sys_resetn),
-        .rst_n_out(cpu_resetn)
-    );
+assign cpu_clk = clk_i;  
+assign sys_clk = clk_i;
+assign sram_clk180 = clk_i;
+assign sram_sample_clk = clk_i;  
+rst_sync u_rst_sys(  
+    .clk(sys_clk),  
+    .rst_n_in(~reset_i),  
+    .rst_n_out(sys_resetn)  
+);  
+rst_sync u_rst_cpu(  
+    .clk(cpu_clk),  
+    .rst_n_in(sys_resetn),  
+    .rst_n_out(cpu_resetn)  
+);  
 end
 endgenerate
 
@@ -320,24 +400,14 @@ assign UART_DSR = 1'b0;
 assign UART_DCD = 1'b0;
 assign UART_RI  = 1'b0;
 wire uart0_int   ;
-wire uart0_txd_o ;
-wire uart0_txd_i ;
-wire uart0_txd_oe;
-wire uart0_rxd_o ;
-wire uart0_rxd_i ;
-wire uart0_rxd_oe;
 wire uart0_rts_o ;
 wire uart0_cts_i ;
 wire uart0_dsr_i ;
 wire uart0_dcd_i ;
 wire uart0_dtr_o ;
 wire uart0_ri_i  ;
-assign     UART_RX     = uart0_rxd_oe ? 1'bz : uart0_rxd_o ;
-assign     UART_TX     = uart0_txd_oe ? 1'bz : uart0_txd_o ;
 assign     UART_RTS    = uart0_rts_o ;
 assign     UART_DTR    = uart0_dtr_o ;
-assign     uart0_txd_i = UART_TX;
-assign     uart0_rxd_i = UART_RX;
 assign     uart0_cts_i = UART_CTS;
 assign     uart0_dcd_i = UART_DCD;
 assign     uart0_dsr_i = UART_DSR;
@@ -1480,19 +1550,23 @@ axi_wrap_ram_sp_external u_axi_ram (
     .fast_pair_data1     ( dma_fast_pair_data1      ),
     .fast_pair_ready     ( dma_fast_pair_ready      ),
 
-    .base_ram_addr ( base_ram_addr ),
-    .base_ram_be_n ( base_ram_be_n ),
-    .base_ram_ce_n ( base_ram_ce_n ),
-    .base_ram_oe_n ( base_ram_oe_n ),
-    .base_ram_we_n ( base_ram_we_n ),
-    .ext_ram_addr ( ext_ram_addr ),
-    .ext_ram_be_n ( ext_ram_be_n ),
-    .ext_ram_ce_n ( ext_ram_ce_n ),
-    .ext_ram_oe_n ( ext_ram_oe_n ),
-    .ext_ram_we_n ( ext_ram_we_n ),
+    .base_ram_addr ( base_ram_addr_o ),
+    .base_ram_be_n ( base_ram_be_n_o ),
+    .base_ram_ce_n ( base_ram_ce_n_o ),
+    .base_ram_oe_n ( base_ram_oe_n_o ),
+    .base_ram_we_n ( base_ram_we_n_o ),
+    .ext_ram_addr ( ext_ram_addr_o ),
+    .ext_ram_be_n ( ext_ram_be_n_o ),
+    .ext_ram_ce_n ( ext_ram_ce_n_o ),
+    .ext_ram_oe_n ( ext_ram_oe_n_o ),
+    .ext_ram_we_n ( ext_ram_we_n_o ),
 
-    .base_ram_data ( base_ram_data ),
-    .ext_ram_data ( ext_ram_data )
+    .base_ram_data_i ( base_ram_data_i ),
+    .base_ram_data_o ( base_ram_data_o ),
+    .base_ram_data_oe ( base_ram_data_oe ),
+    .ext_ram_data_i ( ext_ram_data_i ),
+    .ext_ram_data_o ( ext_ram_data_o ),
+    .ext_ram_data_oe ( ext_ram_data_oe )
 );
 
 //AXI2APB
@@ -1552,23 +1626,19 @@ axi_uart_controller u_axi_uart_controller
     .dma_ack_i (1'b0 ),
 
     //UART0
-    .uart0_txd_i (uart0_txd_i ),
-    .uart0_txd_o (uart0_txd_o ),
-    .uart0_txd_oe (uart0_txd_oe ),
-    .uart0_rxd_i (uart0_rxd_i ),
-    .uart0_rxd_o (uart0_rxd_o ),
-    .uart0_rxd_oe (uart0_rxd_oe ),
+    .uart0_txd_i (UART_TX_i ),
+    .uart0_txd_o (UART_TX_o ),
+    .uart0_txd_oe (UART_TX_oe ),
+    .uart0_rxd_i (UART_RX_i ),
+    .uart0_rxd_o (UART_RX_o ),
+    .uart0_rxd_oe (UART_RX_oe ),
     .uart0_rts_o (uart0_rts_o ),
     .uart0_dtr_o (uart0_dtr_o ),
     .uart0_cts_i (uart0_cts_i ),
     .uart0_dsr_i (uart0_dsr_i ),
     .uart0_dcd_i (uart0_dcd_i ),
     .uart0_ri_i (uart0_ri_i ),
-`ifdef USE_EVALUATION_UART_SRAM
     .uart0_int (uart0_int )
-`else
-    .uart0_int (uart0_int )
-`endif
 );
 
 // --- Slave 4: ConfReg (控制寄存器) ---
@@ -1615,14 +1685,14 @@ confreg #(.SIMULATION(SIMULATION)) u_confreg (
     .s_rlast ( confreg_rlast ),
     .s_rvalid ( confreg_rvalid ),
 
-    .switch ( dip_sw ),
-    .touch_btn ( touch_btn ),
+    .switch ( dip_sw_i ),
+    .touch_btn ( touch_btn_i ),
     .dma_finish ( dma_finish ),
     .ecg_finish ( ecg_finish ),
     .uart_int ( uart0_int ),
-    .led ( leds ),
-    .dpy0 ( dpy0 ),
-    .dpy1 ( dpy1 ),
+    .led ( leds_o ),
+    .dpy0 ( dpy0_o ),
+    .dpy1 ( dpy1_o ),
     .confreg_int ( confreg_int )
 );
 
@@ -1724,13 +1794,13 @@ axi_dvi u_axi_dvi (
     .s_rid ( dvi_rid ),
     .s_rresp ( dvi_rresp ),
     .s_rlast ( dvi_rlast ),
-    .video_clk ( video_clk ),
-    .hsync ( video_hsync ),
-    .vsync ( video_vsync ),
-    .data_enable ( video_de ),
-    .video_red ( video_red ),
-    .video_green ( video_green ),
-    .video_blue ( video_blue )
+    .video_clk ( video_clk_o ),
+    .hsync ( video_hsync_o ),
+    .vsync ( video_vsync_o ),
+    .data_enable ( video_de_o ),
+    .video_red ( video_red_o ),
+    .video_green ( video_green_o ),
+    .video_blue ( video_blue_o )
 );
 
 //Crypto_ip
