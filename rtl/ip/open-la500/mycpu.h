@@ -15,11 +15,11 @@
     `define LACC_OP_WIDTH $clog2(`LACC_OP_SIZE)
     `define BR_BUS_WD       33  //bug5 32->33
     `define FS_TO_DS_BUS_WD 109
-    `define DS_TO_ES_BUS_WD (350 \
-    `ifdef HAS_LACC \
-    +`LACC_OP_WIDTH+1 \
-    `endif \
-    )
+    `ifdef HAS_LACC
+        `define DS_TO_ES_BUS_WD (350 + `LACC_OP_WIDTH + 1)
+    `else
+        `define DS_TO_ES_BUS_WD 350
+    `endif
 
     `define ES_TO_MS_BUS_WD 425
 

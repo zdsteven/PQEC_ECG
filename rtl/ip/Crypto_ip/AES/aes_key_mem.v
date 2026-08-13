@@ -27,7 +27,7 @@ module aes_key_mem (
 
     reg [3:0] state;
 
-    (* ram_style = "distributed" *) reg [127:0] key_mem [0:14];
+    reg [127:0] key_mem [0:14];
     reg [127:0] prev_key0_reg;
     reg [127:0] prev_key1_reg;
     reg [3:0] round_ctr_reg;

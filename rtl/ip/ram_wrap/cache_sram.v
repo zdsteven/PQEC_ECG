@@ -14,7 +14,7 @@ module data_bank_sram (
                             (V_STYLE == "distributed")  ? "select_ram" :
                             "block_ram";
 
-    (*ram_style = V_STYLE*) reg [31:0] mem_reg [255:0]/*synthesis syn_ramstyle=P_STYLE*/;
+    reg [31:0] mem_reg [255:0];
     reg [31:0] output_buffer;
 
     always @(posedge clka) begin
@@ -63,19 +63,23 @@ module tagv_sram (
                             (V_STYLE == "distributed")  ? "select_ram" :
                             "block_ram";
 
-    (*ram_style = V_STYLE*) reg [20:0] mem_reg [255:0]/*synthesis syn_ramstyle=P_STYLE*/;
+    reg [20:0] mem_reg [255:0];
     reg [20:0] output_buffer;
 
 `ifdef USE_EVALUATION_UART_SRAM
     // The evaluation image is freshly configured for each run.  Give every
     // cache tag RAM a deterministic cold-invalid image so software need not
     // spend reset-release time issuing 1024 indexed CACOP operations.
+// synopsys translate_off
+`ifndef SYNTHESIS
     integer eval_init_index;
     initial begin
         output_buffer = 21'd0;
         for (eval_init_index = 0; eval_init_index < 256; eval_init_index = eval_init_index + 1)
             mem_reg[eval_init_index] = 21'd0;
     end
+`endif
+// synopsys translate_on
 `endif
 
     always @(posedge clka) begin

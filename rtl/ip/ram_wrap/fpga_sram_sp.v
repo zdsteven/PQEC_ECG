@@ -17,13 +17,17 @@ module fpga_sram_sp #(
                             (V_STYLE == "distributed")  ? "select_ram" :
                             "block_ram";
 
-    (*ram_style = V_STYLE*)reg [31:0] BRAM [AWT:0]/*synthesis syn_ramstyle=P_STYLE*/;
+    reg [31:0] BRAM [AWT:0];
 
+// synopsys translate_off
+`ifndef SYNTHESIS
     initial begin
         if(Init_File != "none") begin
             $readmemb(Init_File,BRAM);
         end
     end
+`endif
+// synopsys translate_on
     
     reg     [AW-1:0]  addr_q1;
     wire    [3:0]     write_enable;

@@ -6241,7 +6241,7 @@ module StreamFifo_3 (
   wire                logic_pop_addressGen_translated_valid;
   wire                logic_pop_addressGen_translated_ready;
   wire       [0:0]    logic_pop_addressGen_translated_payload;
-  (* ram_style = "distributed" *) reg [0:0] logic_ram [0:3];
+  reg [0:0] logic_ram [0:3];
 
   assign _zz_logic_ram_port = logic_push_onRam_write_payload_data;
   always @(posedge clk) begin
