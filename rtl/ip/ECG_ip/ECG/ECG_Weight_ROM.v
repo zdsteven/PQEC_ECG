@@ -24,22 +24,22 @@ module ECG_Weight_ROM (
 );
 
     //weight
-    (* rom_style = "distributed" *) reg [31:0] conv1_weight_0 [0:6];
-    (* rom_style = "distributed" *) reg [31:0] conv1_weight_1 [0:6];
-    (* rom_style = "distributed" *) reg [31:0] conv1_weight_2 [0:6];
-    (* rom_style = "distributed" *) reg [31:0] conv1_weight_3 [0:6];
-    (* rom_style = "distributed" *) reg [31:0] conv1_weight_4 [0:6];
-    (* rom_style = "block" *) reg [31:0] conv2_weight_0 [0:139];
-    (* rom_style = "block" *) reg [31:0] conv2_weight_1 [0:139];
-    (* rom_style = "block" *) reg [31:0] conv2_weight_2 [0:139];
-    (* rom_style = "block" *) reg [31:0] conv2_weight_3 [0:139];
-    (* rom_style = "block" *) reg [31:0] conv2_weight_4 [0:139];
-    (* rom_style = "block" *) reg [31:0] fc1_weight_0 [0:4499];
-    (* rom_style = "block" *) reg [31:0] fc1_weight_1 [0:4499];
-    (* rom_style = "block" *) reg [31:0] fc1_weight_2 [0:4499];
-    (* rom_style = "block" *) reg [31:0] fc1_weight_3 [0:4499];
-    (* rom_style = "block" *) reg [31:0] fc1_weight_4 [0:4499];
-    (* rom_style = "distributed" *) reg [39:0] fc2_weight [0:99];
+    wire [31:0] conv1_weight_0 [0:6];
+    wire [31:0] conv1_weight_1 [0:6];
+    wire [31:0] conv1_weight_2 [0:6];
+    wire [31:0] conv1_weight_3 [0:6];
+    wire [31:0] conv1_weight_4 [0:6];
+    reg [31:0] conv2_weight_0 [0:139];
+    reg [31:0] conv2_weight_1 [0:139];
+    reg [31:0] conv2_weight_2 [0:139];
+    reg [31:0] conv2_weight_3 [0:139];
+    reg [31:0] conv2_weight_4 [0:139];
+    reg [31:0] fc1_weight_0 [0:4499];
+    reg [31:0] fc1_weight_1 [0:4499];
+    reg [31:0] fc1_weight_2 [0:4499];
+    reg [31:0] fc1_weight_3 [0:4499];
+    reg [31:0] fc1_weight_4 [0:4499];
+    reg [39:0] fc2_weight [0:99];
 
     reg [31:0] conv1_weight_pe_in [0:4];
     reg [31:0] conv2_weight_pe_in [0:4];
@@ -154,43 +154,50 @@ module ECG_Weight_ROM (
         end
     end
 
+    /*initialize conv1 weight*/
+    assign conv1_weight_0[0] = 32'h4D09261A;
+    assign conv1_weight_0[1] = 32'h4BF80D29;
+    assign conv1_weight_0[2] = 32'h11FC1DFD;
+    assign conv1_weight_0[3] = 32'hF52AF20F;
+    assign conv1_weight_0[4] = 32'hC91AF8EB;
+    assign conv1_weight_0[5] = 32'hB61D0819;
+    assign conv1_weight_0[6] = 32'hBC1AD1F5;
+
+    assign conv1_weight_1[0] = 32'hFF2C08CE;
+    assign conv1_weight_1[1] = 32'hEB21F8C9;
+    assign conv1_weight_1[2] = 32'h0CD80AD8;
+    assign conv1_weight_1[3] = 32'h10C7DAEB;
+    assign conv1_weight_1[4] = 32'hFAB3E0FC;
+    assign conv1_weight_1[5] = 32'h10C00012;
+    assign conv1_weight_1[6] = 32'hE7BBF234;
+
+    assign conv1_weight_2[0] = 32'h05F5DFE0;
+    assign conv1_weight_2[1] = 32'h2BE3F6E7;
+    assign conv1_weight_2[2] = 32'h29200BDA;
+    assign conv1_weight_2[3] = 32'h3016260C;
+    assign conv1_weight_2[4] = 32'h1518030D;
+    assign conv1_weight_2[5] = 32'hBB0333F6;
+    assign conv1_weight_2[6] = 32'hAC2B11FD;
+
+    assign conv1_weight_3[0] = 32'hD005F443;
+    assign conv1_weight_3[1] = 32'hD00DF11D;
+    assign conv1_weight_3[2] = 32'hD538DF20;
+    assign conv1_weight_3[3] = 32'hD615EFE7;
+    assign conv1_weight_3[4] = 32'hDE4116FE;
+    assign conv1_weight_3[5] = 32'h2023F4E1;
+    assign conv1_weight_3[6] = 32'h230AF5CF;
+
+    assign conv1_weight_4[0] = 32'h9DD71E86;
+    assign conv1_weight_4[1] = 32'h96D7FE96;
+    assign conv1_weight_4[2] = 32'hA909FCAA;
+    assign conv1_weight_4[3] = 32'hD91F1C07;
+    assign conv1_weight_4[4] = 32'h051B0603;
+    assign conv1_weight_4[5] = 32'h282DF85E;
+    assign conv1_weight_4[6] = 32'h7421D67F;
+
+// synopsys translate_off
+`ifndef SYNTHESIS
     initial begin
-        /*initialize conv1 weight*/
-        conv1_weight_0[0] = 32'h4D09261A;
-        conv1_weight_0[1] = 32'h4BF80D29;
-        conv1_weight_0[2] = 32'h11FC1DFD;
-        conv1_weight_0[3] = 32'hF52AF20F;
-        conv1_weight_0[4] = 32'hC91AF8EB;
-        conv1_weight_0[5] = 32'hB61D0819;
-        conv1_weight_0[6] = 32'hBC1AD1F5;
-        conv1_weight_1[0] = 32'hFF2C08CE;
-        conv1_weight_1[1] = 32'hEB21F8C9;
-        conv1_weight_1[2] = 32'h0CD80AD8;
-        conv1_weight_1[3] = 32'h10C7DAEB;
-        conv1_weight_1[4] = 32'hFAB3E0FC;
-        conv1_weight_1[5] = 32'h10C00012;
-        conv1_weight_1[6] = 32'hE7BBF234;
-        conv1_weight_2[0] = 32'h05F5DFE0;
-        conv1_weight_2[1] = 32'h2BE3F6E7;
-        conv1_weight_2[2] = 32'h29200BDA;
-        conv1_weight_2[3] = 32'h3016260C;
-        conv1_weight_2[4] = 32'h1518030D;
-        conv1_weight_2[5] = 32'hBB0333F6;
-        conv1_weight_2[6] = 32'hAC2B11FD;
-        conv1_weight_3[0] = 32'hD005F443;
-        conv1_weight_3[1] = 32'hD00DF11D;
-        conv1_weight_3[2] = 32'hD538DF20;
-        conv1_weight_3[3] = 32'hD615EFE7;
-        conv1_weight_3[4] = 32'hDE4116FE;
-        conv1_weight_3[5] = 32'h2023F4E1;
-        conv1_weight_3[6] = 32'h230AF5CF;
-        conv1_weight_4[0] = 32'h9DD71E86;
-        conv1_weight_4[1] = 32'h96D7FE96;
-        conv1_weight_4[2] = 32'hA909FCAA;
-        conv1_weight_4[3] = 32'hD91F1C07;
-        conv1_weight_4[4] = 32'h051B0603;
-        conv1_weight_4[5] = 32'h282DF85E;
-        conv1_weight_4[6] = 32'h7421D67F;
         $readmemh("conv2_weight_0.mem", conv2_weight_0);
         $readmemh("conv2_weight_1.mem", conv2_weight_1);
         $readmemh("conv2_weight_2.mem", conv2_weight_2);
@@ -203,5 +210,7 @@ module ECG_Weight_ROM (
         $readmemh("fc1_weight_4.mem", fc1_weight_4);
         $readmemh("fc2_weight.mem", fc2_weight);
     end
+`endif
+// synopsys translate_on
 
 endmodule

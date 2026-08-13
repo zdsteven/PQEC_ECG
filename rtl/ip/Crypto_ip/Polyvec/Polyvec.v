@@ -47,7 +47,7 @@ module Polyvec (
     reg polyvec_clear_after_read;
     reg [8:0] polyvec_clear_after_read_addr;
 
-    (* ram_style = "block" *) reg [23:0] polyvec_result [0:511];
+    reg [23:0] polyvec_result [0:511];
 
     wire polyvec_result_re;
     wire [8:0] polyvec_result_raddr;

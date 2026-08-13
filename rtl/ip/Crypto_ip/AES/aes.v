@@ -64,7 +64,7 @@ module aes (
     reg [127:0] hash_subkey_reg;
     reg [127:0] tag_mask_reg;
 
-    (* ram_style = "distributed" *) reg [31:0] ct_ram [0:49];
+    reg [31:0] ct_ram [0:49];
     reg [31:0] ct_ram_rdata;
 
     wire [255:0] key_core = {

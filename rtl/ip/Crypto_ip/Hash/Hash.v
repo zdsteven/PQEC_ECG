@@ -52,41 +52,39 @@ module Hash (
     wire [63:0] iteration_result [0:24];
 
 
-    (* rom_style = "distributed" *) reg [6:0] SRC_rom [0:23];
+    wire [6:0] SRC_rom [0:23];
 
-    initial begin
-        SRC_rom[0] = 7'b0000001;
-        SRC_rom[1] = 7'b0011010;
-        SRC_rom[2] = 7'b1011110;
-        SRC_rom[3] = 7'b1110000;
-        SRC_rom[4] = 7'b0011111;
-        SRC_rom[5] = 7'b0100001;
-        SRC_rom[6] = 7'b1111001;
-        SRC_rom[7] = 7'b1010101;
-        SRC_rom[8] = 7'b0001110;
-        SRC_rom[9] = 7'b0001100;
-        SRC_rom[10] = 7'b0110101;
-        SRC_rom[11] = 7'b0100110;
-        SRC_rom[12] = 7'b0111111;
-        SRC_rom[13] = 7'b1001111;
-        SRC_rom[14] = 7'b1011101;
-        SRC_rom[15] = 7'b1010011;
-        SRC_rom[16] = 7'b1010010;
-        SRC_rom[17] = 7'b1001000;
-        SRC_rom[18] = 7'b0010110;
-        SRC_rom[19] = 7'b1100110;
-        SRC_rom[20] = 7'b1111001;
-        SRC_rom[21] = 7'b1011000;
-        SRC_rom[22] = 7'b0100001;
-        SRC_rom[23] = 7'b1110100;
-    end
+    assign SRC_rom[0]  = 7'b0000001;
+    assign SRC_rom[1]  = 7'b0011010;
+    assign SRC_rom[2]  = 7'b1011110;
+    assign SRC_rom[3]  = 7'b1110000;
+    assign SRC_rom[4]  = 7'b0011111;
+    assign SRC_rom[5]  = 7'b0100001;
+    assign SRC_rom[6]  = 7'b1111001;
+    assign SRC_rom[7]  = 7'b1010101;
+    assign SRC_rom[8]  = 7'b0001110;
+    assign SRC_rom[9]  = 7'b0001100;
+    assign SRC_rom[10] = 7'b0110101;
+    assign SRC_rom[11] = 7'b0100110;
+    assign SRC_rom[12] = 7'b0111111;
+    assign SRC_rom[13] = 7'b1001111;
+    assign SRC_rom[14] = 7'b1011101;
+    assign SRC_rom[15] = 7'b1010011;
+    assign SRC_rom[16] = 7'b1010010;
+    assign SRC_rom[17] = 7'b1001000;
+    assign SRC_rom[18] = 7'b0010110;
+    assign SRC_rom[19] = 7'b1100110;
+    assign SRC_rom[20] = 7'b1111001;
+    assign SRC_rom[21] = 7'b1011000;
+    assign SRC_rom[22] = 7'b0100001;
+    assign SRC_rom[23] = 7'b1110100;
 
 //-------------------------------{iteration}end-------------------------------//
 
 //-------------------------------{Sample}begin--------------------------------//
 
-    (* ram_style = "distributed" *) reg [11:0] sample_result_0 [0:127];
-    (* ram_style = "distributed" *) reg [11:0] sample_result_1 [0:127];
+    reg [11:0] sample_result_0 [0:127];
+    reg [11:0] sample_result_1 [0:127];
 
     reg [6:0] sample_address_0;
     reg [6:0] sample_address_1;

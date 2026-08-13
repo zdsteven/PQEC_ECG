@@ -25,10 +25,10 @@ module ECG (
 
 //-------------------------------{ram rom}begin-----------------------------//
 
-    (* ram_style = "distributed" *) reg [31:0] ecg_data_in [0:49];
-    (* ram_style = "block" *) reg [31:0] pool_1 [0:479];
-    (* ram_style = "block" *) reg [31:0] pool_2 [0:224];
-    (* ram_style = "distributed" *) reg [31:0] fc_middle [0:24];
+    reg [31:0] ecg_data_in [0:49];
+    reg [31:0] pool_1 [0:479];
+    reg [31:0] pool_2 [0:224];
+    reg [31:0] fc_middle [0:24];
 
 //-------------------------------{ram rom}end-------------------------------//
 
