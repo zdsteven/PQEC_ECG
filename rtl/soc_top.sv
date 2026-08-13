@@ -521,7 +521,7 @@ wire [31:0] dvi_araddr ;
 wire [7 :0] dvi_arlen  ;
 wire [2 :0] dvi_arsize ;
 wire [1 :0] dvi_arburst;
-wire [1 :0] dvi_arlock ;
+wire        dvi_arlock ;
 wire [3 :0] dvi_arcache;
 wire [2 :0] dvi_arprot ;
 wire        dvi_arvalid;
@@ -537,7 +537,7 @@ wire [31:0] dvi_awaddr ;
 wire [7 :0] dvi_awlen  ;
 wire [2 :0] dvi_awsize ;
 wire [1 :0] dvi_awburst;
-wire [1 :0] dvi_awlock ;
+wire        dvi_awlock ;
 wire [3 :0] dvi_awcache;
 wire [2 :0] dvi_awprot ;
 wire        dvi_awvalid;
@@ -1580,7 +1580,7 @@ axi_uart_controller u_axi_uart_controller
     .axi_s_awlen (uart_awlen ),
     .axi_s_awsize (uart_awsize ),
     .axi_s_awburst (uart_awburst ),
-    .axi_s_awlock (uart_awlock ),
+    .axi_s_awlock ({1'b0, uart_awlock} ),
     .axi_s_awcache (uart_awcache ),
     .axi_s_awprot (uart_awprot ),
     .axi_s_awvalid (uart_awvalid ),
@@ -1600,7 +1600,7 @@ axi_uart_controller u_axi_uart_controller
     .axi_s_arlen (uart_arlen ),
     .axi_s_arsize (uart_arsize ),
     .axi_s_arburst (uart_arburst ),
-    .axi_s_arlock (uart_arlock ),
+    .axi_s_arlock ({1'b0,uart_arlock} ),
     .axi_s_arcache (uart_arcache ),
     .axi_s_arprot (uart_arprot ),
     .axi_s_arvalid (uart_arvalid ),
