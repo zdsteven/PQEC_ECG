@@ -37,14 +37,8 @@ module fpga_sram_sp #(
 
     always@(posedge CLK) begin
 		if(write_enable[0]) BRAM[ADDR][7:0] <= WDATA[7:0];
-    end
-    always@(posedge CLK) begin
 		if(write_enable[1]) BRAM[ADDR][15:8] <= WDATA[15:8];
-    end
-    always@(posedge CLK) begin
 		if(write_enable[2]) BRAM[ADDR][23:16] <= WDATA[23:16];
-    end
-    always@(posedge CLK) begin
 		if(write_enable[3]) BRAM[ADDR][31:24] <= WDATA[31:24];
     end
 

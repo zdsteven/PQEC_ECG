@@ -35,16 +35,10 @@ module fpga_sram_dp #(
     reg     [AW-1:0]  addr_q1;
 
     always@(posedge CLK) begin
-		  if(ram_wen[0]) BRAM[ram_waddr][7:0] <= ram_wdata[7:0];
-    end
-    always@(posedge CLK) begin
-		  if(ram_wen[1]) BRAM[ram_waddr][15:8] <= ram_wdata[15:8];
-    end
-    always@(posedge CLK) begin
-		  if(ram_wen[2]) BRAM[ram_waddr][23:16] <= ram_wdata[23:16];
-    end
-    always@(posedge CLK) begin
-		  if(ram_wen[3]) BRAM[ram_waddr][31:24] <= ram_wdata[31:24];
+		if(ram_wen[0]) BRAM[ram_waddr][7:0] <= ram_wdata[7:0];
+		if(ram_wen[1]) BRAM[ram_waddr][15:8] <= ram_wdata[15:8];
+		if(ram_wen[2]) BRAM[ram_waddr][23:16] <= ram_wdata[23:16];
+		if(ram_wen[3]) BRAM[ram_waddr][31:24] <= ram_wdata[31:24];
     end
 
     always @ (posedge CLK) begin

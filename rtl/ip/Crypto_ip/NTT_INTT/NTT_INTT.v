@@ -405,9 +405,6 @@ module NTT_INTT(
                 ntt_memA_0[memA_addr_0a] <= memA_din_0a;
             end
         end
-    end
-
-    always @(posedge aclk) begin
         if (memA_en_0b) begin
             memA_rdata_0b <= ntt_memA_0[memA_addr_0b];
             if (memA_we_0b) begin
@@ -423,9 +420,6 @@ module NTT_INTT(
                 ntt_memA_1[memA_addr_1a] <= memA_din_1a;
             end
         end
-    end
-
-    always @(posedge aclk) begin
         if (memA_en_1b) begin
             memA_rdata_1b <= ntt_memA_1[memA_addr_1b];
             if (memA_we_1b) begin
@@ -441,9 +435,6 @@ module NTT_INTT(
                 ntt_memB_0[memB_addr_0a] <= memB_din_0a;
             end
         end
-    end
-
-    always @(posedge aclk) begin
         if (memB_en_0b) begin
             memB_rdata_0b <= ntt_memB_0[memB_addr_0b];
             if (memB_we_0b) begin
@@ -459,9 +450,6 @@ module NTT_INTT(
                 ntt_memB_1[memB_addr_1a] <= memB_din_1a;
             end
         end
-    end
-
-    always @(posedge aclk) begin
         if (memB_en_1b) begin
             memB_rdata_1b <= ntt_memB_1[memB_addr_1b];
             if (memB_we_1b) begin
