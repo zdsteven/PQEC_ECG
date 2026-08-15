@@ -42,7 +42,7 @@ module soc_top #(parameter SIMULATION=1'b0)
 (
     input           clk,
     output          clk_o,              //XTALO
-    input           reset,
+    inout           reset,
 
     //图像输出信号
     output [2:0]    video_red,          //红色像素，3位
@@ -53,8 +53,8 @@ module soc_top #(parameter SIMULATION=1'b0)
     output          video_clk,          //像素时钟输出
     output          video_de,           //行数据有效信号，用于区分消隐区
 
-    input  [3:0]    touch_btn,          //BTN1~BTN4，按钮开关，按下时为1
-    input  [31:0]   dip_sw,             //32位拨码开关，拨到“ON”时为1
+    inout  [3:0]    touch_btn,          //BTN1~BTN4，按钮开关，按下时为1
+    inout  [31:0]   dip_sw,             //32位拨码开关，拨到“ON”时为1
     output [15:0]   leds,               //16位LED，输出时1点亮
     output [7:0]    dpy0,               //数码管低位信号，包括小数点，输出1点亮
     output [7:0]    dpy1,               //数码管高位信号，包括小数点，输出1点亮
